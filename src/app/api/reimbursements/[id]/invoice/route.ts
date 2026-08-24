@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextRequest } from "next/server";
+import { getErpSession } from "@/lib/auth/session";
 import { isReimbursementAdmin } from "@/lib/reimbursements/auth";
 import { getReimbursementInvoice } from "@/lib/reimbursements/repository";
 
@@ -30,7 +31,17 @@ export async function GET(
     const invoice = await getReimbursementInvoice(id);
     if (!invoice) return errorResponse(404, "not_found", "Invoice not found.");
     const suppliedToken = request.nextUrl.searchParams.get("token") || "";
-    if (!isReimbursementAdmin(request) && !equalToken(suppliedToken, invoice.accessToken)) {
+    const admin = isReimbursementAdmin(request);
+    const session = getErpSession(request);
+    const ownerMatches = Boolean(
+      session
+      && typeof invoice.ownerUsername === "string"
+      && invoice.ownerUsername.toLocaleLowerCase("en-AU") === session.user.username.toLocaleLowerCase("en-AU"),
+    );
+    // Administrators retain their existing invoice-review access. Everyone
+    // else must present the per-file token; an ERP user must additionally own
+    // the claim, so a token left in a shared browser cannot cross accounts.
+    if (!admin && (!equalToken(suppliedToken, invoice.accessToken) || (session && !ownerMatches))) {
       return errorResponse(403, "forbidden", "You do not have access to this invoice.");
     }
 

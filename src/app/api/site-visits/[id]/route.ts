@@ -14,7 +14,7 @@ import {
   SiteVisitRequestBodyTooLarge,
 } from "@/lib/site-visits/request";
 import { parseSiteVisitPatch } from "@/lib/site-visits/validation";
-import { isAuthorizedMutationRequest } from "@/lib/server/proxy-security";
+import { isAuthorizedActorRequest, isAuthorizedMutationRequest } from "@/lib/server/proxy-security";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -88,6 +88,9 @@ export async function DELETE(
 ) {
   if (!isAuthorizedMutationRequest(request)) {
     return siteVisitError(403, "forbidden", "This request is not allowed.");
+  }
+  if (!isAuthorizedActorRequest(request, "admin")) {
+    return siteVisitError(403, "role_forbidden", "Only Administrators can delete site visits.");
   }
   const id = await siteVisitId(context);
   if (!id) return siteVisitError(400, "invalid_id", "The site visit ID is invalid.");

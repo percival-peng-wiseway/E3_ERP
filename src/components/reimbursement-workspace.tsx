@@ -14,11 +14,13 @@ import {
   ReceiptText,
   Search,
   ShieldCheck,
+  Trash2,
   UploadCloud,
   WalletCards,
   X,
 } from "lucide-react";
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ErpRole } from "@/lib/auth/types";
 import { readJsonResponse } from "@/lib/client/http";
 import type {
   ReimbursementAction,
@@ -87,7 +89,7 @@ function apiError(value: unknown, fallback: string) {
   return typeof message === "string" && message.trim() ? message : fallback;
 }
 
-export function ReimbursementWorkspace() {
+export function ReimbursementWorkspace({ authenticatedRole }: { authenticatedRole: ErpRole }) {
   const [claims, setClaims] = useState<ReimbursementClaim[]>([]);
   const [session, setSession] = useState<ReimbursementAdminSession>(EMPTY_SESSION);
   const [view, setView] = useState<WorkspaceView>("mine");
@@ -308,6 +310,26 @@ export function ReimbursementWorkspace() {
     }
   };
 
+  const deleteClaim = async () => {
+    if (!detail || busy || authenticatedRole !== "admin") return;
+    const claim = detail.claim;
+    if (!window.confirm(`Delete reimbursement ${claim.reference} for “${claim.claimantName}”? This cannot be undone.`)) return;
+    setBusy(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/reimbursements/${encodeURIComponent(claim.id)}`, { method: "DELETE" });
+      const body = await readJsonResponse<{ error?: string }>(response);
+      if (!response.ok) throw new Error(apiError(body, "Unable to delete the reimbursement."));
+      setClaims((current) => current.filter((item) => item.id !== claim.id));
+      setDetail(null);
+      setNotice(`${claim.reference} was deleted.`);
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Unable to delete the reimbursement.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const adminRequired = view !== "mine" && view !== "reimbursed" && !session.admin;
 
   return (
@@ -449,6 +471,7 @@ export function ReimbursementWorkspace() {
             <div className={styles.timeline}><h3>Status history</h3>{detail.claim.history.map((entry) => <div key={entry.id}><i /><span><strong>{entry.action.replaceAll("_", " ")}</strong><small>{formatDate(entry.at)} · {entry.actor}{entry.note ? ` · ${entry.note}` : ""}</small></span></div>)}</div>
           </div>
           <footer className={styles.modalFooter}>
+            {authenticatedRole === "admin" ? <button className={styles.rejectButton} onClick={() => void deleteClaim()} disabled={busy}><Trash2 size={15} />Delete claim</button> : null}
             <button className={styles.secondaryButton} onClick={() => setDetail(null)} disabled={busy}>Close</button>
             {detail.mode === "review" && <><button className={styles.rejectButton} onClick={() => void performAction("reject")} disabled={busy}>Reject</button><button className={styles.primaryButton} onClick={() => void performAction("approve")} disabled={busy}>{busy && <LoaderCircle className={styles.spinning} size={15} />}Approve for Payment</button></>}
             {detail.mode === "payment" && <button className={styles.paidButton} onClick={() => void performAction("mark_paid")} disabled={busy}>{busy ? <LoaderCircle className={styles.spinning} size={15} /> : <CheckCircle2 size={15} />}Mark Paid</button>}

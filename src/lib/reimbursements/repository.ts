@@ -1,13 +1,16 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import {
+// @ts-expect-error -- focused Node ESM tests require the explicit extension.
+import * as cloudflareStorage from "../server/cloudflare-storage.ts";
+
+const {
   CloudflareDocumentConflictError,
   CloudflareStorageConfigurationError,
   erpCloudflareBindings,
   readVersionedDocument,
   writeVersionedDocument,
-} from "@/lib/server/cloudflare-storage";
+} = cloudflareStorage;
 import type {
   ReimbursementAction,
   ReimbursementClaim,
@@ -22,6 +25,7 @@ type StoredInvoice = ReimbursementInvoice & {
 type StoredClaim = Omit<ReimbursementClaim, "invoice"> & {
   invoice: StoredInvoice;
   ownerTokenHash?: string;
+  ownerUsername?: string;
 };
 
 export type CreateReimbursementInput = {
@@ -31,6 +35,7 @@ export type CreateReimbursementInput = {
   amountCents: number;
   currency: "AUD";
   ownerTokenHash: string;
+  ownerUsername?: string;
 };
 
 export type ReimbursementUpload = {
@@ -51,6 +56,7 @@ export type StoredInvoiceFile = {
   contentType: ReimbursementInvoice["contentType"];
   size: number;
   accessToken: string;
+  ownerUsername?: string;
   read(): Promise<Uint8Array>;
 };
 
@@ -218,7 +224,11 @@ async function readStoredInvoice(storedName: string) {
 
 function publicClaim(claim: StoredClaim): ReimbursementClaim {
   const { storedName: _storedName, accessToken, ...invoice } = claim.invoice;
-  const { ownerTokenHash: _ownerTokenHash, ...publicFields } = claim;
+  const {
+    ownerTokenHash: _ownerTokenHash,
+    ownerUsername: _ownerUsername,
+    ...publicFields
+  } = claim;
   return {
     ...publicFields,
     note: claim.note ?? claim.description ?? "",
@@ -242,15 +252,20 @@ function nextReference(claims: StoredClaim[], now: Date) {
 
 export async function listReimbursements(options: {
   includeAll?: boolean;
+  ownerUsername?: string;
   ownerTokenHash?: string;
 } = {}): Promise<ReimbursementClaim[]> {
   await mutationQueue;
   const claims = (await readStoredClaimDocument()).claims;
+  const ownerUsername = options.ownerUsername?.trim().toLocaleLowerCase("en-AU") || "";
   return claims
-    .filter((claim) => options.includeAll || (
-      Boolean(options.ownerTokenHash)
-      && claim.ownerTokenHash === options.ownerTokenHash
-    ))
+    .filter((claim) => {
+      if (options.includeAll) return true;
+      // An authenticated ERP identity always wins over the legacy browser token.
+      // This prevents a shared browser cookie from exposing another employee's claims.
+      if (ownerUsername) return claim.ownerUsername === ownerUsername;
+      return Boolean(options.ownerTokenHash) && claim.ownerTokenHash === options.ownerTokenHash;
+    })
     .slice()
     .sort((left, right) => right.submittedAt.localeCompare(left.submittedAt))
     .map(publicClaim);
@@ -268,12 +283,14 @@ export function createReimbursement(
     const id = randomUUID();
     const storedName = `${randomUUID()}.${MIME_EXTENSIONS[upload.contentType]}`;
     const accessToken = randomBytes(24).toString("base64url");
+    const ownerUsername = input.ownerUsername?.trim().toLocaleLowerCase("en-AU") || undefined;
 
     await writeStoredInvoice(storedName, upload.bytes);
     const claim: StoredClaim = {
       id,
       reference: nextReference(claims, now),
       ...input,
+      ownerUsername,
       invoice: {
         originalName: upload.originalName,
         contentType: upload.contentType,
@@ -371,6 +388,20 @@ export function transitionReimbursement(
   });
 }
 
+export function deleteReimbursement(id: string): Promise<ReimbursementClaim> {
+  return withMutation(async () => {
+    const document = await readStoredClaimDocument();
+    const claims = document.claims;
+    const index = claims.findIndex((claim) => claim.id === id);
+    if (index < 0) throw new ReimbursementRepositoryError("Reimbursement not found.", 404, "not_found");
+
+    const [deleted] = claims.splice(index, 1);
+    await writeStoredClaims(claims, document.version);
+    await deleteStoredInvoice(deleted.invoice.storedName).catch(() => undefined);
+    return publicClaim(deleted);
+  });
+}
+
 export async function getReimbursementInvoice(id: string): Promise<StoredInvoiceFile | null> {
   await mutationQueue;
   const claims = (await readStoredClaimDocument()).claims;
@@ -383,6 +414,7 @@ export async function getReimbursementInvoice(id: string): Promise<StoredInvoice
     contentType: claim.invoice.contentType,
     size: claim.invoice.size,
     accessToken: claim.invoice.accessToken,
+    ownerUsername: claim.ownerUsername,
     read: () => readStoredInvoice(storedName),
   };
 }

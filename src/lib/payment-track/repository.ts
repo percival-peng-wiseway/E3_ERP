@@ -712,6 +712,36 @@ export function createImportedPaymentTrackProject(
   });
 }
 
+export function deletePaymentTrackProject(id: string) {
+  return withMutation(async () => {
+    const storedDocument = await readStoredProjectDocument();
+    const projects = storedDocument.projects;
+    const index = projects.findIndex((candidate) => candidate.id === id);
+    if (index < 0) throw new PaymentTrackRepositoryError("Payment project not found.", 404, "not_found");
+
+    const [deleted] = projects.splice(index, 1);
+    const finalPaymentProofs = (deleted.finalPayments || []).map((payment) => payment.proof);
+    const files = [
+      deleted.contract,
+      deleted.deposit.proof,
+      deleted.collection.proof,
+      ...finalPaymentProofs,
+    ].filter(Boolean) as StoredFile[];
+    const uniqueFiles = new Map<string, StoredFile>();
+    for (const file of files) {
+      const namespace = file.kind === "contract" ? "contracts" : "proofs";
+      uniqueFiles.set(`${namespace}:${file.storedName}`, file);
+    }
+
+    // Commit the record deletion first. If the D1 CAS fails, every attachment
+    // remains reachable from the still-live project and the mutation can retry.
+    await writeStoredProjects(projects, storedDocument.version);
+    solarRebateAssessmentRetries.delete(id);
+    await Promise.allSettled([...uniqueFiles.values()].map((file) => deleteStoredFile(file)));
+    return publicProject(deleted);
+  });
+}
+
 export function uploadPaymentTrackProof(
   id: string,
   kind: "deposit",

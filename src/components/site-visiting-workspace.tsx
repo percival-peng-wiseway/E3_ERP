@@ -30,6 +30,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { ErpRole } from "@/lib/auth/types";
 import type {
   SiteVisit,
   SiteVisitCheckAnswer,
@@ -141,7 +142,7 @@ function editableVisitPayload(visit: SiteVisit, status = visit.status) {
   };
 }
 
-export function SiteVisitingWorkspace() {
+export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole: ErpRole }) {
   const [visits, setVisits] = useState<SiteVisit[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -339,7 +340,7 @@ export function SiteVisitingWorkspace() {
   }
 
   async function deleteVisit() {
-    if (!detail || !window.confirm(`Delete the site visit for “${detail.projectName}”? Photos will also be removed.`)) return;
+    if (authenticatedRole !== "admin" || !detail || !window.confirm(`Delete the site visit for “${detail.projectName}”? Photos will also be removed.`)) return;
     setBusy(true);
     setError("");
     try {
@@ -624,7 +625,7 @@ export function SiteVisitingWorkspace() {
 
               <div className={styles.dangerZone}>
                 {detail.status !== "cancelled" && <button onClick={() => void changeStatus("cancelled")} disabled={busy}>Cancel visit</button>}
-                <button onClick={() => void deleteVisit()} disabled={busy}><Trash2 size={16} />Delete project</button>
+                {authenticatedRole === "admin" ? <button onClick={() => void deleteVisit()} disabled={busy}><Trash2 size={16} />Delete visit</button> : null}
               </div>
             </div>
 

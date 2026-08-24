@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { getErpSession } from "@/lib/auth/session";
 import { isPaymentTrackAdmin } from "@/lib/payment-track/auth";
 import {
+  deletePaymentTrackProject,
   PaymentTrackRepositoryError,
   transitionPaymentTrackProject,
 } from "@/lib/payment-track/repository";
@@ -13,6 +14,7 @@ import {
   paymentTrackError,
   paymentTrackJson,
   PaymentTrackRequestBodyTooLarge,
+  readLimitedPaymentTrackBody,
   readPaymentTrackJson,
 } from "@/lib/payment-track/request";
 import { parsePaymentTrackPmNotesBody } from "@/lib/payment-track/pm-notes";
@@ -30,6 +32,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const MAX_JSON_SIZE = 16 * 1024;
+const ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PAYMENT_CONFIRMATION_ACTIONS = new Set<PaymentTrackAction>([
   "confirm_deposit",
   "confirm_collection",
@@ -81,7 +84,7 @@ export async function PATCH(
     return paymentTrackError(413, "request_too_large", "The project action is too large.");
   }
   const { id } = await context.params;
-  if (!/^[0-9a-f-]{36}$/i.test(id)) return paymentTrackError(400, "invalid_id", "The project ID is invalid.");
+  if (!ID_PATTERN.test(id)) return paymentTrackError(400, "invalid_id", "The project ID is invalid.");
 
   try {
     const body = await readPaymentTrackJson(request, MAX_JSON_SIZE);
@@ -200,5 +203,43 @@ export async function PATCH(
     if (error instanceof PaymentTrackRequestBodyTooLarge) return paymentTrackError(413, "request_too_large", "The project action is too large.");
     if (error instanceof SyntaxError) return paymentTrackError(400, "invalid_json", "The project action is invalid.");
     return paymentTrackError(500, "update_failed", "The payment project could not be updated.");
+  }
+}
+
+export async function DELETE(
+  request: NextRequest,
+  context: { params: Promise<{ id: string }> },
+) {
+  if (!isAuthorizedMutationRequest(request)) {
+    return paymentTrackError(403, "forbidden", "This request is not allowed.");
+  }
+  if (!isAuthorizedActorRequest(request, "admin")) {
+    return paymentTrackError(403, "role_forbidden", "Only Administrators can delete payment projects.");
+  }
+  if (!isPaymentTrackAdmin(request)) {
+    return paymentTrackError(401, "admin_required", "Administrator access is required.");
+  }
+
+  const { id } = await context.params;
+  if (!ID_PATTERN.test(id)) return paymentTrackError(400, "invalid_id", "The project ID is invalid.");
+  if ([...request.nextUrl.searchParams.keys()].length) {
+    return paymentTrackError(400, "invalid_query", "Delete does not accept query parameters.");
+  }
+
+  try {
+    const body = await readLimitedPaymentTrackBody(request, 1);
+    if (body.byteLength) {
+      return paymentTrackError(400, "invalid_request", "Delete does not accept a request body.");
+    }
+    await deletePaymentTrackProject(id);
+    return paymentTrackJson({ data: { id } });
+  } catch (error) {
+    if (error instanceof PaymentTrackRepositoryError) {
+      return paymentTrackError(error.status, error.code, error.message);
+    }
+    if (error instanceof PaymentTrackRequestBodyTooLarge) {
+      return paymentTrackError(400, "invalid_request", "Delete does not accept a request body.");
+    }
+    return paymentTrackError(500, "delete_failed", "The payment project could not be deleted.");
   }
 }

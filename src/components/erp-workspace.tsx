@@ -295,12 +295,12 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
               onNavigate={(module) => navigate(module)}
             />
           </div>
-          {activeModule === "inventory" && <InventoryOperationsWorkspace />}
+          {activeModule === "inventory" && <InventoryOperationsWorkspace currentUser={currentUser} />}
           {activeModule === "quotations" && <QuoteHelpWorkspace />}
-          {activeModule === "projects" && <ProjectDeliveryBoard />}
-          {activeModule === "site-visits" && <SiteVisitingWorkspace />}
+          {activeModule === "projects" && <ProjectDeliveryBoard authenticatedRole={currentUser.role} />}
+          {activeModule === "site-visits" && <SiteVisitingWorkspace authenticatedRole={currentUser.role} />}
           {activeModule === "payments" && <PaymentTrackWorkspace authenticatedRole={currentUser.role} />}
-          {activeModule === "reimbursements" && <ReimbursementWorkspace />}
+          {activeModule === "reimbursements" && <ReimbursementWorkspace authenticatedRole={currentUser.role} />}
           {activeModule === "reports" && <ReportsWorkspace />}
           {activeModule === "finance" && <ComingSoon />}
         </main>

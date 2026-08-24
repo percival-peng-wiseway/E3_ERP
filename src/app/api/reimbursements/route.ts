@@ -120,6 +120,7 @@ function fileSignatureMatches(type: AcceptedType, bytes: Uint8Array) {
 }
 
 export async function GET(request: NextRequest) {
+  const session = getErpSession(request);
   const admin = isReimbursementAdmin(request);
   try {
     const { listReimbursements } = await import("@/lib/reimbursements/repository");
@@ -127,19 +128,18 @@ export async function GET(request: NextRequest) {
     return noStoreJson({
       data: await listReimbursements(admin
         ? { includeAll: true }
-        : { ownerTokenHash: claimantToken ? hashReimbursementClaimantToken(claimantToken) : undefined }),
+        : session
+          ? { ownerUsername: session.user.username }
+          : { ownerTokenHash: claimantToken ? hashReimbursementClaimantToken(claimantToken) : undefined }),
       meta: { admin },
     });
   } catch (error) {
-    console.error("Reimbursement storage unavailable; returning an empty initial list", error instanceof Error ? error.message : error);
-    return noStoreJson({
-      data: [],
-      meta: {
-        admin,
-        degraded: true,
-        warning: "Reimbursement storage is not connected. Starting with an empty list.",
-      },
-    });
+    console.error("Reimbursement storage unavailable", error instanceof Error ? error.message : error);
+    return errorResponse(
+      500,
+      "storage_unavailable",
+      "Reimbursements are temporarily unavailable. No records were changed.",
+    );
   }
 }
 
@@ -148,6 +148,7 @@ export async function POST(request: NextRequest) {
   if (declaredBodyTooLarge(request, MAX_MULTIPART_SIZE)) return errorResponse(413, "file_too_large", "The invoice must be 10 MB or smaller.");
 
   try {
+    const session = getErpSession(request);
     const contentTypeHeader = request.headers.get("content-type") || "";
     if (!contentTypeHeader.toLowerCase().startsWith("multipart/form-data;")) {
       return errorResponse(415, "unsupported_request", "Submit the reimbursement as a form with one invoice.");
@@ -164,7 +165,7 @@ export async function POST(request: NextRequest) {
       }
       seenFields.add(name);
     }
-    const claimantName = getErpSession(request)?.user.displayName
+    const claimantName = session?.user.displayName
       || requiredText(form.get("claimantName"), 120);
     const expenseDate = requiredText(form.get("expenseDate"), 10);
     const note = optionalText(form.get("note"), 2_000);
@@ -196,6 +197,7 @@ export async function POST(request: NextRequest) {
       amountCents,
       currency: "AUD",
       ownerTokenHash: hashReimbursementClaimantToken(claimantToken),
+      ownerUsername: session?.user.username,
     }, {
       bytes,
       originalName: safeOriginalName(invoiceValue.name),

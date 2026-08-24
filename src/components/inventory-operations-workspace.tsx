@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import type { ErpUser } from "@/lib/auth/types";
 import { readJsonResponse } from "@/lib/client/http";
 import styles from "./inventory-operations-workspace.module.css";
 
@@ -67,7 +68,7 @@ const DELIVERY_TIME_OPTIONS = Array.from({ length: 9 }, (_, index) => {
 
 const initialState: ApiState = { inventory: [], deliveryHistory: [], lossHistory: [], admin: false };
 
-export function InventoryOperationsWorkspace() {
+export function InventoryOperationsWorkspace({ currentUser }: { currentUser: ErpUser }) {
   const [data, setData] = useState<ApiState>(initialState);
   const [view, setView] = useState<View>("overview");
   const [loading, setLoading] = useState(true);
@@ -76,7 +77,7 @@ export function InventoryOperationsWorkspace() {
   const [arrivalText, setArrivalText] = useState("");
   const [arrivalDraft, setArrivalDraft] = useState<ParsedArrival[]>([]);
   const [arrivalMode, setArrivalMode] = useState<ArrivalMode>("received");
-  const [orderActor, setOrderActor] = useState("Sam");
+  const [orderActor, setOrderActor] = useState(currentUser.role === "sales" ? currentUser.displayName : "Sam");
   const [saleItems, setSaleItems] = useState<SaleItem[]>([{ sku: "", quantity: 1 }]);
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
@@ -89,6 +90,9 @@ export function InventoryOperationsWorkspace() {
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [adminPassword, setAdminPassword] = useState("");
   const [editingInventory, setEditingInventory] = useState<InventoryItem | null>(null);
+  const canCreateOrder = currentUser.role === "sales" || currentUser.role === "admin";
+  const canManageStock = currentUser.role === "admin";
+  const inventoryAdminActive = canManageStock && data.admin;
   const refresh = async () => {
     const response = await fetch("/api/inventory/operations", { cache: "no-store" });
     if (!response.ok) throw new Error("Could not load inventory.");
@@ -373,13 +377,15 @@ export function InventoryOperationsWorkspace() {
             <span>{"Stock"} <b>{loading ? "—" : totals.onHand}</b></span>
             <span>Pending stock <b>{loading ? "—" : totals.pending}</b></span>
           </div>
-          <button
-            className={`admin-toggle ${data.admin ? "active" : ""}`}
-            onClick={() => data.admin ? logoutAdmin() : setShowAdminLogin(true)}
-            disabled={busy}
-          >
-            {data.admin ? "Exit admin" : "Admin"}
-          </button>
+          {canManageStock ? (
+            <button
+              className={`admin-toggle ${inventoryAdminActive ? "active" : ""}`}
+              onClick={() => inventoryAdminActive ? logoutAdmin() : setShowAdminLogin(true)}
+              disabled={busy}
+            >
+              {inventoryAdminActive ? "Exit admin" : "Admin"}
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -389,7 +395,11 @@ export function InventoryOperationsWorkspace() {
           ["sale", "New Order"],
           ["arrival", "New Stock"],
           ["history", "History"],
-        ] as [View, string][]).map(([key, label]) => (
+        ] as [View, string][]).filter(([key]) => (
+          key !== "sale" || canCreateOrder
+        ) && (
+          key !== "arrival" || canManageStock
+        )).map(([key, label]) => (
           <button
             key={key}
             className={view === key ? "active" : ""}
@@ -406,7 +416,7 @@ export function InventoryOperationsWorkspace() {
           <>
             <div className="section-heading">
               <div><h2>{"Inventory"}</h2></div>
-              <button className="primary small" onClick={() => setView("sale")}>＋ New Order</button>
+              {canCreateOrder ? <button className="primary small" onClick={() => setView("sale")}>＋ New Order</button> : null}
             </div>
             <div className="stats">
               <article><span>{"On hand"}</span><strong>{totals.onHand}</strong></article>
@@ -446,7 +456,7 @@ export function InventoryOperationsWorkspace() {
               <div className="table-title"><h3>{"All SKUs"}</h3><span>{filteredInventory.length} SKU</span></div>
               <div className="table-scroll">
                 <table>
-                  <thead><tr><th>{"SKU"}</th><th>{"Category"}</th><th>{"On hand"}</th><th>Pending</th><th>{"Available"}</th><th>Consumption</th><th>{"Status"}</th>{data.admin && <th>{"Manage"}</th>}</tr></thead>
+                  <thead><tr><th>{"SKU"}</th><th>{"Category"}</th><th>{"On hand"}</th><th>Pending</th><th>{"Available"}</th><th>Consumption</th><th>{"Status"}</th>{inventoryAdminActive && <th>{"Manage"}</th>}</tr></thead>
                   <tbody>
                     {filteredInventory.map((item) => (
                       <tr key={item.sku}>
@@ -461,7 +471,7 @@ export function InventoryOperationsWorkspace() {
                         <td className="stock-number">{item.available}</td>
                         <td className="stock-number consumption-number">{item.consumption}</td>
                         <td>
-                          {data.admin ? (
+                          {inventoryAdminActive ? (
                             <select
                               className={`status-select ${statusClass(item.status)}`}
                               aria-label={`${item.sku} ${"status"}`}
@@ -480,7 +490,7 @@ export function InventoryOperationsWorkspace() {
                             </span>
                           )}
                         </td>
-                        {data.admin && (
+                        {inventoryAdminActive && (
                           <td>
                             <div className="inventory-actions">
                               <button className="edit-mini" disabled={busy} onClick={() => setEditingInventory(item)}>
@@ -515,7 +525,7 @@ export function InventoryOperationsWorkspace() {
               <p className="muted">New orders reserve inventory and enter PM Review as Pending.</p>
             </div>
             <form className="panel form-grid" onSubmit={handleSale}>
-              <label>{"Created by"}<select value={orderActor} onChange={(event) => setOrderActor(event.target.value)} required><option>Sam</option><option>RuiHan</option><option>Hogan</option><option>Kevin</option></select></label>
+              <label>{"Created by"}<select value={orderActor} onChange={(event) => setOrderActor(event.target.value)} disabled={currentUser.role === "sales"} required>{currentUser.role === "sales" ? <option>{currentUser.displayName}</option> : <><option>Sam</option><option>RuiHan</option><option>Hogan</option><option>Kevin</option></>}</select></label>
               <label>{"Customer"}<input name="customer" placeholder="ABC Energy" required /></label>
               <label>{"Phone"}<input name="phone" placeholder="04xx xxx xxx" /></label>
               <label>{"Delivery address"}<input name="address" placeholder={"Full delivery address"} required /></label>

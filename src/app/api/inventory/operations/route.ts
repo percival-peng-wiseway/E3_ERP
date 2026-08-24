@@ -1,4 +1,5 @@
 import type { InventoryOperationAction } from "@/lib/inventory-operations/types";
+import { getErpSession } from "@/lib/auth/session";
 import {
   isAuthorizedActorRequest,
   isAuthorizedMutationRequest,
@@ -295,16 +296,23 @@ export async function POST(request: Request): Promise<Response> {
   if (!isAuthorizedActorRequest(request, requiredRole(action as InventoryOperationAction))) {
     return jsonError(403, "ROLE_FORBIDDEN", "Your signed-in role cannot perform this inventory action.");
   }
-  const validationError = validatePayload(action as InventoryOperationAction, parsed);
+  const employeeSession = getErpSession(request);
+  const effectivePayload = action === "sale" && employeeSession?.user.role === "sales"
+    ? { ...parsed, salesRep: employeeSession.user.displayName }
+    : parsed;
+  const validationError = validatePayload(action as InventoryOperationAction, effectivePayload);
   if (validationError) {
     return jsonError(400, "INVALID_PAYLOAD", validationError);
   }
+  const forwardedBody = effectivePayload === parsed
+    ? body
+    : new TextEncoder().encode(JSON.stringify(effectivePayload));
 
   try {
     const upstream = await fetch(inventoryTarget(request), {
       method: "POST",
       headers: proxyRequestHeaders(request, COOKIE_NAMESPACE, "application/json"),
-      body: asRequestBody(body),
+      body: asRequestBody(forwardedBody),
       cache: "no-store",
       redirect: "manual",
       signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),

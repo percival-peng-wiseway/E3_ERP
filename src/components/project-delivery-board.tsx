@@ -31,6 +31,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { ErpRole } from "@/lib/auth/types";
 import { readJsonResponse } from "@/lib/client/http";
 import {
   PAYMENT_TRACK_SCHEDULE_ASSIGNEES,
@@ -268,7 +269,7 @@ function emptyCustomEditor(date: string): CustomEditorState {
   return { job: null, title: "", scheduledDate: date, startTime: "09:00", endTime: "10:00", assignee: "", location: "", notes: "" };
 }
 
-export function ProjectDeliveryBoard() {
+export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole: ErpRole }) {
   const [weekStart, setWeekStart] = useState(() => weekStartFor(melbourneToday()));
   const [operations, setOperations] = useState<OperationsState>(EMPTY_OPERATIONS);
   const [projects, setProjects] = useState<ScheduledPaymentProject[]>([]);
@@ -287,6 +288,7 @@ export function ProjectDeliveryBoard() {
   const modalRef = useRef<HTMLFormElement | null>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const scheduleHeadingRef = useRef<HTMLHeadingElement | null>(null);
+  const canManageSchedule = authenticatedRole === "pm" || authenticatedRole === "admin";
 
   const weekEnd = addIsoDays(weekStart, 6);
   const today = melbourneToday();
@@ -531,6 +533,7 @@ export function ProjectDeliveryBoard() {
   ])) as Record<ScheduleFilter, number>, [calendarEntries, overdueEntries, unscheduledEntries]);
 
   const openInventoryEditor = (group: DeliveryGroup, date?: string) => {
+    if (!canManageSchedule) return;
     returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const primary = group.primary;
     setInventoryEditor({
@@ -548,6 +551,7 @@ export function ProjectDeliveryBoard() {
   };
 
   const openPaymentEditor = (project: ScheduledPaymentProject, kind: PaymentScheduleKind, date?: string) => {
+    if (!canManageSchedule) return;
     returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setPaymentEditor({
       project,
@@ -559,6 +563,7 @@ export function ProjectDeliveryBoard() {
   };
 
   const openCustomEditor = (job?: ProjectScheduleJob, date = today) => {
+    if (!canManageSchedule) return;
     returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setCustomEditor(job ? {
       job,
@@ -579,7 +584,7 @@ export function ProjectDeliveryBoard() {
 
   async function saveInventorySchedule(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!inventoryEditor) return;
+    if (!inventoryEditor || !canManageSchedule) return;
     setBusy(true);
     setError("");
     try {
@@ -624,7 +629,7 @@ export function ProjectDeliveryBoard() {
   }
 
   async function inventoryAction(group: DeliveryGroup, action: "deliver" | "cancelOrder" | "cancelDelivery") {
-    if (busy) return;
+    if (!canManageSchedule || busy) return;
     const label = action === "deliver" ? "mark this Inventory dispatch as delivered" : action === "cancelOrder" ? "delete this Inventory order" : "cancel this Inventory dispatch";
     if (!window.confirm(`Are you sure you want to ${label} for ${group.primary.customer}?`)) return;
     setBusy(true);
@@ -649,7 +654,7 @@ export function ProjectDeliveryBoard() {
 
   async function savePaymentSchedule(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!paymentEditor) return;
+    if (!paymentEditor || !canManageSchedule) return;
     setBusy(true);
     setError("");
     const action = paymentEditor.kind === "delivery" ? "schedule_delivery" : "schedule_installation";
@@ -681,7 +686,7 @@ export function ProjectDeliveryBoard() {
   }
 
   async function completePaymentEntry(entry: Extract<CalendarEntry, { source: "material_delivery" | "installing" }>) {
-    if (busy) return;
+    if (!canManageSchedule || busy) return;
     const installation = entry.source === "installing";
     if (!window.confirm(`Confirm ${installation ? "installation" : "material delivery"} completion for ${entry.title}?`)) return;
     setBusy(true);
@@ -705,7 +710,7 @@ export function ProjectDeliveryBoard() {
 
   async function saveCustomJob(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!customEditor) return;
+    if (!customEditor || !canManageSchedule) return;
     if (!customEditor.startTime && customEditor.endTime) {
       setError("Add a start time before setting an end time.");
       return;
@@ -743,7 +748,7 @@ export function ProjectDeliveryBoard() {
   }
 
   async function setCustomJobStatus(job: ProjectScheduleJob, status: ProjectScheduleJob["status"]) {
-    if (busy) return;
+    if (!canManageSchedule || busy) return;
     setBusy(true);
     setError("");
     try {
@@ -764,7 +769,7 @@ export function ProjectDeliveryBoard() {
   }
 
   async function deleteCustomJob(job: ProjectScheduleJob) {
-    if (busy || !window.confirm(`Delete “${job.title}”? This cannot be undone.`)) return;
+    if (authenticatedRole !== "admin" || busy || !window.confirm(`Delete “${job.title}”? This cannot be undone.`)) return;
     setBusy(true);
     setError("");
     try {
@@ -805,19 +810,19 @@ export function ProjectDeliveryBoard() {
       </div>
       <small>{entry.detail}</small>
       <div className={styles.cardButtons}>
-        {entry.source === "inventory" && !entry.completed ? (
+        {canManageSchedule && entry.source === "inventory" && !entry.completed ? (
           <>
             <button type="button" onClick={() => openInventoryEditor(entry.group)} disabled={busy}><Pencil size={13} /> Edit</button>
             <button type="button" className={styles.primaryInline} onClick={() => void inventoryAction(entry.group, "deliver")} disabled={busy}><CheckCircle2 size={13} /> Delivered</button>
           </>
         ) : null}
-        {(entry.source === "material_delivery" || entry.source === "installing") && !entry.completed ? (
+        {canManageSchedule && (entry.source === "material_delivery" || entry.source === "installing") && !entry.completed ? (
           <>
             <button type="button" onClick={() => openPaymentEditor(entry.project, entry.source === "installing" ? "installation" : "delivery")} disabled={busy}><Pencil size={13} /> Reschedule</button>
             <button type="button" className={styles.primaryInline} onClick={() => void completePaymentEntry(entry)} disabled={busy}><CheckCircle2 size={13} /> {entry.source === "installing" ? "Installed" : "Delivered"}</button>
           </>
         ) : null}
-        {entry.source === "custom" ? <button type="button" onClick={() => openCustomEditor(entry.job)} disabled={busy}><Pencil size={13} /> Details</button> : null}
+        {canManageSchedule && entry.source === "custom" ? <button type="button" onClick={() => openCustomEditor(entry.job)} disabled={busy}><Pencil size={13} /> Details</button> : null}
       </div>
     </article>
   );
@@ -832,9 +837,11 @@ export function ProjectDeliveryBoard() {
           <button type="button" className={styles.secondaryButton} onClick={() => void load(true)} disabled={refreshing || busy}>
             <RefreshCw size={16} className={refreshing ? styles.spinning : ""} /> Refresh
           </button>
-          <button type="button" className={styles.addButton} onClick={() => openCustomEditor()} disabled={busy}>
-            <Plus size={17} /> Add Job
-          </button>
+          {canManageSchedule ? (
+            <button type="button" className={styles.addButton} onClick={() => openCustomEditor()} disabled={busy}>
+              <Plus size={17} /> Add Job
+            </button>
+          ) : null}
         </div>
       </header>
 
@@ -893,15 +900,17 @@ export function ProjectDeliveryBoard() {
                 <p><MapPin size={13} />{entry.location}</p>
                 <small>{entry.detail}</small>
               </div>
-              <button
-                type="button"
-                onClick={() => entry.source === "inventory"
-                  ? openInventoryEditor(entry.group)
-                  : openPaymentEditor(entry.project, entry.source === "installing" ? "installation" : "delivery")}
-                disabled={busy}
-              >
-                <CalendarDays size={14} /> Schedule
-              </button>
+              {canManageSchedule ? (
+                <button
+                  type="button"
+                  onClick={() => entry.source === "inventory"
+                    ? openInventoryEditor(entry.group)
+                    : openPaymentEditor(entry.project, entry.source === "installing" ? "installation" : "delivery")}
+                  disabled={busy}
+                >
+                  <CalendarDays size={14} /> Schedule
+                </button>
+              ) : null}
             </article>
           ))}
           {!visibleUnscheduled.length ? <div className={styles.emptyTray}><CalendarCheck2 size={20} /> No unscheduled jobs in this view</div> : null}
@@ -925,7 +934,7 @@ export function ProjectDeliveryBoard() {
                   <div className={styles.dayEntries}>
                     {entries.map(renderCalendarEntry)}
                     {!entries.length ? <div className={styles.emptyDay}>No jobs</div> : null}
-                    <button type="button" className={styles.quickAdd} onClick={() => openCustomEditor(undefined, day)}><Plus size={14} /> Add job</button>
+                    {canManageSchedule ? <button type="button" className={styles.quickAdd} onClick={() => openCustomEditor(undefined, day)}><Plus size={14} /> Add job</button> : null}
                   </div>
                 </section>
               );
@@ -1027,7 +1036,7 @@ export function ProjectDeliveryBoard() {
             <footer>
               {customEditor.job ? (
                 <div className={styles.jobActions}>
-                  <button type="button" className={styles.dangerButton} onClick={() => void deleteCustomJob(customEditor.job as ProjectScheduleJob)} disabled={busy}><Trash2 size={15} /> Delete</button>
+                  {authenticatedRole === "admin" ? <button type="button" className={styles.dangerButton} onClick={() => void deleteCustomJob(customEditor.job as ProjectScheduleJob)} disabled={busy}><Trash2 size={15} /> Delete</button> : null}
                   <button type="button" className={styles.statusButton} onClick={() => void setCustomJobStatus(customEditor.job as ProjectScheduleJob, customEditor.job?.status === "completed" ? "scheduled" : "completed")} disabled={busy}>
                     {customEditor.job.status === "completed" ? <RotateCcw size={15} /> : <CheckCircle2 size={15} />}{customEditor.job.status === "completed" ? "Restore" : "Complete"}
                   </button>

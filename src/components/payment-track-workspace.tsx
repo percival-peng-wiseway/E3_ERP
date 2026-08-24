@@ -21,6 +21,7 @@ import {
   RefreshCw,
   Search,
   ShieldCheck,
+  Trash2,
   Truck,
   UploadCloud,
   UserRound,
@@ -914,6 +915,30 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
       setPmNotesError(notesError instanceof Error ? notesError.message : "Unable to save PM notes.");
     } finally {
       setPmNotesSaving(false);
+      setBusy(false);
+    }
+  };
+
+  const deleteProject = async () => {
+    if (!selected || busy || authenticatedRole !== "admin") return;
+    const project = selected;
+    if (!window.confirm(`Delete ${project.reference} for “${customerName(project)}”? Files and schedule entries will also be removed.`)) return;
+    setBusy(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/payment-track/${encodeURIComponent(project.id)}`, { method: "DELETE" });
+      const body = await readJsonResponse<{ error?: string }>(response);
+      if (!response.ok) throw new Error(apiError(body, "Unable to delete the payment project."));
+      setProjects((current) => current.filter((item) => item.id !== project.id));
+      pmNotesDirtyRef.current = false;
+      setSelectedId(null);
+      setPmNotesError("");
+      setPmNotesConflict(null);
+      setNotice(`${project.reference} deleted.`);
+      window.dispatchEvent(new CustomEvent("erp:payment-track-updated"));
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Unable to delete the payment project.");
+    } finally {
       setBusy(false);
     }
   };
@@ -2051,6 +2076,14 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                     ))}
                   </div>
                 </section>
+              ) : null}
+
+              {authenticatedRole === "admin" ? (
+                <div className={styles.dangerZone}>
+                  <button className={styles.dangerButton} type="button" disabled={busy} onClick={() => void deleteProject()}>
+                    <Trash2 size={16} /> Delete project
+                  </button>
+                </div>
               ) : null}
 
             </div>

@@ -25,6 +25,7 @@ Employee access is protected by a unified ERP sign-in. The server issues a signe
 - Stock receipt parsing and inventory updates
 - Completed delivery and stock loss history
 - Administrator item editing, stock loss and deletion
+- Role-aware controls: Sales/Admin can create orders, while stock intake and Inventory Admin controls are Administrator-only
 
 ### Quotations
 
@@ -61,7 +62,7 @@ Employee access is protected by a unified ERP sign-in. The server issues a signe
 - Approved claims move to Pending Payment; rejected claims retain the review reason
 - Admin records the payment reference and moves paid claims to Reimbursed
 - Every claim includes an invoice link and status history
-- Local claims are private to the submitting browser; Admin mode can view all claims
+- Claims are private to the submitting ERP employee account across browsers and devices; Administrators can view all claims
 
 ### Payment Track
 
@@ -194,18 +195,21 @@ Payment Track currently allows repeated Proposal Numbers so the same proposal ca
 | `PATCH/DELETE /api/announcements/:id` | Update or remove a public announcement as Administrator |
 | `GET/PUT /api/reports` | Load and automatically save the shared needs document |
 | `GET/POST/PATCH /api/reimbursements` | Private claim list, invoice submission and admin status actions |
+| `DELETE /api/reimbursements/:id` | Permanently remove a claim and its invoice as Administrator |
 | `GET/POST/DELETE /api/reimbursements/admin` | Reimbursement Admin session |
 | `GET /api/reimbursements/:id/invoice` | Protected invoice viewing |
 | `GET/POST /api/payment-track` | List projects or create a manual Payment Track project |
 | `POST /api/payment-track/import` | Import and extract an E3 Solar Proposal PDF |
-| `PATCH /api/payment-track/:id` | Apply an authorised workflow transition |
+| `PATCH/DELETE /api/payment-track/:id` | Apply an authorised workflow transition or permanently remove a project as Administrator |
 | `POST /api/payment-track/:id/proof` | Upload the initial deposit proof |
 | `GET/POST/DELETE /api/payment-track/admin` | Payment Track Admin session |
 | `GET /api/payment-track/:id/files/:fileId` | Protected proposal or proof viewing |
 | `GET/POST /api/site-visits` | List and create scheduled site visits |
-| `GET/PATCH/DELETE /api/site-visits/:id` | View, update or delete a site visit |
+| `GET/PATCH/DELETE /api/site-visits/:id` | View or update a site visit; permanent deletion requires Administrator access |
 | `POST /api/site-visits/:id/photos` | Upload site photos from a camera or photo library |
 | `GET/DELETE /api/site-visits/:id/photos/:photoId` | View or remove a protected site photo |
+| `GET/POST /api/project-schedule` | List or create custom Weekly Schedule jobs |
+| `PATCH/DELETE /api/project-schedule/:id` | Update a custom job or permanently remove it as Administrator |
 | `POST /api/agent` | OpenAI-compatible model-backed read-only questions across ERP workspaces, with a local fallback |
 | `GET/PUT/DELETE /api/settings/agent` | Masked Agent configuration, secure save and environment fallback |
 
