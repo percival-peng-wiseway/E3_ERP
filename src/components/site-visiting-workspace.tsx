@@ -773,14 +773,6 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
 
             <div className={styles.detailBody}>
               <WorkflowProgress status={detail.status} />
-              <div className={styles.visitActions}>
-                {detail.status === "pending_approval" && canApprove ? <button type="button" className={styles.approveButton} onClick={() => void runWorkflowAction("approve", "Site visit approved and ready to schedule.")} disabled={busy}><CheckCircle2 size={18} />Approve request</button> : null}
-                {detail.status === "scheduled" ? <button type="button" className={styles.startButton} onClick={() => void runWorkflowAction("start", "Site visit started.")} disabled={busy}><Navigation size={18} />Start visit</button> : null}
-                {detail.status === "in_progress" ? <button type="button" className={styles.completeButton} onClick={() => void runWorkflowAction("complete", "Site visit completed.")} disabled={busy}><CheckCircle2 size={18} />Complete visit</button> : null}
-                {detail.status === "completed" && canSchedule ? <button type="button" className={styles.secondaryButton} onClick={() => void runWorkflowAction("reopen", "Site visit reopened.")} disabled={busy}>Reopen visit</button> : null}
-                {detail.status === "cancelled" && canSchedule ? <button type="button" className={styles.secondaryButton} onClick={() => void runWorkflowAction("restore", "Site visit restored.")} disabled={busy}>Restore visit</button> : null}
-                <a className={styles.mapButton} href={mapsUrl(detail.address)} target="_blank" rel="noreferrer"><Navigation size={17} />Directions</a>
-              </div>
 
               <div className={styles.detailGrid}>
                 <section className={styles.panel}>
@@ -918,6 +910,15 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
               </section>
                 </>
               ) : null}
+
+              <div className={styles.visitActions}>
+                {detail.status === "pending_approval" && canApprove ? <button type="button" className={styles.approveButton} onClick={() => void runWorkflowAction("approve", "Site visit approved and ready to schedule.")} disabled={busy}><CheckCircle2 size={18} />Approve request</button> : null}
+                {detail.status === "scheduled" ? <button type="button" className={styles.startButton} onClick={() => void runWorkflowAction("start", "Site visit started.")} disabled={busy}><Navigation size={18} />Start visit</button> : null}
+                {detail.status === "in_progress" ? <button type="button" className={styles.completeButton} onClick={() => void runWorkflowAction("complete", "Site visit completed.")} disabled={busy}><CheckCircle2 size={18} />Complete visit</button> : null}
+                {detail.status === "completed" && canSchedule ? <button type="button" className={styles.secondaryButton} onClick={() => void runWorkflowAction("reopen", "Site visit reopened.")} disabled={busy}>Reopen visit</button> : null}
+                {detail.status === "cancelled" && canSchedule ? <button type="button" className={styles.secondaryButton} onClick={() => void runWorkflowAction("restore", "Site visit restored.")} disabled={busy}>Restore visit</button> : null}
+                <a className={styles.mapButton} href={mapsUrl(detail.address)} target="_blank" rel="noreferrer"><Navigation size={17} />Directions</a>
+              </div>
 
               <div className={styles.dangerZone}>
                 {canSchedule && detail.status !== "cancelled" && detail.status !== "completed" ? <button type="button" onClick={() => void runWorkflowAction("cancel", detail.status === "pending_approval" ? "Site visit request cancelled." : "Site visit cancelled.")} disabled={busy}>{detail.status === "pending_approval" ? "Cancel request" : "Cancel visit"}</button> : null}

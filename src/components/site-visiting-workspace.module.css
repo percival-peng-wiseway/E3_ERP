@@ -526,7 +526,7 @@
   .workflowProgress { padding-inline: 9px; }
   .workflowProgress li { gap: 4px; font-size: 10px; }
   .visitActions { display: grid; grid-template-columns: 1fr 1fr; }
-  .visitActions > button:first-child:last-of-type { grid-column: 1; }
+  .visitActions > :only-child { grid-column: 1 / -1; }
   .visitActions .mapButton { width: 100%; margin: 0; }
   .panel { padding: 14px; }
   .photoGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
