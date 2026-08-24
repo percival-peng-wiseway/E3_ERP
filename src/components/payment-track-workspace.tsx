@@ -14,7 +14,6 @@ import {
   FileCheck2,
   FileText,
   LoaderCircle,
-  LogOut,
   MapPin,
   PackageCheck,
   Paperclip,
@@ -240,20 +239,20 @@ function projectStatus(project: PaymentTrackProject): { label: string; owner: st
     if (pendingPayment) {
       return {
         label: `${pending ? `${pending} + ` : ""}payment review pending`,
-        owner: pending ? "Specialist / Admin" : "Admin",
+        owner: "Admin",
         tone: "teal",
       };
     }
     if (project.outstandingCents > 0) {
       return {
         label: `${pending ? `${pending} + ` : ""}final payment open`,
-        owner: pending ? "Specialist / Sales" : "Sales",
+        owner: pending ? "Admin / Sales" : "Sales",
         tone: "teal",
       };
     }
     return {
       label: pending ? `${pending} confirmation required` : "Finalising rebate receipts",
-      owner: "Specialist / Admin",
+      owner: "Admin",
       tone: "teal",
     };
   }
@@ -328,16 +327,16 @@ function projectNextStep(project: PaymentTrackProject, activeRole: PaymentTrackR
           : solarRebatePending
             ? "Confirm Solar Rebate"
             : "Finalise Rebate Receipts";
-    if ((activeRole === "specialist" || activeRole === "admin") && rebateReceiptPending) {
-      return { label, roles: [activeRole] as PaymentTrackRole[] };
+    if (activeRole === "admin" && rebateReceiptPending) {
+      return { label, roles: ["admin"] as PaymentTrackRole[] };
     }
     const roles: PaymentTrackRole[] = [];
-    if (rebateReceiptPending) roles.push("specialist", "admin");
+    if (rebateReceiptPending) roles.push("admin");
     if (pendingPayment && !roles.includes("admin")) roles.push("admin");
     else if (canAcknowledgePayment) roles.push("sales");
     return {
       label: project.outstandingCents > 0 ? "Open Rebate & Payment Tasks" : label,
-      roles: roles.length ? roles : ["specialist", "admin"],
+      roles: roles.length ? roles : ["admin"],
     };
   }
   if (project.outstandingCents > 0) {
@@ -609,8 +608,8 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
   const openAdd = (element: HTMLElement) => {
     returnFocusRef.current = element;
     setError("");
-    if (role !== "sales") {
-      setNotice("Switch to the Sales role to add a payment project.");
+    if (authenticatedRole !== "admin" && role !== "sales") {
+      setNotice("Only Sales or an Administrator can add a payment project.");
       return;
     }
     setAddMode("agreement");
@@ -630,6 +629,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
     setPmNotesConflict(null);
     pmNotesDirtyRef.current = false;
     setError("");
+    setRole(authenticatedRole);
     setSelectedId(project.id);
   };
 
@@ -666,24 +666,6 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
       await load(true);
     } catch (loginError) {
       setError(loginError instanceof Error ? loginError.message : "Unable to enter Administrator mode.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const logoutAdmin = async () => {
-    setBusy(true);
-    setError("");
-    try {
-      const response = await fetch("/api/payment-track/admin", { method: "DELETE" });
-      if (!response.ok) throw new Error("Unable to end Administrator mode.");
-      setAdminSession((current) => ({ ...current, admin: false }));
-      setRole("sales");
-      setSelectedId(null);
-      setNotice("Administrator mode ended.");
-      await load(true);
-    } catch (logoutError) {
-      setError(logoutError instanceof Error ? logoutError.message : "Unable to end Administrator mode.");
     } finally {
       setBusy(false);
     }
@@ -1301,7 +1283,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
     }
 
     if (project.stage === "stc_rebate") {
-      const canConfirmStc = role === "specialist" || role === "admin";
+      const canConfirmStc = role === "admin";
       const showPaymentTask = project.outstandingCents > 0 || Boolean(pendingLaterPayment(project));
       return (
         <div className={styles.parallelWorkflow}>
@@ -1314,7 +1296,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
           <div className={`${styles.parallelWorkflowGrid} ${showPaymentTask ? styles.rebateWorkflowGrid : styles.singleParallelTask}`}>
             <ParallelActionCard
               icon={<BadgeCheck size={18} />}
-              owner="Specialist / Administrator"
+              owner="Administrator"
               title="Rebate receipts"
               description="Confirm each applicable STC or Solar Rebate receipt. Every receipt asks for confirmation before it is saved."
               wide={!showPaymentTask}
@@ -1333,7 +1315,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                     confirmLabel: "Confirm Solar STC",
                     successMessage: "Solar STC payment confirmed.",
                   })}
-                  onSwitchRole={() => selectRole("specialist")}
+                  onSwitchRole={() => selectRole("admin")}
                 />
                 <StcAction
                   label="Battery STC"
@@ -1348,7 +1330,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                     confirmLabel: "Confirm Battery STC",
                     successMessage: "Battery STC payment confirmed.",
                   })}
-                  onSwitchRole={() => selectRole("specialist")}
+                  onSwitchRole={() => selectRole("admin")}
                 />
                 <StcAction
                   label="Solar Rebate"
@@ -1363,7 +1345,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                     confirmLabel: "Confirm Solar Rebate",
                     successMessage: "Solar Rebate payment confirmed.",
                   })}
-                  onSwitchRole={() => selectRole("specialist")}
+                  onSwitchRole={() => selectRole("admin")}
                 />
               </div>
             </ParallelActionCard>
@@ -1384,26 +1366,6 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
           <h1 id="payment-track-title">Payment Track</h1>
         </div>
         <div className={styles.headerActions}>
-          <label className={styles.roleSelect}>
-            <span>Working as</span>
-            <select
-              aria-label="Working role"
-              value={role}
-              disabled={authenticatedRole !== "admin"}
-              onChange={(event) => selectRole(event.target.value as PaymentTrackRole)}
-            >
-              {(authenticatedRole === "admin"
-                ? Object.keys(ROLE_LABELS) as PaymentTrackRole[]
-                : [authenticatedRole] as PaymentTrackRole[]).map((option) => (
-                <option key={option} value={option}>{ROLE_LABELS[option]}</option>
-              ))}
-            </select>
-          </label>
-          {authenticatedRole !== "admin" && adminSession.admin && role === "admin" ? (
-            <button className={styles.adminButton} type="button" disabled={busy} onClick={() => void logoutAdmin()}>
-              <ShieldCheck size={16} /> Admin active <LogOut size={14} />
-            </button>
-          ) : null}
           <button className={styles.primaryButton} type="button" onClick={(event) => openAdd(event.currentTarget)}>
             <Plus size={16} /> Add Project
           </button>
@@ -2088,12 +2050,12 @@ function StcAction({
       <span>{label}</span>
       <button
         type="button"
-        aria-label={canConfirm ? `Confirm ${label} received` : `Continue as Specialist to confirm ${label}`}
+        aria-label={canConfirm ? `Confirm ${label} received` : `Continue as Administrator to confirm ${label}`}
         disabled={busy}
         onClick={canConfirm ? onClick : onSwitchRole}
       >
         {canConfirm ? <BadgeCheck size={14} /> : <UserRound size={14} />}
-        {canConfirm ? "Confirm Received" : "Continue as Specialist"}
+        {canConfirm ? "Confirm Received" : "Continue as Administrator"}
       </button>
     </div>
   );

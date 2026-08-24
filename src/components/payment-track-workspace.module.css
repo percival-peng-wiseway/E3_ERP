@@ -40,36 +40,8 @@
   gap: 8px;
 }
 
-.roleSelect {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  color: #7a8690;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: .04em;
-  text-transform: uppercase;
-}
-
-.roleSelect select {
-  min-width: 170px;
-  height: 40px;
-  padding: 0 33px 0 11px;
-  color: #3c4852;
-  background: #fff;
-  border: 1px solid #d6dde2;
-  border-radius: 7px;
-  outline: 0;
-  font: inherit;
-  font-size: 14px;
-  font-weight: 650;
-  letter-spacing: normal;
-  text-transform: none;
-}
-
 .primaryButton,
-.secondaryButton,
-.adminButton {
+.secondaryButton {
   display: inline-flex;
   min-height: 40px;
   align-items: center;
@@ -101,17 +73,8 @@
 
 .secondaryButton:hover { color: #35424c; border-color: #aeb9c2; }
 
-.adminButton {
-  color: #246c54;
-  background: #eaf7f2;
-  border: 1px solid #bde2d4;
-}
-
-.adminButton svg:last-child { margin-left: 3px; }
-
 .primaryButton:disabled,
-.secondaryButton:disabled,
-.adminButton:disabled { opacity: .52; cursor: not-allowed; }
+.secondaryButton:disabled { opacity: .52; cursor: not-allowed; }
 
 .metrics {
   display: grid;
@@ -1277,9 +1240,8 @@
 
 @media (max-width: 760px) {
   .pageHeader { align-items: stretch; flex-direction: column; }
-  .headerActions { display: grid; grid-template-columns: 1fr 1fr; align-items: end; }
-  .roleSelect { grid-column: 1 / -1; }
-  .roleSelect select { width: 100%; }
+  .headerActions { display: grid; grid-template-columns: 1fr; align-items: end; }
+  .headerActions > button { width: 100%; }
   .metrics { grid-template-columns: 1fr; }
   .metrics article { border-right: 0; border-bottom: 1px solid #edf0f2; }
   .metrics article:last-child { border-bottom: 0; }
@@ -1314,8 +1276,6 @@
 }
 
 @media (max-width: 480px) {
-  .headerActions { grid-template-columns: 1fr; }
-  .roleSelect { grid-column: auto; }
   .pageHeader h1 { font-size: 30px; }
   .modalTabs button { padding: 0 9px; font-size: 12px; }
   .compactFields,

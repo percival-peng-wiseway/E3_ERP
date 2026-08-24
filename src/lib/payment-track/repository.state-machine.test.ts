@@ -170,6 +170,39 @@ function createPmNotesProject() {
   });
 }
 
+test("only an Administrator can confirm any customer payment amount", async () => {
+  const depositProject = await createPmNotesProject();
+  const progressedProject = await createInstallingProject({
+    stcSolarRequired: false,
+    stcBatteryRequired: false,
+  });
+
+  for (const actorRole of ["sales", "pm", "specialist"] as const) {
+    await assert.rejects(
+      transitionPaymentTrackProject(depositProject.id, "confirm_deposit", {
+        actorRole,
+        amountCents: 1_000,
+      }),
+      (error: unknown) => error instanceof PaymentTrackRepositoryError && error.code === "role_forbidden",
+    );
+    await assert.rejects(
+      transitionPaymentTrackProject(progressedProject.id, "confirm_collection", {
+        actorRole,
+        amountCents: 1_000,
+      }),
+      (error: unknown) => error instanceof PaymentTrackRepositoryError && error.code === "role_forbidden",
+    );
+    await assert.rejects(
+      transitionPaymentTrackProject(progressedProject.id, "confirm_final_payment", {
+        actorRole,
+        amountCents: 1_000,
+        paymentId: randomUUID(),
+      }),
+      (error: unknown) => error instanceof PaymentTrackRepositoryError && error.code === "role_forbidden",
+    );
+  }
+});
+
 test("PM installation scheduling saves a date without advancing the project", async () => {
   const installing = await createInstallingProject({
     stcSolarRequired: false,
@@ -295,7 +328,7 @@ test("COES and final payment progress independently through the STC stage", asyn
   assert.equal(project.stage, "stc_rebate");
 
   await assert.rejects(
-    transitionPaymentTrackProject(project.id, "confirm_solar_rebate", { actorRole: "specialist" }),
+    transitionPaymentTrackProject(project.id, "confirm_solar_rebate", { actorRole: "admin" }),
     (error: unknown) => (
       typeof error === "object"
       && error !== null
@@ -305,7 +338,7 @@ test("COES and final payment progress independently through the STC stage", asyn
   );
 
   project = await transitionPaymentTrackProject(project.id, "confirm_stc_solar", {
-    actorRole: "specialist",
+    actorRole: "admin",
   });
   assert.equal(project.stage, "done");
   assert.equal(project.outstandingCents, 5_500);
@@ -385,8 +418,19 @@ test("all required STC and Solar Rebate receipts are independent completion gate
     ),
   );
 
+  await assert.rejects(
+    transitionPaymentTrackProject(project.id, "confirm_stc_solar", {
+      actorRole: "specialist",
+    }),
+    (error: unknown) => (
+      typeof error === "object"
+      && error !== null
+      && "code" in error
+      && error.code === "role_forbidden"
+    ),
+  );
   project = await transitionPaymentTrackProject(project.id, "confirm_stc_solar", {
-    actorRole: "specialist",
+    actorRole: "admin",
   });
   assert.equal(project.stage, "stc_rebate");
   project = await transitionPaymentTrackProject(project.id, "confirm_stc_battery", {
@@ -405,7 +449,7 @@ test("all required STC and Solar Rebate receipts are independent completion gate
   );
 
   project = await transitionPaymentTrackProject(project.id, "confirm_solar_rebate", {
-    actorRole: "specialist",
+    actorRole: "admin",
   });
   assert.equal(project.stage, "done");
   assert.ok(project.solarRebateReceivedAt);
@@ -416,7 +460,7 @@ test("all required STC and Solar Rebate receipts are independent completion gate
   assert.equal(project.history.filter((entry) => entry.action === "completed").length, 1);
 
   await assert.rejects(
-    transitionPaymentTrackProject(project.id, "confirm_solar_rebate", { actorRole: "specialist" }),
+    transitionPaymentTrackProject(project.id, "confirm_solar_rebate", { actorRole: "admin" }),
     (error: unknown) => (
       typeof error === "object"
       && error !== null

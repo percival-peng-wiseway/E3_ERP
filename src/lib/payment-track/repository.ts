@@ -854,8 +854,8 @@ export function transitionPaymentTrackProject(
     ) {
       requireRole(
         input.actorRole,
-        ["specialist", "admin"],
-        "Only the Specialist or Administrator can confirm STC or Solar Rebate receipts.",
+        ["admin"],
+        "Only an Administrator can confirm STC or Solar Rebate receipts.",
       );
       if (project.stage !== "stc_rebate") {
         throw new PaymentTrackRepositoryError(

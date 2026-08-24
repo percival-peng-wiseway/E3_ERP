@@ -28,6 +28,14 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const MAX_JSON_SIZE = 16 * 1024;
+const PAYMENT_CONFIRMATION_ACTIONS = new Set<PaymentTrackAction>([
+  "confirm_deposit",
+  "confirm_collection",
+  "confirm_final_payment",
+  "confirm_stc_solar",
+  "confirm_stc_battery",
+  "confirm_solar_rebate",
+]);
 const INSTALLATION_SCHEDULE_FIELDS = new Set([
   "action",
   "actorRole",
@@ -65,6 +73,10 @@ export async function PATCH(
     }
     if (!isAuthorizedActorRequest(request, actorRole)) {
       return paymentTrackError(403, "role_forbidden", "Your signed-in role cannot perform this action.");
+    }
+    if (PAYMENT_CONFIRMATION_ACTIONS.has(action)
+      && (actorRole !== "admin" || !isAuthorizedActorRequest(request, "admin"))) {
+      return paymentTrackError(403, "admin_required", "Only an Administrator can confirm money received.");
     }
 
     let notes: string | undefined;
