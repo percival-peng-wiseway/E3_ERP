@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ERP_ROLE_LABELS, type ErpUser } from "@/lib/auth/types";
+import { readJsonResponse } from "@/lib/client/http";
 import { groupOrders, type Order } from "@/lib/inventory-operations/types";
 import { AgentSettingsDialog } from "./agent-settings-dialog";
 import { HomeCollaborationWorkspace } from "./home-collaboration-workspace";
@@ -146,7 +147,7 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
       try {
         const response = await fetch("/api/inventory/operations", { cache: "no-store" });
         if (!response.ok) return;
-        const body = await response.json() as { orders?: Order[] };
+        const body = await readJsonResponse<{ orders?: Order[] }>(response);
         if (!active || requestId !== latestRequest || !Array.isArray(body.orders)) return;
         setPendingPmReviewCount(groupOrders(
           body.orders.filter((order) => order.status === "pending"),
@@ -289,6 +290,7 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
         <main className={`desk-main ${activeModule === "home" || activeModule === "projects" || activeModule === "site-visits" || activeModule === "payments" || activeModule === "reimbursements" ? "wide-workspace" : ""}`}>
           <div className="persistent-home-workspace" hidden={activeModule !== "home"}>
             <HomeCollaborationWorkspace
+              currentUser={currentUser}
               onOpenSettings={currentUser.role === "admin" ? () => setAgentSettingsOpen(true) : undefined}
               onNavigate={(module) => navigate(module)}
             />

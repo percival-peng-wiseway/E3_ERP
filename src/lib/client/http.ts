@@ -7,7 +7,12 @@ function responseLabel(response: Response) {
  * errors into the UI when a proxy or runtime returns an empty/non-JSON body.
  */
 export async function readJsonResponse<T = unknown>(response: Response): Promise<T> {
-  const rawBody = await response.text();
+  let rawBody: string;
+  try {
+    rawBody = await response.text();
+  } catch {
+    throw new Error(`The server response could not be read${responseLabel(response)}. Please try again.`);
+  }
   if (!rawBody.trim()) {
     throw new Error(`The server returned an empty response${responseLabel(response)}. Please try again.`);
   }

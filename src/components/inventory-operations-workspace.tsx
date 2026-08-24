@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { readJsonResponse } from "@/lib/client/http";
 import styles from "./inventory-operations-workspace.module.css";
 
 type InventoryItem = {
@@ -91,7 +92,7 @@ export function InventoryOperationsWorkspace() {
   const refresh = async () => {
     const response = await fetch("/api/inventory/operations", { cache: "no-store" });
     if (!response.ok) throw new Error("Could not load inventory.");
-    setData(await response.json());
+    setData(await readJsonResponse<ApiState>(response));
   };
 
   useEffect(() => {
@@ -99,7 +100,7 @@ export function InventoryOperationsWorkspace() {
     fetch("/api/inventory/operations", { cache: "no-store" })
       .then((response) => {
         if (!response.ok) throw new Error("Could not load inventory.");
-        return response.json() as Promise<ApiState>;
+        return readJsonResponse<ApiState>(response);
       })
       .then((result) => {
         if (active) setData(result);
@@ -128,7 +129,7 @@ export function InventoryOperationsWorkspace() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const result = await response.json();
+      const result = await readJsonResponse<{ error?: unknown; receivedQuantity?: unknown }>(response);
       if (!response.ok) throw new Error(toEnglishApiMessage(result.error));
       window.dispatchEvent(new CustomEvent("erp:inventory-updated"));
       await refresh();
@@ -231,7 +232,7 @@ export function InventoryOperationsWorkspace() {
   const changeStatus = async (sku: string, status: string) => {
     try {
       const result = await mutate({ action: "setStatus", sku, status });
-      notify(result.receivedQuantity
+      notify(typeof result.receivedQuantity === "number" && result.receivedQuantity > 0
         ? `Status updated and ${result.receivedQuantity} units moved from Pending to on-hand stock`
         : "Status updated");
     } catch (error) {

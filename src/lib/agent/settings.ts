@@ -2,9 +2,16 @@ import { randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-export const DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com";
-export const DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash";
-const ALLOWED_DEEPSEEK_MODELS = new Set(["deepseek-v4-flash", "deepseek-v4-pro"]);
+export const DEFAULT_AGENT_BASE_URL = "https://navigator-spongy-diagnosis.ngrok-free.dev/v1";
+export const DEFAULT_AGENT_MODEL = "qwen3.5:9b";
+const ALLOWED_AGENT_MODELS = new Set([
+  "qwen3.5:9b",
+  "qwenvl4b:latest",
+  "qwen3-vl:4b",
+  "qwen2.5vl:7b",
+  "qwen3.6:27b",
+  "qwen3.6:latest",
+]);
 
 type StoredAgentSettings = {
   apiKey?: string;
@@ -17,7 +24,7 @@ export type ResolvedAgentSettings = {
   apiKey: string | null;
   baseUrl: string;
   model: string;
-  source: "saved" | "environment" | "none";
+  source: "saved" | "environment" | "default";
 };
 
 export type PublicAgentSettings = Omit<ResolvedAgentSettings, "apiKey"> & {
@@ -58,18 +65,25 @@ async function ensureStorage() {
 function normalizedBaseUrl(value: string): string {
   const text = value.trim();
   if (!text || text.length > 500) {
-    throw new AgentSettingsError("Enter a valid DeepSeek base URL.");
+    throw new AgentSettingsError("Enter a valid model API base URL.");
   }
 
   let url: URL;
   try {
     url = new URL(text);
   } catch {
-    throw new AgentSettingsError("Enter a valid DeepSeek base URL.");
+    throw new AgentSettingsError("Enter a valid model API base URL.");
   }
-  if (url.protocol !== "https:" || url.hostname.toLowerCase() !== "api.deepseek.com"
+  const allowedHosts = new Set([
+    "navigator-spongy-diagnosis.ngrok-free.dev",
+    ...(process.env.AGENT_ALLOWED_API_HOSTS || "")
+      .split(",")
+      .map((host) => host.trim().toLowerCase())
+      .filter(Boolean),
+  ]);
+  if (url.protocol !== "https:" || !allowedHosts.has(url.hostname.toLowerCase())
     || url.port || url.username || url.password || url.search || url.hash) {
-    throw new AgentSettingsError("The DeepSeek base URL must use https://api.deepseek.com.");
+    throw new AgentSettingsError("The model API URL must use HTTPS and an approved host.");
   }
   url.pathname = url.pathname.replace(/\/+$/, "");
   return url.toString().replace(/\/$/, "");
@@ -77,8 +91,8 @@ function normalizedBaseUrl(value: string): string {
 
 function normalizedModel(value: string): string {
   const model = value.trim();
-  if (!ALLOWED_DEEPSEEK_MODELS.has(model)) {
-    throw new AgentSettingsError("Select deepseek-v4-flash or deepseek-v4-pro.");
+  if (!ALLOWED_AGENT_MODELS.has(model)) {
+    throw new AgentSettingsError("Select one of the approved models exposed by the model API.");
   }
   return model;
 }
@@ -86,7 +100,7 @@ function normalizedModel(value: string): string {
 function normalizedApiKey(value: string): string {
   const apiKey = value.trim();
   if (apiKey.length < 8 || apiKey.length > 4_096 || /[\s\u0000-\u001f\u007f]/.test(apiKey)) {
-    throw new AgentSettingsError("Enter a valid DeepSeek API key.");
+    throw new AgentSettingsError("Enter a valid model API key.");
   }
   return apiKey;
 }
@@ -99,8 +113,8 @@ function normalizeStoredSettings(value: unknown): StoredAgentSettings | null {
       ...(typeof candidate.apiKey === "string" && candidate.apiKey.trim()
         ? { apiKey: normalizedApiKey(candidate.apiKey) }
         : {}),
-      baseUrl: normalizedBaseUrl(String(candidate.baseUrl || DEFAULT_DEEPSEEK_BASE_URL)),
-      model: normalizedModel(String(candidate.model || DEFAULT_DEEPSEEK_MODEL)),
+      baseUrl: normalizedBaseUrl(String(candidate.baseUrl || DEFAULT_AGENT_BASE_URL)),
+      model: normalizedModel(String(candidate.model || DEFAULT_AGENT_MODEL)),
       updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : new Date(0).toISOString(),
     };
   } catch {
@@ -112,7 +126,15 @@ async function readStoredSettings(): Promise<StoredAgentSettings | null> {
   await ensureStorage();
   try {
     const raw = await readFile(/* turbopackIgnore: true */ settingsPath, "utf8");
-    const settings = normalizeStoredSettings(JSON.parse(raw));
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const legacy = parsed as { baseUrl?: unknown; model?: unknown };
+      if (legacy.baseUrl === "https://api.deepseek.com"
+        || (typeof legacy.model === "string" && legacy.model.startsWith("deepseek-"))) {
+        return null;
+      }
+    }
+    const settings = normalizeStoredSettings(parsed);
     if (!settings) throw new AgentSettingsError("The saved Agent settings are invalid.", 500, "settings_corrupt");
     await chmod(settingsPath, 0o600);
     return settings;
@@ -141,22 +163,29 @@ async function writeStoredSettings(settings: StoredAgentSettings) {
 
 function environmentSettings() {
   let apiKey: string | null = null;
-  let baseUrl = DEFAULT_DEEPSEEK_BASE_URL;
-  let model = DEFAULT_DEEPSEEK_MODEL;
+  let baseUrl = DEFAULT_AGENT_BASE_URL;
+  let model = DEFAULT_AGENT_MODEL;
+  let explicit = false;
   try {
-    if (process.env.DEEPSEEK_API_KEY?.trim()) {
-      apiKey = normalizedApiKey(process.env.DEEPSEEK_API_KEY);
+    const configuredApiKey = process.env.AGENT_API_KEY;
+    const configuredBaseUrl = process.env.AGENT_BASE_URL;
+    const configuredModel = process.env.AGENT_MODEL;
+    if (configuredApiKey?.trim()) {
+      apiKey = normalizedApiKey(configuredApiKey);
+      explicit = true;
     }
-    if (process.env.DEEPSEEK_BASE_URL?.trim()) {
-      baseUrl = normalizedBaseUrl(process.env.DEEPSEEK_BASE_URL);
+    if (configuredBaseUrl?.trim()) {
+      baseUrl = normalizedBaseUrl(configuredBaseUrl);
+      explicit = true;
     }
-    if (process.env.DEEPSEEK_MODEL?.trim()) {
-      model = normalizedModel(process.env.DEEPSEEK_MODEL);
+    if (configuredModel?.trim()) {
+      model = normalizedModel(configuredModel);
+      explicit = true;
     }
   } catch (error) {
-    console.error("Invalid DeepSeek environment configuration", error instanceof Error ? error.message : error);
+    console.error("Invalid Agent model environment configuration", error instanceof Error ? error.message : error);
   }
-  return { apiKey, baseUrl, model };
+  return { apiKey, baseUrl, model, explicit };
 }
 
 export async function resolveAgentSettings(): Promise<ResolvedAgentSettings> {
@@ -170,7 +199,7 @@ export async function resolveAgentSettings(): Promise<ResolvedAgentSettings> {
     apiKey,
     baseUrl: saved?.baseUrl || environment.baseUrl,
     model: saved?.model || environment.model,
-    source: saved?.apiKey ? "saved" : environment.apiKey ? "environment" : "none",
+    source: saved ? "saved" : environment.explicit ? "environment" : "default",
   };
 }
 
@@ -183,7 +212,7 @@ function maskedApiKey(apiKey: string | null): string | null {
 export async function publicAgentSettings(): Promise<PublicAgentSettings> {
   const settings = await resolveAgentSettings();
   return {
-    configured: Boolean(settings.apiKey),
+    configured: true,
     maskedApiKey: maskedApiKey(settings.apiKey),
     baseUrl: settings.baseUrl,
     model: settings.model,
@@ -209,11 +238,11 @@ export function saveAgentSettings(input: {
     const environment = environmentSettings();
     const resolvedKey = apiKey || environment.apiKey;
     return {
-      configured: Boolean(resolvedKey),
+      configured: true,
       maskedApiKey: maskedApiKey(resolvedKey),
       baseUrl: normalizedBaseUrl(input.baseUrl),
       model: normalizedModel(input.model),
-      source: apiKey ? "saved" : environment.apiKey ? "environment" : "none",
+      source: "saved",
     };
   });
 }
@@ -225,11 +254,11 @@ export function clearAgentSettings(): Promise<PublicAgentSettings> {
     });
     const environment = environmentSettings();
     return {
-      configured: Boolean(environment.apiKey),
+      configured: true,
       maskedApiKey: maskedApiKey(environment.apiKey),
       baseUrl: environment.baseUrl,
       model: environment.model,
-      source: environment.apiKey ? "environment" : "none",
+      source: environment.explicit ? "environment" : "default",
     };
   });
 }

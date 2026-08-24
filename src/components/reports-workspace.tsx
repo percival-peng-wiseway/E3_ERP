@@ -10,6 +10,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
+import { readJsonResponse } from "@/lib/client/http";
 import styles from "./reports-workspace.module.css";
 
 type ReportDocument = {
@@ -98,7 +99,7 @@ export function ReportsWorkspace() {
     readyRef.current = false;
     try {
       const response = await fetch("/api/reports", { cache: "no-store" });
-      const body = await response.json() as { data?: ReportDocument; error?: string };
+      const body = await readJsonResponse<{ data?: ReportDocument; error?: string }>(response);
       if (!response.ok || !body.data) throw new Error(apiError(body, "Unable to load your needs."));
       if (!mountedRef.current || requestId !== loadRequestIdRef.current) return;
       const serverContent = typeof body.data.content === "string" ? body.data.content : "";
@@ -167,7 +168,7 @@ export function ReportsWorkspace() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ content: nextContent, revision: revisionRef.current }),
         });
-        const body = await response.json() as { data?: ReportDocument; error?: string };
+        const body = await readJsonResponse<{ data?: ReportDocument; error?: string }>(response);
 
         if (response.status === 409 && body.data) {
           revisionRef.current = Number.isInteger(body.data.revision) ? body.data.revision : revisionRef.current;

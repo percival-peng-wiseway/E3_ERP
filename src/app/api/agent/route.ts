@@ -1,4 +1,4 @@
-import { answerWithDeepSeek } from "@/lib/agent/deepseek";
+import { answerWithOpenAICompatible } from "@/lib/agent/deepseek";
 import {
   AgentRequestBodyTooLarge,
   readLimitedAgentJson,
@@ -56,7 +56,7 @@ function cleanRequest(value: unknown): { message: string; section?: string; hist
   };
 }
 
-export async function POST(request: Request) {
+async function processAgentRequest(request: Request) {
   if (!isAuthorizedMutationRequest(request)) {
     return error(403, "forbidden", "Agent requests must come from the same-origin application.");
   }
@@ -82,40 +82,39 @@ export async function POST(request: Request) {
 
   const provider = getERPProvider();
   let warning: string | undefined;
+  const settings = await resolveAgentSettings();
+  let data;
   try {
-    const settings = await resolveAgentSettings();
-    let data;
-    if (settings.apiKey) {
-      try {
-        data = await answerWithDeepSeek({
-          provider,
-          message: input.message,
-          history: input.history,
-          section: input.section,
-          apiKey: settings.apiKey,
-          baseUrl: settings.baseUrl,
-          model: settings.model,
-        });
-      } catch (deepSeekError) {
-        console.error("DeepSeek Agent unavailable; using local fallback", deepSeekError instanceof Error ? deepSeekError.message : deepSeekError);
-        warning = "DeepSeek is temporarily unavailable. Local read-only query mode is being used.";
-        data = await localWorkspaceAnswer(provider, input.message);
-      }
-    } else {
-      data = await localWorkspaceAnswer(provider, input.message);
-      warning = "Add a DeepSeek API key in Settings to enable conversational answers across every workspace.";
-    }
-
-    return json({
-      data,
-      meta: {
-        source: provider.source,
-        generatedAt: new Date().toISOString(),
-        configured: Boolean(settings.apiKey),
-        model: settings.apiKey ? settings.model : null,
-        ...(warning ? { warning } : {}),
-      },
+    data = await answerWithOpenAICompatible({
+      provider,
+      message: input.message,
+      history: input.history,
+      section: input.section,
+      apiKey: settings.apiKey,
+      baseUrl: settings.baseUrl,
+      model: settings.model,
     });
+  } catch (modelError) {
+    console.error("Agent model API unavailable; using local fallback", modelError instanceof Error ? modelError.message : modelError);
+    warning = "The model API is temporarily unavailable. Local read-only query mode is being used.";
+    data = await localWorkspaceAnswer(provider, input.message);
+  }
+
+  return json({
+    data,
+    meta: {
+      source: provider.source,
+      generatedAt: new Date().toISOString(),
+      configured: true,
+      model: settings.model,
+      ...(warning ? { warning } : {}),
+    },
+  });
+}
+
+export async function POST(request: Request) {
+  try {
+    return await processAgentRequest(request);
   } catch (agentError) {
     console.error("Agent API error", agentError instanceof Error ? agentError.message : agentError);
     return error(502, "agent_unavailable", "The Agent cannot process this request right now.");

@@ -11,11 +11,12 @@ import {
   X,
 } from "lucide-react";
 import { FormEvent, MouseEvent as ReactMouseEvent, useEffect, useRef, useState } from "react";
+import { readJsonResponse } from "@/lib/client/http";
 import styles from "./agent-settings-dialog.module.css";
 
 type AgentSettings = {
   configured: boolean;
-  source: "saved" | "environment" | "none";
+  source: "saved" | "environment" | "default";
   maskedApiKey: string | null;
   baseUrl: string;
   model: string;
@@ -27,11 +28,11 @@ type AgentSettingsResponse = {
 };
 
 const EMPTY_SETTINGS: AgentSettings = {
-  configured: false,
-  source: "none",
+  configured: true,
+  source: "default",
   maskedApiKey: null,
-  baseUrl: "https://api.deepseek.com",
-  model: "deepseek-v4-flash",
+  baseUrl: "https://navigator-spongy-diagnosis.ngrok-free.dev/v1",
+  model: "qwen3.5:9b",
 };
 
 function responseError(body: AgentSettingsResponse, fallback: string) {
@@ -77,7 +78,7 @@ export function AgentSettingsDialog({
     setApiKey("");
     void fetch("/api/settings/agent", { cache: "no-store" })
       .then(async (response) => {
-        const body = await response.json() as AgentSettingsResponse;
+        const body = await readJsonResponse<AgentSettingsResponse>(response);
         if (!response.ok || !body.data) throw new Error(responseError(body, "Unable to load Agent settings."));
         if (!active) return;
         setSettings(body.data);
@@ -137,10 +138,6 @@ export function AgentSettingsDialog({
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!settings.configured && !apiKey.trim()) {
-      setError("Enter a DeepSeek API key to enable the Agent.");
-      return;
-    }
     setSaving(true);
     setError("");
     setNotice("");
@@ -154,13 +151,13 @@ export function AgentSettingsDialog({
           model,
         }),
       });
-      const body = await response.json() as AgentSettingsResponse;
+      const body = await readJsonResponse<AgentSettingsResponse>(response);
       if (!response.ok || !body.data) throw new Error(responseError(body, "Unable to save Agent settings."));
       setSettings(body.data);
       setBaseUrl(body.data.baseUrl);
       setModel(body.data.model);
       setApiKey("");
-      setNotice("DeepSeek settings saved. The E3 Agent is ready.");
+      setNotice("Model API settings saved. The E3 Agent is ready.");
       window.dispatchEvent(new CustomEvent("erp:agent-settings-updated"));
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Unable to save Agent settings.");
@@ -175,15 +172,15 @@ export function AgentSettingsDialog({
     setNotice("");
     try {
       const response = await fetch("/api/settings/agent", { method: "DELETE" });
-      const body = await response.json() as AgentSettingsResponse;
+      const body = await readJsonResponse<AgentSettingsResponse>(response);
       if (!response.ok || !body.data) throw new Error(responseError(body, "Unable to clear saved Agent settings."));
       setSettings(body.data);
       setBaseUrl(body.data.baseUrl);
       setModel(body.data.model);
       setApiKey("");
-      setNotice(body.data.configured
+      setNotice(body.data.source === "environment"
         ? "Saved settings removed. Environment configuration is now active."
-        : "Saved DeepSeek settings removed. The Agent is using local query mode.");
+        : "Saved settings removed. The default model endpoint is now active.");
       window.dispatchEvent(new CustomEvent("erp:agent-settings-updated"));
     } catch (clearError) {
       setError(clearError instanceof Error ? clearError.message : "Unable to clear saved Agent settings.");
@@ -203,7 +200,7 @@ export function AgentSettingsDialog({
           <div className={styles.headingIcon}><Bot size={21} /></div>
           <div>
             <span>Settings</span>
-            <h2 id="agent-settings-title">E3 Agent &amp; DeepSeek</h2>
+            <h2 id="agent-settings-title">E3 Agent Model API</h2>
           </div>
           <button type="button" aria-label="Close settings" disabled={saving} onClick={onClose}><X size={19} /></button>
         </header>
@@ -215,11 +212,11 @@ export function AgentSettingsDialog({
             <div className={`${styles.status} ${settings.configured ? styles.ready : ""}`}>
               {settings.configured ? <CheckCircle2 size={17} /> : <KeyRound size={17} />}
               <div>
-                <strong>{settings.configured ? "DeepSeek connected" : "API key required"}</strong>
+                <strong>{settings.configured ? "Model endpoint configured" : "Model endpoint unavailable"}</strong>
                 <small>
                   {settings.configured
-                    ? `${settings.source === "saved" ? "Saved settings" : "Environment settings"}${settings.maskedApiKey ? ` · ${settings.maskedApiKey}` : ""}`
-                    : "Until configured, the Agent uses limited local query mode."}
+                    ? `${settings.source === "saved" ? "Saved settings" : settings.source === "environment" ? "Environment settings" : "Default settings"}${settings.maskedApiKey ? ` · ${settings.maskedApiKey}` : " · no API key required"}`
+                    : "The Agent will use limited local query mode."}
                 </small>
               </div>
             </div>
@@ -228,7 +225,7 @@ export function AgentSettingsDialog({
             {error ? <div className={styles.error} role="alert">{error}</div> : null}
 
             <label>
-              DeepSeek API key
+              API key (optional)
               <span className={styles.secretField}>
                 <KeyRound size={15} />
                 <input
@@ -236,7 +233,7 @@ export function AgentSettingsDialog({
                   autoComplete="new-password"
                   value={apiKey}
                   onChange={(event) => setApiKey(event.target.value)}
-                  placeholder={settings.configured ? "Leave blank to keep the current key" : "Enter your DeepSeek API key"}
+                  placeholder={settings.maskedApiKey ? "Leave blank to keep the current key" : "No key required by the current endpoint"}
                 />
               </span>
             </label>
@@ -245,8 +242,12 @@ export function AgentSettingsDialog({
               <label>
                 Model
                 <select value={model} onChange={(event) => setModel(event.target.value)}>
-                  <option value="deepseek-v4-flash">DeepSeek V4 Flash</option>
-                  <option value="deepseek-v4-pro">DeepSeek V4 Pro</option>
+                  <option value="qwen3.5:9b">Qwen 3.5 9B</option>
+                  <option value="qwenvl4b:latest">Qwen VL 4B</option>
+                  <option value="qwen3-vl:4b">Qwen 3 VL 4B</option>
+                  <option value="qwen2.5vl:7b">Qwen 2.5 VL 7B</option>
+                  <option value="qwen3.6:27b">Qwen 3.6 27B</option>
+                  <option value="qwen3.6:latest">Qwen 3.6 Latest</option>
                 </select>
               </label>
               <label>
@@ -257,13 +258,13 @@ export function AgentSettingsDialog({
 
             <div className={styles.securityNote}>
               <ShieldCheck size={17} />
-              <p><strong>Server-side only.</strong> The key is never returned to the browser after saving. Questions may send only the business data needed to answer them to DeepSeek.</p>
+              <p><strong>Server-side only.</strong> Any key is never returned to the browser after saving. Questions may send only the business data needed to answer them to the configured model endpoint.</p>
             </div>
 
             <footer>
               {settings.source === "saved" ? (
                 <button className={styles.deleteButton} type="button" disabled={saving} onClick={() => void clearSaved()}>
-                  <Trash2 size={15} /> Remove saved key
+                  <Trash2 size={15} /> Remove saved settings
                 </button>
               ) : <span />}
               <div>

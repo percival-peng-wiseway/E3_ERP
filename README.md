@@ -10,11 +10,12 @@ Employee access is protected by a unified ERP sign-in. The server issues a signe
 
 ### Home and Agent
 
-- The Home workspace places the read-only E3 Agent beside the E3 Group internal discussion feed
-- DeepSeek answers questions across Inventory, Quotations, Project Management deliveries, Payment Track, Reimbursements and Reports using bounded read-only tools
-- Configure the DeepSeek API key, approved model and connection status from Settings; saved UI settings take priority over environment fallbacks
-- Only `https://api.deepseek.com` is accepted, with `deepseek-v4-flash` as the default and `deepseek-v4-pro` as the optional model
-- Without an API key, basic local summaries remain available
+- Home shows role-specific action reminders and Admin-managed public announcements on the left, with E3 Agent on the right
+- Sales reminders are limited to actionable Payment Track collections; PM receives only delivery and installation scheduling reminders; Admin receives submitted payment confirmations and reimbursement actions
+- The OpenAI-compatible Ollama endpoint answers questions across Inventory, Quotations, Project Management deliveries, Payment Track, Reimbursements, Reports and public announcements using bounded read-only tools
+- `qwen3.5:9b` is the default model; the other models advertised by the endpoint can be selected from Settings
+- The current endpoint does not require an API key; an optional key remains supported for future compatible endpoints
+- If the endpoint is unavailable, basic local summaries remain available
 - Payment proof URLs, reimbursement invoice URLs, access tokens, cookies and API keys are never included in model tool results
 
 ### Inventory
@@ -134,9 +135,10 @@ INVENTORY_OPERATIONS_API_URL=https://inventory.e3energy.com.au/api/inventory
 QUOTEHELP_APP_URL=https://quote.e3energy.com.au
 ERP_INTERNAL_API_TOKEN=
 ERP_AUTH_SESSION_SECRET=
-DEEPSEEK_API_KEY=
-DEEPSEEK_BASE_URL=https://api.deepseek.com
-DEEPSEEK_MODEL=deepseek-v4-flash
+AGENT_API_KEY=
+AGENT_BASE_URL=https://navigator-spongy-diagnosis.ngrok-free.dev/v1
+AGENT_MODEL=qwen3.5:9b
+AGENT_ALLOWED_API_HOSTS=
 AGENT_SETTINGS_DATA_DIR=
 GROUP_CHAT_DATA_DIR=
 ```
@@ -148,7 +150,7 @@ GROUP_CHAT_DATA_DIR=
 - Browser writes require both a valid employee session and a verifiably same-origin request. Trusted server writes require the `ERP_INTERNAL_API_TOKEN` bearer token.
 - QuoteHelp Excel uploads are limited to 25 MiB; Inventory JSON operations are limited to 512 KiB.
 - Agent and Agent Settings writes are same-origin protected and body-size limited. The API key is stored in a private `0700` directory using an atomic `0600` file and is returned only as a masked configured state.
-- The DeepSeek connection is restricted to the official HTTPS host. Model tools strictly validate their arguments and return bounded, sanitised, read-only records.
+- The model connection is restricted to approved HTTPS hosts. Model tools strictly validate their arguments and return bounded, sanitised, read-only records.
 
 The home summary and retained read-only Agent/MCP APIs can use separate unified data sources:
 
@@ -188,6 +190,8 @@ Payment Track currently allows repeated Proposal Numbers so the same proposal ca
 | `GET /api/inventory` | Unified read-only inventory list |
 | `GET /api/quotations` | Unified read-only quotation list |
 | `GET /api/dashboard` | Home inventory, alert and quotation summary |
+| `GET/POST /api/announcements` | List public announcements or publish one as Administrator |
+| `PATCH/DELETE /api/announcements/:id` | Update or remove a public announcement as Administrator |
 | `GET/PUT /api/reports` | Load and automatically save the shared needs document |
 | `GET/POST/PATCH /api/reimbursements` | Private claim list, invoice submission and admin status actions |
 | `GET/POST/DELETE /api/reimbursements/admin` | Reimbursement Admin session |
@@ -202,7 +206,7 @@ Payment Track currently allows repeated Proposal Numbers so the same proposal ca
 | `GET/PATCH/DELETE /api/site-visits/:id` | View, update or delete a site visit |
 | `POST /api/site-visits/:id/photos` | Upload site photos from a camera or photo library |
 | `GET/DELETE /api/site-visits/:id/photos/:photoId` | View or remove a protected site photo |
-| `POST /api/agent` | DeepSeek-backed read-only questions across ERP workspaces, with a local fallback |
+| `POST /api/agent` | OpenAI-compatible model-backed read-only questions across ERP workspaces, with a local fallback |
 | `GET/PUT/DELETE /api/settings/agent` | Masked Agent configuration, secure save and environment fallback |
 
 ## MCP Server
@@ -238,8 +242,8 @@ src/app/api/quotehelp/                             Controlled QuoteHelp proxy
 src/app/api/reimbursements/                        Claim, admin and invoice APIs
 src/app/api/payment-track/                         Payment workflow, import, proof and file APIs
 src/app/api/reports/                               Reports document API
-src/app/api/settings/agent/                        Secure DeepSeek Agent configuration API
-src/lib/agent/                                     DeepSeek client, settings storage and bounded ERP tools
+src/app/api/settings/agent/                        Secure Agent model configuration API
+src/lib/agent/                                     Model client, settings storage and bounded ERP tools
 src/lib/payment-track/                             Payment state machine, storage and PDF extraction
 src/lib/site-visits/                               Site visit records, checklist and photo storage
 src/lib/quotehelp/                                 Quotation domain and Excel logic

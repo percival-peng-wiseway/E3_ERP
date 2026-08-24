@@ -6,12 +6,12 @@ import {
   BellRing,
   Bot,
   LoaderCircle,
+  Megaphone,
   RefreshCw,
   Send,
   Settings2,
   Sparkles,
   Trash2,
-  Wifi,
 } from "lucide-react";
 import {
   KeyboardEvent,
@@ -22,6 +22,8 @@ import {
 } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { ERP_ROLE_LABELS, type ErpUser } from "@/lib/auth/types";
+import { readJsonResponse } from "@/lib/client/http";
 import styles from "./home-collaboration-workspace.module.css";
 
 type AgentRole = "user" | "assistant";
@@ -48,7 +50,16 @@ type WorkspaceNotification = {
   actionLabel: string;
 };
 
+type Announcement = {
+  id: string;
+  title: string;
+  content: string;
+  createdAt: string;
+  createdBy: string;
+};
+
 type HomeCollaborationWorkspaceProps = {
+  currentUser: ErpUser;
   onOpenSettings?: () => void;
   onNavigate?: (module: NotificationModule, entityId?: string) => void;
 };
@@ -58,21 +69,14 @@ const DEFAULT_SUGGESTIONS = [
   "Summarise current payment collections",
   "What deliveries are waiting for PM review?",
 ];
-const AGENT_CONVERSATION_STORAGE_KEY = "e3-agent-conversation:v1";
+const LEGACY_AGENT_CONVERSATION_STORAGE_KEY = "e3-agent-conversation:v1";
 const AGENT_CONVERSATION_STORAGE_VERSION = 1;
 const MAX_MESSAGE_LENGTH = 2_000;
 const MAX_AGENT_HISTORY_MESSAGES = 100;
 const MAX_AGENT_HISTORY_CHARACTERS = 200_000;
 const MAX_AGENT_HISTORY_MESSAGE_CHARACTERS = 50_000;
 const NOTIFICATION_REFRESH_INTERVAL_MS = 30_000;
-
-const NOTIFICATION_FILTERS: Array<{ value: NotificationRole; label: string }> = [
-  { value: "all", label: "All" },
-  { value: "sales", label: "Sales" },
-  { value: "specialist", label: "Specialist" },
-  { value: "pm", label: "PM" },
-  { value: "admin", label: "Admin" },
-];
+const ANNOUNCEMENT_REFRESH_INTERVAL_MS = 60_000;
 
 const EMPTY_NOTIFICATION_COUNTS: Record<NotificationRole, number> = {
   all: 0,
@@ -80,13 +84,6 @@ const EMPTY_NOTIFICATION_COUNTS: Record<NotificationRole, number> = {
   specialist: 0,
   pm: 0,
   admin: 0,
-};
-
-const NOTIFICATION_ROLE_LABELS: Record<NotificationOwnerRole, string> = {
-  sales: "Sales",
-  specialist: "Specialist",
-  pm: "PM",
-  admin: "Admin",
 };
 
 const NOTIFICATION_PRIORITY_LABELS: Record<NotificationPriority, string> = {
@@ -219,6 +216,66 @@ function formatTime(value: string) {
   }).format(date);
 }
 
+function formatAnnouncementDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Recently";
+  return new Intl.DateTimeFormat("en-AU", {
+    day: "numeric",
+    month: "short",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function normalizeAnnouncement(value: unknown): Announcement | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const item = value as Record<string, unknown>;
+  if (
+    typeof item.id !== "string"
+    || !item.id.trim()
+    || item.id.length > 200
+    || typeof item.title !== "string"
+    || item.title.length > 140
+    || typeof item.content !== "string"
+    || !item.content.trim()
+    || item.content.length > 4_000
+    || typeof item.createdAt !== "string"
+    || Number.isNaN(Date.parse(item.createdAt))
+    || typeof item.createdBy !== "string"
+    || !item.createdBy.trim()
+    || item.createdBy.length > 160
+  ) {
+    return null;
+  }
+  return {
+    id: item.id,
+    title: item.title.trim(),
+    content: item.content.trim(),
+    createdAt: item.createdAt,
+    createdBy: item.createdBy.trim(),
+  };
+}
+
+function readAnnouncementList(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const data = (value as Record<string, unknown>).data;
+  if (!Array.isArray(data)) return null;
+  const seen = new Set<string>();
+  return data
+    .map(normalizeAnnouncement)
+    .filter((announcement): announcement is Announcement => {
+      if (!announcement || seen.has(announcement.id)) return false;
+      seen.add(announcement.id);
+      return true;
+    })
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id));
+}
+
+function readAnnouncementItem(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return normalizeAnnouncement((value as Record<string, unknown>).data);
+}
+
 function normalizeNotification(value: unknown): WorkspaceNotification | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const item = value as Record<string, unknown>;
@@ -265,7 +322,7 @@ function readNotificationResponse(value: unknown) {
   }
   const rawCounts = data.counts as Record<string, unknown>;
   const counts = { ...EMPTY_NOTIFICATION_COUNTS };
-  for (const { value: role } of NOTIFICATION_FILTERS) {
+  for (const role of ["all", "sales", "specialist", "pm", "admin"] as const) {
     const count = rawCounts[role];
     counts[role] = typeof count === "number" && Number.isFinite(count) && count >= 0
       ? Math.floor(count)
@@ -297,9 +354,10 @@ function readNotificationResponse(value: unknown) {
   };
 }
 
-export function HomeCollaborationWorkspace({ onOpenSettings, onNavigate }: HomeCollaborationWorkspaceProps) {
+export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavigate }: HomeCollaborationWorkspaceProps) {
   const [agentMessages, setAgentMessages] = useState<AgentMessage[]>([]);
   const [agentHistoryHydrated, setAgentHistoryHydrated] = useState(false);
+  const [agentHydratedStorageKey, setAgentHydratedStorageKey] = useState("");
   const [agentInput, setAgentInput] = useState("");
   const [agentSuggestions, setAgentSuggestions] = useState(DEFAULT_SUGGESTIONS);
   const [agentLoading, setAgentLoading] = useState(false);
@@ -311,21 +369,31 @@ export function HomeCollaborationWorkspace({ onOpenSettings, onNavigate }: HomeC
   const agentStorageClearGuardRef = useRef(false);
   const agentFeedRef = useRef<HTMLDivElement>(null);
 
-  const [notificationRole, setNotificationRole] = useState<NotificationRole>("all");
   const [notifications, setNotifications] = useState<WorkspaceNotification[]>([]);
-  const [notificationCounts, setNotificationCounts] = useState<Record<NotificationRole, number>>(EMPTY_NOTIFICATION_COUNTS);
   const [notificationsLoading, setNotificationsLoading] = useState(true);
   const [notificationsError, setNotificationsError] = useState("");
   const [notificationsWarning, setNotificationsWarning] = useState("");
   const [notificationsGeneratedAt, setNotificationsGeneratedAt] = useState("");
   const notificationsAbortRef = useRef<AbortController | null>(null);
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [announcementsLoading, setAnnouncementsLoading] = useState(true);
+  const [announcementsError, setAnnouncementsError] = useState("");
+  const [announcementTitle, setAnnouncementTitle] = useState("");
+  const [announcementContent, setAnnouncementContent] = useState("");
+  const [announcementSubmitting, setAnnouncementSubmitting] = useState(false);
+  const [announcementDeletingId, setAnnouncementDeletingId] = useState("");
+  const announcementsAbortRef = useRef<AbortController | null>(null);
+  const announcementMutationAbortRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
+  const notificationRole = currentUser.role;
+  const isAdmin = currentUser.role === "admin";
+  const agentConversationStorageKey = `${LEGACY_AGENT_CONVERSATION_STORAGE_KEY}:${encodeURIComponent(currentUser.username.toLocaleLowerCase("en-AU"))}`;
 
   const loadAgentSettings = useCallback(async () => {
     try {
       const response = await fetch("/api/settings/agent", { cache: "no-store" });
       if (!response.ok) return;
-      const body = await response.json() as { data?: { configured?: unknown } };
+      const body = await readJsonResponse<{ data?: { configured?: unknown } }>(response);
       if (mountedRef.current && typeof body.data?.configured === "boolean") {
         setAgentConfigured(body.data.configured);
       }
@@ -336,22 +404,26 @@ export function HomeCollaborationWorkspace({ onOpenSettings, onNavigate }: HomeC
 
   useEffect(() => {
     mountedRef.current = true;
+    setAgentHistoryHydrated(false);
+    setAgentMessages([]);
     try {
-      setAgentMessages(readAgentConversation(window.localStorage.getItem(AGENT_CONVERSATION_STORAGE_KEY)));
+      setAgentMessages(readAgentConversation(window.localStorage.getItem(agentConversationStorageKey)));
+      window.localStorage.removeItem(LEGACY_AGENT_CONVERSATION_STORAGE_KEY);
     } catch {
       // Agent chat still works for this session if storage is unavailable.
     }
+    setAgentHydratedStorageKey(agentConversationStorageKey);
     setAgentHistoryHydrated(true);
 
     const handleSettingsUpdate = () => void loadAgentSettings();
     const handleConversationStorage = (event: StorageEvent) => {
-      if (event.key !== AGENT_CONVERSATION_STORAGE_KEY || event.newValue !== null) return;
+      if (event.key !== agentConversationStorageKey || event.newValue !== null) return;
       agentStorageClearGuardRef.current = true;
       agentConversationRevisionRef.current += 1;
       agentAbortRef.current?.abort();
       agentAbortRef.current = null;
       try {
-        window.localStorage.removeItem(AGENT_CONVERSATION_STORAGE_KEY);
+        window.localStorage.removeItem(agentConversationStorageKey);
       } catch {
         // The visible clear still succeeds if another tab cannot update browser storage.
       }
@@ -369,22 +441,27 @@ export function HomeCollaborationWorkspace({ onOpenSettings, onNavigate }: HomeC
       mountedRef.current = false;
       agentAbortRef.current?.abort();
       notificationsAbortRef.current?.abort();
+      announcementsAbortRef.current?.abort();
+      announcementMutationAbortRef.current?.abort();
       window.removeEventListener("erp:agent-settings-updated", handleSettingsUpdate);
       window.removeEventListener("storage", handleConversationStorage);
     };
-  }, [loadAgentSettings]);
+  }, [agentConversationStorageKey, loadAgentSettings]);
 
   useEffect(() => {
-    if (!agentHistoryHydrated || !agentMessages.length || agentStorageClearGuardRef.current) return;
+    if (!agentHistoryHydrated
+      || agentHydratedStorageKey !== agentConversationStorageKey
+      || !agentMessages.length
+      || agentStorageClearGuardRef.current) return;
     try {
-      window.localStorage.setItem(AGENT_CONVERSATION_STORAGE_KEY, JSON.stringify({
+      window.localStorage.setItem(agentConversationStorageKey, JSON.stringify({
         version: AGENT_CONVERSATION_STORAGE_VERSION,
         messages: limitAgentMessages(agentMessages),
       }));
     } catch {
       // A storage quota or privacy restriction must not interrupt the Agent conversation.
     }
-  }, [agentHistoryHydrated, agentMessages]);
+  }, [agentConversationStorageKey, agentHistoryHydrated, agentHydratedStorageKey, agentMessages]);
 
   useEffect(() => {
     agentFeedRef.current?.scrollTo({ top: agentFeedRef.current.scrollHeight, behavior: "smooth" });
@@ -402,17 +479,16 @@ export function HomeCollaborationWorkspace({ onOpenSettings, onNavigate }: HomeC
     setNotificationsError("");
     setNotificationsWarning("");
     try {
-      const response = await fetch(`/api/notifications?role=${encodeURIComponent(role)}`, {
+      const response = await fetch("/api/notifications", {
         cache: "no-store",
         signal: controller.signal,
       });
-      const body: unknown = await response.json();
+      const body = await readJsonResponse(response);
       if (!response.ok) throw new Error(readError(body, "Unable to load notifications."));
       const parsed = readNotificationResponse(body);
       if (!parsed) throw new Error("Notifications returned an invalid response. Please refresh and try again.");
       if (!mountedRef.current || controller.signal.aborted || notificationsAbortRef.current !== controller) return;
-      setNotifications(parsed.notifications);
-      setNotificationCounts(parsed.counts);
+      setNotifications(parsed.notifications.filter((notification) => notification.role === role));
       setNotificationsGeneratedAt(parsed.generatedAt);
       setNotificationsWarning(parsed.warnings.join(" "));
     } catch (error) {
@@ -440,16 +516,142 @@ export function HomeCollaborationWorkspace({ onOpenSettings, onNavigate }: HomeC
     };
   }, [loadNotifications, notificationRole]);
 
+  const loadAnnouncements = useCallback(async (keepCurrent = true) => {
+    if (announcementMutationAbortRef.current) return;
+    announcementsAbortRef.current?.abort();
+    const controller = new AbortController();
+    announcementsAbortRef.current = controller;
+    if (!keepCurrent) setAnnouncements([]);
+    setAnnouncementsLoading(true);
+    setAnnouncementsError("");
+    try {
+      const response = await fetch("/api/announcements", {
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      const body = await readJsonResponse(response);
+      if (!response.ok) throw new Error(readError(body, "Unable to load public announcements."));
+      const parsed = readAnnouncementList(body);
+      if (!parsed) throw new Error("Announcements returned an invalid response. Please refresh and try again.");
+      if (!mountedRef.current || controller.signal.aborted || announcementsAbortRef.current !== controller) return;
+      setAnnouncements(parsed);
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      if (mountedRef.current && announcementsAbortRef.current === controller) {
+        setAnnouncementsError(error instanceof Error ? error.message : "Unable to load public announcements.");
+      }
+    } finally {
+      if (announcementsAbortRef.current === controller) {
+        announcementsAbortRef.current = null;
+        if (mountedRef.current) setAnnouncementsLoading(false);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadAnnouncements(false);
+    const refreshWhenVisible = () => {
+      if (!document.hidden) void loadAnnouncements(true);
+    };
+    const interval = window.setInterval(refreshWhenVisible, ANNOUNCEMENT_REFRESH_INTERVAL_MS);
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+      announcementsAbortRef.current?.abort();
+    };
+  }, [loadAnnouncements]);
+
+  const publishAnnouncement = useCallback(async () => {
+    const title = announcementTitle.trim();
+    const content = announcementContent.trim();
+    if (!isAdmin || !content || announcementSubmitting || Boolean(announcementDeletingId)) return;
+    announcementsAbortRef.current?.abort();
+    announcementMutationAbortRef.current?.abort();
+    const controller = new AbortController();
+    announcementMutationAbortRef.current = controller;
+    setAnnouncementSubmitting(true);
+    setAnnouncementsError("");
+    try {
+      const response = await fetch("/api/announcements", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, content }),
+        signal: controller.signal,
+      });
+      const body = await readJsonResponse(response);
+      if (!response.ok) throw new Error(readError(body, "Unable to publish this announcement."));
+      const announcement = readAnnouncementItem(body);
+      if (!announcement) throw new Error("The published announcement returned an invalid response.");
+      if (!mountedRef.current || controller.signal.aborted || announcementMutationAbortRef.current !== controller) return;
+      setAnnouncements((current) => [
+        announcement,
+        ...current.filter((item) => item.id !== announcement.id),
+      ].sort((left, right) => right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id)));
+      setAnnouncementTitle("");
+      setAnnouncementContent("");
+    } catch (error) {
+      if (controller.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) return;
+      if (mountedRef.current && announcementMutationAbortRef.current === controller) {
+        setAnnouncementsError(error instanceof Error ? error.message : "Unable to publish this announcement.");
+      }
+    } finally {
+      if (announcementMutationAbortRef.current === controller) {
+        announcementMutationAbortRef.current = null;
+        if (mountedRef.current) setAnnouncementSubmitting(false);
+      }
+    }
+  }, [announcementContent, announcementDeletingId, announcementSubmitting, announcementTitle, isAdmin]);
+
+  const deleteAnnouncement = useCallback(async (announcement: Announcement) => {
+    if (!isAdmin || announcementSubmitting || Boolean(announcementDeletingId)) return;
+    if (!window.confirm(`Delete ${announcement.title ? `“${announcement.title}”` : "this announcement"}?`)) return;
+    announcementsAbortRef.current?.abort();
+    announcementMutationAbortRef.current?.abort();
+    const controller = new AbortController();
+    announcementMutationAbortRef.current = controller;
+    setAnnouncementDeletingId(announcement.id);
+    setAnnouncementsError("");
+    try {
+      const response = await fetch(`/api/announcements/${encodeURIComponent(announcement.id)}`, {
+        method: "DELETE",
+        signal: controller.signal,
+      });
+      const body = await readJsonResponse(response);
+      if (!response.ok) throw new Error(readError(body, "Unable to delete this announcement."));
+      if (!mountedRef.current || controller.signal.aborted || announcementMutationAbortRef.current !== controller) return;
+      setAnnouncements((current) => current.filter((item) => item.id !== announcement.id));
+    } catch (error) {
+      if (controller.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) return;
+      if (mountedRef.current && announcementMutationAbortRef.current === controller) {
+        setAnnouncementsError(error instanceof Error ? error.message : "Unable to delete this announcement.");
+      }
+    } finally {
+      if (announcementMutationAbortRef.current === controller) {
+        announcementMutationAbortRef.current = null;
+        if (mountedRef.current) setAnnouncementDeletingId("");
+      }
+    }
+  }, [announcementDeletingId, announcementSubmitting, isAdmin]);
+
   const submitAgentMessage = useCallback(async (rawMessage?: string) => {
     const message = (rawMessage ?? agentInput).trim();
-    if (!message || agentLoading || !agentHistoryHydrated) return;
+    if (!message || agentLoading || agentAbortRef.current || !agentHistoryHydrated) return;
 
     agentStorageClearGuardRef.current = false;
-    const history = agentMessages
+    const lastMessage = agentMessages.at(-1);
+    const isRetry = Boolean(agentError)
+      && lastMessage?.role === "user"
+      && lastMessage.content.trim() === message;
+    const history = (isRetry ? agentMessages.slice(0, -1) : agentMessages)
       .slice(-10)
       .map(({ role, content }) => ({ role, content: content.slice(0, MAX_MESSAGE_LENGTH) }));
     const userMessage: AgentMessage = { id: createId("agent-user"), role: "user", content: message };
-    setAgentMessages((current) => limitAgentMessages([...current, userMessage]));
+    if (!isRetry) {
+      setAgentMessages((current) => limitAgentMessages([...current, userMessage]));
+    }
     setAgentInput("");
     setAgentError("");
     setAgentNotice("");
@@ -465,14 +667,18 @@ export function HomeCollaborationWorkspace({ onOpenSettings, onNavigate }: HomeC
         body: JSON.stringify({ message, section: "all", history }),
         signal: controller.signal,
       });
-      const body = await response.json() as {
+      const rawBody = await readJsonResponse<unknown>(response);
+      if (!response.ok) throw new Error(readError(rawBody, "E3 Agent could not answer right now."));
+      if (!rawBody || typeof rawBody !== "object" || Array.isArray(rawBody)) {
+        throw new Error("E3 Agent returned an invalid response. Please try again.");
+      }
+      const body = rawBody as {
         data?: { answer?: unknown; response?: unknown; suggestions?: unknown; mode?: unknown };
         answer?: unknown;
         response?: unknown;
         suggestions?: unknown;
         meta?: { configured?: unknown; warning?: unknown };
       };
-      if (!response.ok) throw new Error(readError(body, "E3 Agent could not answer right now."));
       if (
         !mountedRef.current
         || controller.signal.aborted
@@ -494,7 +700,7 @@ export function HomeCollaborationWorkspace({ onOpenSettings, onNavigate }: HomeC
       const mode = typeof body.data?.mode === "string" ? body.data.mode : "";
       if (typeof body.meta?.configured === "boolean") {
         setAgentConfigured(body.meta.configured);
-      } else if (mode === "deepseek") {
+      } else if (mode === "openai" || mode === "deepseek") {
         setAgentConfigured(true);
       }
       if (typeof body.meta?.warning === "string") setAgentNotice(body.meta.warning);
@@ -525,7 +731,7 @@ export function HomeCollaborationWorkspace({ onOpenSettings, onNavigate }: HomeC
         }
       }
     }
-  }, [agentHistoryHydrated, agentInput, agentLoading, agentMessages]);
+  }, [agentError, agentHistoryHydrated, agentInput, agentLoading, agentMessages]);
 
   const clearAgentConversation = () => {
     agentStorageClearGuardRef.current = true;
@@ -533,7 +739,7 @@ export function HomeCollaborationWorkspace({ onOpenSettings, onNavigate }: HomeC
     agentAbortRef.current?.abort();
     agentAbortRef.current = null;
     try {
-      window.localStorage.removeItem(AGENT_CONVERSATION_STORAGE_KEY);
+      window.localStorage.removeItem(agentConversationStorageKey);
     } catch {
       // Clearing the visible conversation still succeeds when browser storage is unavailable.
     }
@@ -548,7 +754,7 @@ export function HomeCollaborationWorkspace({ onOpenSettings, onNavigate }: HomeC
   const agentStatusLabel = agentConfigured === false
     ? "Local mode"
     : agentConfigured === true
-      ? "DeepSeek ready"
+      ? "Model ready"
       : "Workspace connected";
   const notificationSyncLabel = notificationsError
     ? "Refresh needed"
@@ -557,24 +763,219 @@ export function HomeCollaborationWorkspace({ onOpenSettings, onNavigate }: HomeC
       : notificationsLoading
         ? "Updating"
         : "Auto refresh";
+  const currentRoleLabel = ERP_ROLE_LABELS[currentUser.role];
 
   return (
     <section className={styles.workspace}>
       <header className={styles.workspaceHeader}>
         <div>
           <span className={styles.eyebrow}>E3 ENERGY · TEAM WORKSPACE</span>
-          <h1>Ask, prioritise and stay aligned</h1>
+          <h1>Your work, team updates and E3 Agent</h1>
         </div>
-        <div className={styles.liveStatus}><Wifi size={14} /><span>Team workspace live</span></div>
       </header>
 
       <div className={styles.columns}>
-        <article className={styles.panel} aria-label="E3 Agent">
+        <div className={styles.leftStack}>
+          <article className={`${styles.panel} ${styles.reminderPanel}`} aria-label={`${currentRoleLabel} action reminders`}>
+            <header className={styles.panelHeader}>
+              <span className={`${styles.panelIcon} ${styles.notificationIcon}`}><BellRing size={18} /></span>
+              <div className={styles.panelTitle}>
+                <h2>My Action Reminders</h2>
+              </div>
+              <span className={styles.rolePill}>{currentRoleLabel}</span>
+              <span className={`${styles.statusBadge} ${notificationsError ? styles.errorBadge : ""}`}><i />{notificationSyncLabel}</span>
+              <button
+                className={styles.iconButton}
+                type="button"
+                onClick={() => void loadNotifications(notificationRole, true)}
+                disabled={notificationsLoading}
+                title="Refresh reminders"
+                aria-label="Refresh my action reminders"
+              >
+                <RefreshCw className={notificationsLoading ? styles.spinning : undefined} size={16} />
+              </button>
+            </header>
+
+            <div
+              id="notification-reminder-feed"
+              className={styles.notificationFeed}
+              role="region"
+              aria-label={`${currentRoleLabel} action reminders`}
+              aria-live="polite"
+              aria-busy={notificationsLoading}
+            >
+              {notificationsError && notifications.length > 0 && (
+                <div className={styles.notificationBanner} role="alert">
+                  <AlertCircle size={15} />
+                  <span>{notificationsError}</span>
+                </div>
+              )}
+              {notificationsWarning && (
+                <div className={`${styles.notificationBanner} ${styles.warningBanner}`}>
+                  <AlertCircle size={15} />
+                  <span>{notificationsWarning}</span>
+                </div>
+              )}
+
+              {notificationsLoading && !notifications.length ? (
+                <div className={styles.feedState}>
+                  <LoaderCircle className={styles.spinning} size={24} />
+                  <strong>Preparing your reminders</strong>
+                  <p>Checking the work assigned to your account.</p>
+                </div>
+              ) : notificationsError && !notifications.length ? (
+                <div className={`${styles.feedState} ${styles.errorState}`} role="alert">
+                  <span><AlertCircle size={24} /></span>
+                  <strong>Reminders are unavailable</strong>
+                  <p>{notificationsError}</p>
+                  <button type="button" onClick={() => void loadNotifications(notificationRole, false)}>Try again</button>
+                </div>
+              ) : !notifications.length ? (
+                <div className={styles.feedState}>
+                  <span><BellRing size={24} /></span>
+                  <strong>You are all caught up</strong>
+                  <p>No actions currently need your attention.</p>
+                </div>
+              ) : (
+                <ul className={styles.notificationList}>
+                  {notifications.map((notification) => {
+                    const priorityClass = notification.priority === "urgent"
+                      ? styles.priorityUrgent
+                      : notification.priority === "high"
+                        ? styles.priorityHigh
+                        : styles.priorityNormal;
+                    return (
+                      <li key={notification.id}>
+                        <button
+                          type="button"
+                          className={`${styles.notificationCard} ${priorityClass}`}
+                          onClick={() => onNavigate?.(notification.module, notification.entityId)}
+                          disabled={!onNavigate}
+                          aria-label={`${notification.title}. Next step: ${notification.actionLabel}`}
+                        >
+                          <span className={styles.notificationCardTopline}>
+                            <span className={styles.priorityBadge}>{NOTIFICATION_PRIORITY_LABELS[notification.priority]}</span>
+                          </span>
+                          <strong className={styles.notificationTitle}>{notification.title}</strong>
+                          <span className={styles.notificationDescription}>{notification.description}</span>
+                          <span className={styles.notificationAction}>
+                            <span><small>Next step</small><strong>{notification.actionLabel}</strong></span>
+                            <ArrowUpRight size={17} />
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          </article>
+
+          <article className={styles.panel} aria-label="Public announcements">
+            <header className={styles.panelHeader}>
+              <span className={`${styles.panelIcon} ${styles.announcementIcon}`}><Megaphone size={18} /></span>
+              <div className={styles.panelTitle}><h2>Public Announcements</h2></div>
+              <span className={styles.rolePill}>{isAdmin ? "Admin controls" : "Read only"}</span>
+              <button
+                className={styles.iconButton}
+                type="button"
+                onClick={() => void loadAnnouncements(true)}
+                disabled={announcementsLoading || announcementSubmitting || Boolean(announcementDeletingId)}
+                title="Refresh announcements"
+                aria-label="Refresh public announcements"
+              >
+                <RefreshCw className={announcementsLoading ? styles.spinning : undefined} size={16} />
+              </button>
+            </header>
+
+            {isAdmin && (
+              <form
+                className={styles.announcementComposer}
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void publishAnnouncement();
+                }}
+              >
+                <input
+                  value={announcementTitle}
+                  onChange={(event) => setAnnouncementTitle(event.target.value)}
+                  maxLength={140}
+                  placeholder="Title (optional)"
+                  aria-label="Announcement title"
+                  disabled={announcementSubmitting}
+                />
+                <div>
+                  <textarea
+                    value={announcementContent}
+                    onChange={(event) => setAnnouncementContent(event.target.value)}
+                    maxLength={4_000}
+                    rows={2}
+                    placeholder="Share an update with everyone..."
+                    aria-label="Announcement content"
+                    disabled={announcementSubmitting}
+                  />
+                  <button type="submit" disabled={!announcementContent.trim() || announcementSubmitting || Boolean(announcementDeletingId)}>
+                    {announcementSubmitting ? <LoaderCircle className={styles.spinning} size={16} /> : <Send size={16} />}
+                    <span>{announcementSubmitting ? "Posting" : "Post"}</span>
+                  </button>
+                </div>
+              </form>
+            )}
+
+            <div className={styles.announcementFeed} role="region" aria-label="Public announcement feed" aria-live="polite" aria-busy={announcementsLoading}>
+              {announcementsError && (
+                <div className={styles.notificationBanner} role="alert">
+                  <AlertCircle size={15} />
+                  <span>{announcementsError}</span>
+                </div>
+              )}
+              {announcementsLoading && !announcements.length ? (
+                <div className={styles.feedState}>
+                  <LoaderCircle className={styles.spinning} size={24} />
+                  <strong>Loading announcements</strong>
+                </div>
+              ) : !announcements.length ? (
+                <div className={styles.feedState}>
+                  <span><Megaphone size={24} /></span>
+                  <strong>No announcements yet</strong>
+                  <p>{isAdmin ? "Post the first update for the team." : "Team updates will appear here."}</p>
+                </div>
+              ) : (
+                <ul className={styles.announcementList}>
+                  {announcements.map((announcement) => (
+                    <li key={announcement.id} className={styles.announcementCard}>
+                      <div className={styles.announcementMeta}>
+                        <span>{announcement.createdBy}</span>
+                        <time dateTime={announcement.createdAt}>{formatAnnouncementDate(announcement.createdAt)}</time>
+                        {isAdmin && (
+                          <button
+                            type="button"
+                            onClick={() => void deleteAnnouncement(announcement)}
+                            disabled={Boolean(announcementDeletingId) || announcementSubmitting}
+                            aria-label={`Delete ${announcement.title || "announcement"}`}
+                            title="Delete announcement"
+                          >
+                            {announcementDeletingId === announcement.id
+                              ? <LoaderCircle className={styles.spinning} size={14} />
+                              : <Trash2 size={14} />}
+                          </button>
+                        )}
+                      </div>
+                      {announcement.title && <strong>{announcement.title}</strong>}
+                      <p>{announcement.content}</p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </article>
+        </div>
+
+        <article className={`${styles.panel} ${styles.agentPanel}`} aria-label="E3 Agent">
           <header className={styles.panelHeader}>
             <span className={`${styles.panelIcon} ${styles.agentIcon}`}><Sparkles size={18} /></span>
             <div className={styles.panelTitle}>
               <h2>E3 Agent</h2>
-              <p>Ask across inventory, quotations, projects and payments</p>
             </div>
             <span className={`${styles.statusBadge} ${agentConfigured === false ? styles.localBadge : ""}`}>
               <i />{agentStatusLabel}
@@ -590,7 +991,7 @@ export function HomeCollaborationWorkspace({ onOpenSettings, onNavigate }: HomeC
           {agentConfigured === false && (
             <div className={styles.setupNotice}>
               <AlertCircle size={15} />
-              <span>DeepSeek is not configured. E3 Agent is using local workspace queries.</span>
+              <span>The model endpoint is unavailable. E3 Agent is using local workspace queries.</span>
               {onOpenSettings && <button type="button" onClick={onOpenSettings}>Open Settings</button>}
             </div>
           )}
@@ -662,122 +1063,6 @@ export function HomeCollaborationWorkspace({ onOpenSettings, onNavigate }: HomeC
               </button>
             </div>
             <small className={styles.composerHint}>Enter to send · Shift + Enter for a new line</small>
-          </div>
-        </article>
-
-        <article className={styles.panel} aria-label="Notifications and AI reminders">
-          <header className={styles.panelHeader}>
-            <span className={`${styles.panelIcon} ${styles.notificationIcon}`}><BellRing size={18} /></span>
-            <div className={styles.panelTitle}>
-              <h2>Notifications &amp; AI Reminders</h2>
-            </div>
-            <span className={`${styles.statusBadge} ${notificationsError ? styles.errorBadge : ""}`}><i />{notificationSyncLabel}</span>
-            <button
-              className={styles.iconButton}
-              type="button"
-              onClick={() => void loadNotifications(notificationRole, true)}
-              disabled={notificationsLoading}
-              title="Refresh reminders"
-              aria-label="Refresh notifications and AI reminders"
-            >
-              <RefreshCw className={notificationsLoading ? styles.spinning : undefined} size={16} />
-            </button>
-          </header>
-
-          <div className={styles.notificationFilters} role="group" aria-label="Filter reminders by responsible role">
-            {NOTIFICATION_FILTERS.map((filter) => (
-              <button
-                key={filter.value}
-                type="button"
-                aria-pressed={notificationRole === filter.value}
-                aria-controls="notification-reminder-feed"
-                className={notificationRole === filter.value ? styles.activeNotificationFilter : undefined}
-                onClick={() => setNotificationRole(filter.value)}
-              >
-                <span>{filter.label}</span>
-                <b>{notificationCounts[filter.value]}</b>
-              </button>
-            ))}
-          </div>
-
-          <div
-            id="notification-reminder-feed"
-            className={styles.notificationFeed}
-            role="region"
-            aria-label={`${notificationRole === "all" ? "All" : NOTIFICATION_ROLE_LABELS[notificationRole]} notifications and AI reminders`}
-            aria-live="polite"
-            aria-busy={notificationsLoading}
-          >
-            {notificationsError && notifications.length > 0 && (
-              <div className={styles.notificationBanner} role="alert">
-                <AlertCircle size={15} />
-                <span>{notificationsError}</span>
-              </div>
-            )}
-            {notificationsWarning && (
-              <div className={`${styles.notificationBanner} ${styles.warningBanner}`}>
-                <AlertCircle size={15} />
-                <span>{notificationsWarning}</span>
-              </div>
-            )}
-
-            {notificationsLoading && !notifications.length ? (
-              <div className={styles.feedState}>
-                <LoaderCircle className={styles.spinning} size={24} />
-                <strong>Preparing your reminders</strong>
-                <p>Checking each workspace for actions that need attention.</p>
-              </div>
-            ) : notificationsError && !notifications.length ? (
-              <div className={`${styles.feedState} ${styles.errorState}`} role="alert">
-                <span><AlertCircle size={24} /></span>
-                <strong>Reminders are unavailable</strong>
-                <p>{notificationsError}</p>
-                <button type="button" onClick={() => void loadNotifications(notificationRole, false)}>Try again</button>
-              </div>
-            ) : !notifications.length ? (
-              <div className={styles.feedState}>
-                <span><BellRing size={24} /></span>
-                <strong>You are all caught up</strong>
-                <p>No actions currently need attention for {notificationRole === "all" ? "the team" : NOTIFICATION_ROLE_LABELS[notificationRole]}.</p>
-              </div>
-            ) : (
-              <ul className={styles.notificationList}>
-                {notifications.map((notification) => {
-                  const priorityClass = notification.priority === "urgent"
-                    ? styles.priorityUrgent
-                    : notification.priority === "high"
-                      ? styles.priorityHigh
-                      : styles.priorityNormal;
-                  return (
-                    <li key={notification.id}>
-                      <button
-                        type="button"
-                        className={`${styles.notificationCard} ${priorityClass}`}
-                        onClick={() => onNavigate?.(notification.module, notification.entityId)}
-                        disabled={!onNavigate}
-                        aria-label={`${notification.title}. Next step: ${notification.actionLabel}`}
-                      >
-                        <span className={styles.notificationCardTopline}>
-                          <span className={styles.priorityBadge}>{NOTIFICATION_PRIORITY_LABELS[notification.priority]}</span>
-                          <span className={styles.roleBadge}>{NOTIFICATION_ROLE_LABELS[notification.role]}</span>
-                        </span>
-                        <strong className={styles.notificationTitle}>{notification.title}</strong>
-                        <span className={styles.notificationDescription}>{notification.description}</span>
-                        <span className={styles.notificationAction}>
-                          <span><small>Next step</small><strong>{notification.actionLabel}</strong></span>
-                          <ArrowUpRight size={17} />
-                        </span>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
-
-          <div className={styles.notificationFooter}>
-            <RefreshCw size={13} />
-            <span>AI reminders refresh automatically every 30 seconds.</span>
           </div>
         </article>
       </div>

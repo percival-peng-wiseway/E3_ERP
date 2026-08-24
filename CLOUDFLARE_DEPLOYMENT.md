@@ -23,7 +23,7 @@ This repository is configured for full-stack Next.js deployment to Cloudflare Wo
 
 6. Deploy first to the generated `*.workers.dev` address and verify Inventory and QuoteHelp login/session behavior before attaching the production domain.
 
-The Worker name is `e3-erp`. The upstream Inventory, QuoteHelp and DeepSeek host/model settings are already declared as non-secret runtime variables in `wrangler.jsonc`.
+The Worker name is `e3-erp`. The upstream Inventory, QuoteHelp and Agent model host/model settings are already declared as non-secret runtime variables in `wrangler.jsonc`.
 
 ## Required production secrets
 
@@ -34,7 +34,7 @@ Add these under the Worker's **Settings → Variables and Secrets**. Mark every 
 | `ERP_AUTH_SESSION_SECRET` | Employee login and signed sessions | At least 32 random characters; required |
 | `REIMBURSEMENT_ADMIN_PASSWORD` | Legacy standalone administration login | Optional when ERP administrator accounts are used |
 | `REIMBURSEMENT_SESSION_SECRET` | Legacy standalone administrator sessions | Optional when ERP administrator accounts are used |
-| `DEEPSEEK_API_KEY` | E3 Agent | Your DeepSeek API key; optional |
+| `AGENT_API_KEY` | E3 Agent | Optional; the current Ollama/ngrok endpoint does not require a key |
 | `ERP_INTERNAL_API_TOKEN` | Trusted non-browser API writes | A long random token; optional for browser-only use |
 
 Optional read-only dashboard/Agent data sources:
@@ -70,6 +70,7 @@ The modules below currently use the local `.data` filesystem:
 - Project Schedule
 - Reports
 - Group Chat
+- Public Announcements
 - Saved Agent settings
 
 Cloudflare Workers only provides an ephemeral in-memory filesystem. These file-backed routes are **not production-functional on Workers yet**: reads can fail and writes cannot persist across requests or deployments. Before enabling them in the Cloudflare deployment, move structured records to D1 and uploaded files to R2. Keep API keys in Cloudflare Secrets rather than saved Agent settings.

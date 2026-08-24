@@ -120,9 +120,9 @@ function fileSignatureMatches(type: AcceptedType, bytes: Uint8Array) {
 }
 
 export async function GET(request: NextRequest) {
+  const admin = isReimbursementAdmin(request);
   try {
     const { listReimbursements } = await import("@/lib/reimbursements/repository");
-    const admin = isReimbursementAdmin(request);
     const claimantToken = reimbursementClaimantToken(request);
     return noStoreJson({
       data: await listReimbursements(admin
@@ -130,8 +130,16 @@ export async function GET(request: NextRequest) {
         : { ownerTokenHash: claimantToken ? hashReimbursementClaimantToken(claimantToken) : undefined }),
       meta: { admin },
     });
-  } catch {
-    return errorResponse(500, "storage_unavailable", "Reimbursement records are temporarily unavailable.");
+  } catch (error) {
+    console.error("Reimbursement storage unavailable; returning an empty initial list", error instanceof Error ? error.message : error);
+    return noStoreJson({
+      data: [],
+      meta: {
+        admin,
+        degraded: true,
+        warning: "Reimbursement storage is not connected. Starting with an empty list.",
+      },
+    });
   }
 }
 

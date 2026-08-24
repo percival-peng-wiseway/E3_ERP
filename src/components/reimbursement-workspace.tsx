@@ -19,6 +19,7 @@ import {
   X,
 } from "lucide-react";
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { readJsonResponse } from "@/lib/client/http";
 import type {
   ReimbursementAction,
   ReimbursementAdminSession,
@@ -114,7 +115,7 @@ export function ReimbursementWorkspace() {
     if (!quiet) setLoading(true);
     try {
       const response = await fetch("/api/reimbursements", { cache: "no-store" });
-      const body = await response.json() as ReimbursementListResponse & { error?: string };
+      const body = await readJsonResponse<ReimbursementListResponse & { error?: string }>(response);
       if (!response.ok) throw new Error(apiError(body, "Unable to load reimbursements."));
       if (requestId !== claimsRequestIdRef.current) return;
       setClaims(Array.isArray(body.data) ? body.data : []);
@@ -131,7 +132,7 @@ export function ReimbursementWorkspace() {
   const loadSession = useCallback(async () => {
     try {
       const response = await fetch("/api/reimbursements/admin", { cache: "no-store" });
-      const body = await response.json() as { data?: ReimbursementAdminSession } & ReimbursementAdminSession;
+      const body = await readJsonResponse<{ data?: ReimbursementAdminSession } & ReimbursementAdminSession>(response);
       if (response.ok) setSession(unwrap(body));
     } catch {
       setSession(EMPTY_SESSION);
@@ -202,7 +203,7 @@ export function ReimbursementWorkspace() {
       const payload = new FormData(form);
       payload.set("invoice", selectedFile);
       const response = await fetch("/api/reimbursements", { method: "POST", body: payload });
-      const body = await response.json() as ReimbursementMutationResponse & { error?: string };
+      const body = await readJsonResponse<ReimbursementMutationResponse & { error?: string }>(response);
       if (!response.ok) throw new Error(apiError(body, "Unable to submit the reimbursement."));
       setClaims((current) => [body.data, ...current]);
       setShowSubmission(false);
@@ -228,7 +229,7 @@ export function ReimbursementWorkspace() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ password: form.get("password") }),
       });
-      const body = await response.json() as { data?: ReimbursementAdminSession; error?: string };
+      const body = await readJsonResponse<{ data?: ReimbursementAdminSession; error?: string }>(response);
       if (!response.ok) throw new Error(apiError(body, "Unable to enter Admin mode."));
       setSession(unwrap(body));
       setShowAdminLogin(false);
@@ -291,7 +292,7 @@ export function ReimbursementWorkspace() {
           paymentReference,
         }),
       });
-      const body = await response.json() as ReimbursementMutationResponse & { error?: string };
+      const body = await readJsonResponse<ReimbursementMutationResponse & { error?: string }>(response);
       if (!response.ok) throw new Error(apiError(body, "Unable to update the reimbursement."));
       setClaims((current) => current.map((claim) => claim.id === body.data.id ? body.data : claim));
       setDetail(null);

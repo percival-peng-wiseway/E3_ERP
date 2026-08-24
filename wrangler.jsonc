@@ -17,7 +17,7 @@
   "vars": {
     "INVENTORY_OPERATIONS_API_URL": "https://inventory.e3energy.com.au/api/inventory",
     "QUOTEHELP_APP_URL": "https://quote.e3energy.com.au",
-    "DEEPSEEK_BASE_URL": "https://api.deepseek.com",
-    "DEEPSEEK_MODEL": "deepseek-v4-flash"
+    "AGENT_BASE_URL": "https://navigator-spongy-diagnosis.ngrok-free.dev/v1",
+    "AGENT_MODEL": "qwen3.5:9b"
   }
 }
