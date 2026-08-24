@@ -59,10 +59,10 @@ function isToolCall(value: unknown): value is DeepSeekToolCall {
     && typeof call.function?.arguments === "string" && call.function.arguments.length <= 8_192;
 }
 
-async function limitedPayload(response: Response): Promise<DeepSeekPayload> {
+async function limitedResponseBytes(response: Response): Promise<Uint8Array> {
   const declared = Number(response.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > RESPONSE_LIMIT) throw new Error("The model API returned an oversized response.");
-  if (!response.body) return {};
+  if (!response.body) return new Uint8Array();
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -82,8 +82,26 @@ async function limitedPayload(response: Response): Promise<DeepSeekPayload> {
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
+  return bytes;
+}
+
+async function limitedPayload(response: Response): Promise<DeepSeekPayload> {
+  const bytes = await limitedResponseBytes(response);
+  if (!bytes.byteLength) return {};
   const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
   return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as DeepSeekPayload : {};
+}
+
+async function modelErrorDetail(response: Response) {
+  const bytes = await limitedResponseBytes(response);
+  const text = new TextDecoder().decode(bytes).trim();
+  if (!text) return "";
+  try {
+    const parsed = JSON.parse(text) as { error?: { message?: unknown } };
+    return typeof parsed.error?.message === "string" ? parsed.error.message.slice(0, 300) : "";
+  } catch {
+    return text.replace(/\s+/gu, " ").slice(0, 300);
+  }
 }
 
 function chatCompletionsUrl(baseUrl: string): string {
@@ -130,11 +148,11 @@ async function createCompletion(options: {
   if (response.status >= 300 && response.status < 400) {
     throw new Error("The model API attempted an unexpected redirect.");
   }
-  const payload = await limitedPayload(response);
   if (!response.ok) {
-    const detail = typeof payload.error?.message === "string" ? payload.error.message.slice(0, 300) : "";
+    const detail = await modelErrorDetail(response);
     throw new Error(detail || `The model API returned HTTP ${response.status}.`);
   }
+  const payload = await limitedPayload(response);
   const message = payload.choices?.[0]?.message;
   if (!message || message.role !== "assistant") throw new Error("The model API did not return an assistant message.");
   const calls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
