@@ -19,8 +19,10 @@ import { parsePaymentTrackPmNotesBody } from "@/lib/payment-track/pm-notes";
 import {
   PAYMENT_TRACK_ACTIONS,
   PAYMENT_TRACK_ROLES,
+  PAYMENT_TRACK_SCHEDULE_ASSIGNEES,
   type PaymentTrackAction,
   type PaymentTrackRole,
+  type PaymentTrackScheduleAssignee,
 } from "@/lib/payment-track/types";
 import { isAuthorizedActorRequest, isAuthorizedMutationRequest } from "@/lib/server/proxy-security";
 
@@ -41,10 +43,33 @@ const INSTALLATION_SCHEDULE_FIELDS = new Set([
   "actorRole",
   "actorName",
   "installationDate",
+  "installationTime",
+  "installationAssignee",
 ]);
+const DELIVERY_SCHEDULE_FIELDS = new Set([
+  "action",
+  "actorRole",
+  "actorName",
+  "deliveryDate",
+  "deliveryTime",
+  "deliveryAssignee",
+]);
+
+function paymentTrackTimeIsValid(value: unknown): value is string {
+  return typeof value === "string" && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value);
+}
+
+function paymentTrackScheduleAssigneeIsValid(value: unknown): value is PaymentTrackScheduleAssignee {
+  return typeof value === "string"
+    && PAYMENT_TRACK_SCHEDULE_ASSIGNEES.includes(value as PaymentTrackScheduleAssignee);
+}
 
 function hasOnlyInstallationScheduleFields(body: Record<string, unknown>) {
   return Object.keys(body).every((field) => INSTALLATION_SCHEDULE_FIELDS.has(field));
+}
+
+function hasOnlyDeliveryScheduleFields(body: Record<string, unknown>) {
+  return Object.keys(body).every((field) => DELIVERY_SCHEDULE_FIELDS.has(field));
 }
 
 export async function PATCH(
@@ -120,25 +145,39 @@ export async function PATCH(
       paymentId = body.paymentId;
     }
     let deliveryDate: string | undefined;
+    let deliveryTime: string | undefined;
+    let deliveryAssignee: PaymentTrackScheduleAssignee | undefined;
     if (action === "schedule_delivery") {
-      if (!paymentTrackDateIsValid(body.deliveryDate)) {
-        return paymentTrackError(400, "invalid_delivery_date", "Choose a valid delivery date.");
+      if (!hasOnlyDeliveryScheduleFields(body)
+        || !paymentTrackDateIsValid(body.deliveryDate)
+        || !paymentTrackTimeIsValid(body.deliveryTime)
+        || !paymentTrackScheduleAssigneeIsValid(body.deliveryAssignee)) {
+        return paymentTrackError(400, "invalid_delivery_schedule", "Choose a valid delivery date, time and assignee.");
       }
       deliveryDate = body.deliveryDate;
+      deliveryTime = body.deliveryTime;
+      deliveryAssignee = body.deliveryAssignee;
     }
     let installationDate: string | undefined;
+    let installationTime: string | undefined;
+    let installationAssignee: PaymentTrackScheduleAssignee | undefined;
     if (action === "schedule_installation") {
       if (actorRole !== "pm") {
         return paymentTrackError(403, "role_forbidden", "Only the Project Manager can schedule installation.");
       }
-      if (!hasOnlyInstallationScheduleFields(body) || !paymentTrackDateIsValid(body.installationDate)) {
+      if (!hasOnlyInstallationScheduleFields(body)
+        || !paymentTrackDateIsValid(body.installationDate)
+        || !paymentTrackTimeIsValid(body.installationTime)
+        || !paymentTrackScheduleAssigneeIsValid(body.installationAssignee)) {
         return paymentTrackError(
           400,
-          "invalid_installation_date",
-          "Choose a valid installation date without extra fields.",
+          "invalid_installation_schedule",
+          "Choose a valid installation date, time and assignee without extra fields.",
         );
       }
       installationDate = body.installationDate;
+      installationTime = body.installationTime;
+      installationAssignee = body.installationAssignee;
     }
 
     const project = await transitionPaymentTrackProject(id, action, {
@@ -147,7 +186,11 @@ export async function PATCH(
       amountCents,
       paymentId,
       deliveryDate,
+      deliveryTime,
+      deliveryAssignee,
       installationDate,
+      installationTime,
+      installationAssignee,
       notes,
       expectedPmNotesUpdatedAt,
     });

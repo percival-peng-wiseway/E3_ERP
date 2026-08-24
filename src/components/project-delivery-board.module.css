@@ -389,6 +389,7 @@
   color: #7d8797;
   font-size: 12px;
   line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .unscheduledCard > button {
@@ -781,7 +782,8 @@
 .formGrid input,
 .formGrid textarea,
 .formGrid select,
-.singleField input {
+.singleField input,
+.singleField select {
   width: 100%;
   min-height: 42px;
   padding: 9px 11px;
@@ -851,6 +853,7 @@
   border-top: 1px solid #e9ecef;
   color: #323b4d;
   font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 .itemSummary b {
@@ -899,6 +902,20 @@
 
 .singleField {
   max-width: 300px;
+}
+
+.paymentScheduleFields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 15px;
+}
+
+.paymentScheduleFields .singleField {
+  max-width: none;
+}
+
+.paymentAssigneeField {
+  grid-column: 1 / -1;
 }
 
 .modal > footer {
@@ -1022,6 +1039,14 @@
 
   .singleField {
     max-width: none;
+  }
+
+  .paymentScheduleFields {
+    grid-template-columns: 1fr;
+  }
+
+  .paymentAssigneeField {
+    grid-column: auto;
   }
 }
 

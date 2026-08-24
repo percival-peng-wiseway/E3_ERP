@@ -31,7 +31,13 @@ import {
   useRef,
   useState,
 } from "react";
-import type { PaymentTrackListResponse, PaymentTrackProject } from "@/lib/payment-track/types";
+import { readJsonResponse } from "@/lib/client/http";
+import {
+  PAYMENT_TRACK_SCHEDULE_ASSIGNEES,
+  type PaymentTrackListResponse,
+  type PaymentTrackProject,
+  type PaymentTrackScheduleAssignee,
+} from "@/lib/payment-track/types";
 import styles from "./project-delivery-board.module.css";
 
 type OrderStatus = "pending" | "scheduled" | "delivered" | "cancelled";
@@ -87,7 +93,13 @@ type InventoryEditorState = {
   salesRep: string;
   note: string;
 };
-type PaymentEditorState = { project: ScheduledPaymentProject; kind: PaymentScheduleKind; date: string };
+type PaymentEditorState = {
+  project: ScheduledPaymentProject;
+  kind: PaymentScheduleKind;
+  date: string;
+  time: string;
+  assignee: PaymentTrackScheduleAssignee | "";
+};
 type CustomEditorState = {
   job: ProjectScheduleJob | null;
   title: string;
@@ -101,7 +113,7 @@ type CustomEditorState = {
 
 type CalendarEntry =
   | { id: string; source: "inventory"; date: string; time: string | null; title: string; location: string; assignee: string; detail: string; completed: boolean; group: DeliveryGroup }
-  | { id: string; source: "material_delivery" | "installing"; date: string; time: null; title: string; location: string; assignee: string; detail: string; completed: boolean; project: ScheduledPaymentProject }
+  | { id: string; source: "material_delivery" | "installing"; date: string; time: string | null; title: string; location: string; assignee: string; detail: string; completed: boolean; project: ScheduledPaymentProject }
   | { id: string; source: "custom"; date: string; time: string | null; title: string; location: string; assignee: string; detail: string; completed: boolean; job: ProjectScheduleJob };
 
 type UnscheduledEntry =
@@ -210,6 +222,32 @@ function customerAddress(project: ScheduledPaymentProject) {
   return [project.customer.addressLine1, project.customer.suburb, project.customer.state, project.customer.postcode].filter(Boolean).join(", ");
 }
 
+function paymentItemLabel(project: ScheduledPaymentProject, itemIndex: number) {
+  const item = project.items[itemIndex];
+  if (!item) return "Item";
+  const name = item.model.trim() || item.description.trim() || item.category.trim() || "Item";
+  const capacity = item.capacity.trim();
+  return capacity && !name.toLocaleLowerCase("en-AU").includes(capacity.toLocaleLowerCase("en-AU"))
+    ? `${name} (${capacity})`
+    : name;
+}
+
+function paymentItemsSummary(project: ScheduledPaymentProject) {
+  if (!project.items.length) return `${project.reference} · No items listed`;
+  const visibleItems = project.items.slice(0, 3);
+  const remainingCount = project.items.length - visibleItems.length;
+  const summary = visibleItems
+    .map((item, index) => `${item.quantity}× ${paymentItemLabel(project, index)}`)
+    .join(", ");
+  return `${project.reference} · ${summary}${remainingCount ? `, +${remainingCount} more` : ""}`;
+}
+
+function hasCompletePaymentSchedule(project: ScheduledPaymentProject, kind: PaymentScheduleKind) {
+  return kind === "delivery"
+    ? Boolean(project.deliveryScheduledFor && project.deliveryScheduledTime && project.deliveryAssignee)
+    : Boolean(project.installationScheduledFor && project.installationScheduledTime && project.installationAssignee);
+}
+
 function groupOrders(orders: InventoryOrder[]) {
   const grouped = new Map<string, InventoryOrder[]>();
   for (const order of orders) {
@@ -259,9 +297,9 @@ export function ProjectDeliveryBoard() {
     if (quiet) setRefreshing(true);
     else setLoading(true);
     const requests = await Promise.allSettled([
-      fetch("/api/inventory/operations", { cache: "no-store" }).then(async (response) => ({ response, body: await response.json() as OperationsState & { error?: string } })),
-      fetch("/api/payment-track", { cache: "no-store" }).then(async (response) => ({ response, body: await response.json() as PaymentTrackListResponse & { error?: string } })),
-      fetch(`/api/project-schedule?from=${encodeURIComponent(addIsoDays(weekStart, -90))}&to=${encodeURIComponent(addIsoDays(weekStart, 96))}`, { cache: "no-store" }).then(async (response) => ({ response, body: await response.json() as { data?: { jobs?: ProjectScheduleJob[] }; error?: string } })),
+      fetch("/api/inventory/operations", { cache: "no-store" }).then(async (response) => ({ response, body: await readJsonResponse<OperationsState & { error?: string }>(response) })),
+      fetch("/api/payment-track", { cache: "no-store" }).then(async (response) => ({ response, body: await readJsonResponse<PaymentTrackListResponse & { error?: string }>(response) })),
+      fetch(`/api/project-schedule?from=${encodeURIComponent(addIsoDays(weekStart, -90))}&to=${encodeURIComponent(addIsoDays(weekStart, 96))}`, { cache: "no-store" }).then(async (response) => ({ response, body: await readJsonResponse<{ data?: { jobs?: ProjectScheduleJob[] }; error?: string }>(response) })),
     ]);
     if (requestId !== loadRequestRef.current) return;
     const warnings: string[] = [];
@@ -399,32 +437,32 @@ export function ProjectDeliveryBoard() {
     for (const project of projects) {
       const deliveryDate = project.deliveryScheduledFor || melbourneDateFromTimestamp(project.deliveredAt);
       const isActiveDelivery = project.stage === "material_delivery" && !project.deliveredAt;
-      if (deliveryDate && (isActiveDelivery || project.deliveredAt)) {
+      if (deliveryDate && (project.deliveredAt || (isActiveDelivery && hasCompletePaymentSchedule(project, "delivery")))) {
         paymentEntries.push({
           id: `payment-delivery:${project.id}`,
           source: "material_delivery",
           date: deliveryDate,
-          time: null,
+          time: project.deliveryScheduledTime,
           title: customerName(project),
           location: customerAddress(project) || "Address required",
-          assignee: "Project Manager",
-          detail: `${project.reference} · ${project.items.length} ${project.items.length === 1 ? "item" : "items"}`,
+          assignee: project.deliveryAssignee || "Delivery person not assigned",
+          detail: paymentItemsSummary(project),
           completed: Boolean(project.deliveredAt),
           project,
         });
       }
       const installationDate = project.installationScheduledFor || melbourneDateFromTimestamp(project.installedAt);
       const isActiveInstallation = project.stage === "installing" && !project.installedAt;
-      if (installationDate && (isActiveInstallation || project.installedAt)) {
+      if (installationDate && (project.installedAt || (isActiveInstallation && hasCompletePaymentSchedule(project, "installation")))) {
         paymentEntries.push({
           id: `payment-installation:${project.id}`,
           source: "installing",
           date: installationDate,
-          time: null,
+          time: project.installationScheduledTime,
           title: customerName(project),
           location: customerAddress(project) || "Address required",
-          assignee: "Project Manager",
-          detail: `${project.reference} · Installation`,
+          assignee: project.installationAssignee || "Installer not assigned",
+          detail: paymentItemsSummary(project),
           completed: Boolean(project.installedAt),
           project,
         });
@@ -472,11 +510,11 @@ export function ProjectDeliveryBoard() {
     }));
     const payment: UnscheduledEntry[] = [];
     for (const project of projects) {
-      if (project.stage === "material_delivery" && !project.deliveredAt && !project.deliveryScheduledFor) {
-        payment.push({ id: `pending-payment-delivery:${project.id}`, source: "material_delivery", title: customerName(project), location: customerAddress(project) || "Address required", detail: `${project.reference} · Schedule material delivery`, project });
+      if (project.stage === "material_delivery" && !project.deliveredAt && !hasCompletePaymentSchedule(project, "delivery")) {
+        payment.push({ id: `pending-payment-delivery:${project.id}`, source: "material_delivery", title: customerName(project), location: customerAddress(project) || "Address required", detail: `${paymentItemsSummary(project)} · Schedule material delivery`, project });
       }
-      if (project.stage === "installing" && !project.installedAt && !project.installationScheduledFor) {
-        payment.push({ id: `pending-payment-installation:${project.id}`, source: "installing", title: customerName(project), location: customerAddress(project) || "Address required", detail: `${project.reference} · Schedule installation`, project });
+      if (project.stage === "installing" && !project.installedAt && !hasCompletePaymentSchedule(project, "installation")) {
+        payment.push({ id: `pending-payment-installation:${project.id}`, source: "installing", title: customerName(project), location: customerAddress(project) || "Address required", detail: `${paymentItemsSummary(project)} · Schedule installation`, project });
       }
     }
     return [...inventory, ...payment];
@@ -511,7 +549,13 @@ export function ProjectDeliveryBoard() {
 
   const openPaymentEditor = (project: ScheduledPaymentProject, kind: PaymentScheduleKind, date?: string) => {
     returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    setPaymentEditor({ project, kind, date: date || (kind === "delivery" ? project.deliveryScheduledFor : project.installationScheduledFor) || today });
+    setPaymentEditor({
+      project,
+      kind,
+      date: date || (kind === "delivery" ? project.deliveryScheduledFor : project.installationScheduledFor) || today,
+      time: (kind === "delivery" ? project.deliveryScheduledTime : project.installationScheduledTime) || "09:00",
+      assignee: (kind === "delivery" ? project.deliveryAssignee : project.installationAssignee) || "",
+    });
   };
 
   const openCustomEditor = (job?: ProjectScheduleJob, date = today) => {
@@ -567,7 +611,7 @@ export function ProjectDeliveryBoard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const body = await response.json() as { error?: string };
+      const body = await readJsonResponse<{ error?: string }>(response);
       if (!response.ok) throw new Error(apiMessage(body.error, "Unable to save the Inventory dispatch."));
       closeModalAfterSuccess();
       await refreshAll(isPending ? "Inventory dispatch scheduled." : "Inventory dispatch updated.");
@@ -591,7 +635,7 @@ export function ProjectDeliveryBoard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, orderIds: group.orders.map((order) => order.id) }),
       });
-      const body = await response.json() as { error?: string };
+      const body = await readJsonResponse<{ error?: string }>(response);
       if (!response.ok) throw new Error(apiMessage(body.error, "Unable to update the Inventory dispatch."));
       closeModalAfterSuccess();
       await refreshAll(action === "deliver" ? "Inventory delivery completed and stock updated." : "Inventory dispatch cancelled.");
@@ -610,13 +654,21 @@ export function ProjectDeliveryBoard() {
     setError("");
     const action = paymentEditor.kind === "delivery" ? "schedule_delivery" : "schedule_installation";
     const dateField = paymentEditor.kind === "delivery" ? "deliveryDate" : "installationDate";
+    const timeField = paymentEditor.kind === "delivery" ? "deliveryTime" : "installationTime";
+    const assigneeField = paymentEditor.kind === "delivery" ? "deliveryAssignee" : "installationAssignee";
     try {
       const response = await fetch(`/api/payment-track/${paymentEditor.project.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, actorRole: "pm", [dateField]: paymentEditor.date }),
+        body: JSON.stringify({
+          action,
+          actorRole: "pm",
+          [dateField]: paymentEditor.date,
+          [timeField]: paymentEditor.time,
+          [assigneeField]: paymentEditor.assignee,
+        }),
       });
-      const body = await response.json() as { error?: string };
+      const body = await readJsonResponse<{ error?: string }>(response);
       if (!response.ok) throw new Error(apiMessage(body.error, `Unable to schedule ${paymentEditor.kind}.`));
       closeModalAfterSuccess();
       await refreshAll(paymentEditor.kind === "delivery" ? "Material delivery scheduled." : "Installation scheduled.");
@@ -640,7 +692,7 @@ export function ProjectDeliveryBoard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: installation ? "mark_installed" : "mark_delivered", actorRole: "pm" }),
       });
-      const body = await response.json() as { error?: string };
+      const body = await readJsonResponse<{ error?: string }>(response);
       if (!response.ok) throw new Error(apiMessage(body.error, `Unable to complete ${installation ? "installation" : "delivery"}.`));
       await refreshAll(installation ? "Installation marked complete." : "Material delivery marked complete.");
       window.dispatchEvent(new CustomEvent("erp:payment-track-updated", { detail: { source: "project-management" } }));
@@ -679,7 +731,7 @@ export function ProjectDeliveryBoard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const body = await response.json() as { error?: string };
+      const body = await readJsonResponse<{ error?: string }>(response);
       if (!response.ok) throw new Error(apiMessage(body.error, "Unable to save the custom job."));
       closeModalAfterSuccess();
       await refreshAll(customEditor.job ? "Custom job updated." : "Custom job added to the schedule.");
@@ -700,7 +752,7 @@ export function ProjectDeliveryBoard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status }),
       });
-      const body = await response.json() as { error?: string };
+      const body = await readJsonResponse<{ error?: string }>(response);
       if (!response.ok) throw new Error(apiMessage(body.error, "Unable to update the custom job."));
       closeModalAfterSuccess();
       await refreshAll(status === "completed" ? "Custom job completed." : "Custom job restored to the schedule.");
@@ -717,7 +769,7 @@ export function ProjectDeliveryBoard() {
     setError("");
     try {
       const response = await fetch(`/api/project-schedule/${job.id}`, { method: "DELETE" });
-      const body = await response.json() as { error?: string };
+      const body = await readJsonResponse<{ error?: string }>(response);
       if (!response.ok) throw new Error(apiMessage(body.error, "Unable to delete the custom job."));
       closeModalAfterSuccess();
       await refreshAll("Custom job deleted.");
@@ -927,12 +979,28 @@ export function ProjectDeliveryBoard() {
                 <span className={styles.projectIcon}>{paymentEditor.kind === "delivery" ? <Truck size={20} /> : <Wrench size={20} />}</span>
                 <div><strong>{customerName(paymentEditor.project)}</strong><span><MapPin size={13} />{customerAddress(paymentEditor.project) || "Address required"}</span></div>
               </div>
-              <label className={styles.singleField}>{paymentEditor.kind === "delivery" ? "Delivery date" : "Installation date"}<input type="date" value={paymentEditor.date} onChange={(event) => setPaymentEditor({ ...paymentEditor, date: event.target.value })} required /></label>
+              <div className={styles.paymentScheduleFields}>
+                <label className={styles.singleField}>{paymentEditor.kind === "delivery" ? "Delivery date" : "Installation date"}<input type="date" value={paymentEditor.date} onChange={(event) => setPaymentEditor({ ...paymentEditor, date: event.target.value })} required /></label>
+                <label className={styles.singleField}>{paymentEditor.kind === "delivery" ? "Delivery time" : "Installation time"}<input type="time" value={paymentEditor.time} onChange={(event) => setPaymentEditor({ ...paymentEditor, time: event.target.value })} required /></label>
+                <label className={`${styles.singleField} ${styles.paymentAssigneeField}`}>
+                  {paymentEditor.kind === "delivery" ? "Delivery person" : "Installer"}
+                  <select value={paymentEditor.assignee} onChange={(event) => setPaymentEditor({ ...paymentEditor, assignee: event.target.value as PaymentTrackScheduleAssignee | "" })} required>
+                    <option value="">Choose Leo or Daniel</option>
+                    {PAYMENT_TRACK_SCHEDULE_ASSIGNEES.map((assignee) => <option key={assignee} value={assignee}>{assignee}</option>)}
+                  </select>
+                </label>
+              </div>
+              <div className={styles.itemSummary}>
+                <strong>Task items</strong>
+                {paymentEditor.project.items.length ? paymentEditor.project.items.map((item, index) => (
+                  <span key={item.id}>{paymentItemLabel(paymentEditor.project, index)}<b>× {item.quantity}</b></span>
+                )) : <span>No items listed</span>}
+              </div>
             </div>
             <footer>
               <span /><span />
               <button type="button" className={styles.secondaryButton} onClick={closeModal} disabled={busy}>Cancel</button>
-              <button type="submit" className={styles.addButton} disabled={busy}>{busy ? <LoaderCircle size={16} className={styles.spinning} /> : <CalendarCheck2 size={16} />} Save Date</button>
+              <button type="submit" className={styles.addButton} disabled={busy || !paymentEditor.date || !paymentEditor.time || !paymentEditor.assignee}>{busy ? <LoaderCircle size={16} className={styles.spinning} /> : <CalendarCheck2 size={16} />} Save Schedule</button>
             </footer>
           </form>
         </div>

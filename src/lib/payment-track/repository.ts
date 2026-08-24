@@ -5,6 +5,8 @@ import path from "node:path";
 // requires the explicit extension; Next's server bundler supports this path.
 // @ts-expect-error -- the project intentionally does not enable TS emit-time extension imports.
 import { paymentAgreementRequiresSolarRebatePdf } from "./pdf-parser.ts";
+// @ts-expect-error -- explicit extension is required by the focused Node ESM tests.
+import { PAYMENT_TRACK_SCHEDULE_ASSIGNEES } from "./types.ts";
 import type {
   PaymentTrackAction,
   PaymentTrackCustomer,
@@ -16,6 +18,7 @@ import type {
   PaymentTrackProject,
   PaymentTrackReceipt,
   PaymentTrackRole,
+  PaymentTrackScheduleAssignee,
   PaymentTrackSpecialist,
   PaymentTrackUploadContentType,
 } from "./types";
@@ -51,7 +54,12 @@ type StoredProject = Omit<
   | "pmNotes"
   | "pmNotesUpdatedAt"
   | "pmNotesUpdatedBy"
+  | "deliveryScheduledFor"
+  | "deliveryScheduledTime"
+  | "deliveryAssignee"
   | "installationScheduledFor"
+  | "installationScheduledTime"
+  | "installationAssignee"
 > & {
   contract: StoredFile | null;
   deposit: StoredReceipt;
@@ -68,8 +76,14 @@ type StoredProject = Omit<
   pmNotes?: string;
   pmNotesUpdatedAt?: string | null;
   pmNotesUpdatedBy?: string | null;
+  // Optional so records written before delivery scheduling details remain readable.
+  deliveryScheduledFor?: string | null;
+  deliveryScheduledTime?: string | null;
+  deliveryAssignee?: PaymentTrackScheduleAssignee | null;
   // Optional so records written before installation scheduling remain readable.
   installationScheduledFor?: string | null;
+  installationScheduledTime?: string | null;
+  installationAssignee?: PaymentTrackScheduleAssignee | null;
 };
 
 export type CreatePaymentTrackInput = {
@@ -97,7 +111,11 @@ export type PaymentTrackTransitionInput = {
   amountCents?: number;
   paymentId?: string;
   deliveryDate?: string;
+  deliveryTime?: string;
+  deliveryAssignee?: PaymentTrackScheduleAssignee;
   installationDate?: string;
+  installationTime?: string;
+  installationAssignee?: PaymentTrackScheduleAssignee;
   notes?: string;
   expectedPmNotesUpdatedAt?: string | null;
 };
@@ -243,9 +261,25 @@ function publicProject(project: StoredProject): PaymentTrackProject {
     pmNotesUpdatedBy: typeof project.pmNotesUpdatedBy === "string"
       ? project.pmNotesUpdatedBy
       : null,
+    deliveryScheduledFor: typeof project.deliveryScheduledFor === "string"
+      && validDeliveryDate(project.deliveryScheduledFor)
+      ? project.deliveryScheduledFor
+      : null,
+    deliveryScheduledTime: validScheduleTime(project.deliveryScheduledTime)
+      ? project.deliveryScheduledTime
+      : null,
+    deliveryAssignee: validScheduleAssignee(project.deliveryAssignee)
+      ? project.deliveryAssignee
+      : null,
     installationScheduledFor: typeof project.installationScheduledFor === "string"
       && validDeliveryDate(project.installationScheduledFor)
       ? project.installationScheduledFor
+      : null,
+    installationScheduledTime: validScheduleTime(project.installationScheduledTime)
+      ? project.installationScheduledTime
+      : null,
+    installationAssignee: validScheduleAssignee(project.installationAssignee)
+      ? project.installationAssignee
       : null,
     outstandingCents: Math.max(0, project.balanceDueCents - confirmedCents),
     overpaymentCents: Math.max(0, confirmedCents - project.balanceDueCents),
@@ -317,6 +351,26 @@ async function migrateLegacyProjectStages(projects: StoredProject[], fallbackTim
     }
     if (project.installationScheduledFor !== null && !validDeliveryDate(project.installationScheduledFor)) {
       project.installationScheduledFor = null;
+      changed = true;
+    }
+    if (project.deliveryScheduledFor !== null && !validDeliveryDate(project.deliveryScheduledFor)) {
+      project.deliveryScheduledFor = null;
+      changed = true;
+    }
+    if (project.deliveryScheduledTime !== null && !validScheduleTime(project.deliveryScheduledTime)) {
+      project.deliveryScheduledTime = null;
+      changed = true;
+    }
+    if (project.deliveryAssignee !== null && !validScheduleAssignee(project.deliveryAssignee)) {
+      project.deliveryAssignee = null;
+      changed = true;
+    }
+    if (project.installationScheduledTime !== null && !validScheduleTime(project.installationScheduledTime)) {
+      project.installationScheduledTime = null;
+      changed = true;
+    }
+    if (project.installationAssignee !== null && !validScheduleAssignee(project.installationAssignee)) {
+      project.installationAssignee = null;
       changed = true;
     }
     if (project.solarRebateReceivedAt !== null && typeof project.solarRebateReceivedAt !== "string") {
@@ -467,6 +521,8 @@ function buildProject(
       confirmedBy: null,
     },
     deliveryScheduledFor: null,
+    deliveryScheduledTime: null,
+    deliveryAssignee: null,
     deliveredAt: null,
     collection: {
       proof: null,
@@ -477,6 +533,8 @@ function buildProject(
       confirmedBy: null,
     },
     installationScheduledFor: null,
+    installationScheduledTime: null,
+    installationAssignee: null,
     finalPayments: [],
     installedAt: null,
     coesReceivedAt: null,
@@ -603,10 +661,31 @@ function validateNonNegativeAmount(value: number | undefined) {
   return value as number;
 }
 
-function validDeliveryDate(value: string | undefined) {
-  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+function validDeliveryDate(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const parsed = new Date(`${value}T00:00:00Z`);
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function validScheduleTime(value: unknown): value is string {
+  return typeof value === "string" && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value);
+}
+
+function validScheduleAssignee(value: unknown): value is PaymentTrackScheduleAssignee {
+  return typeof value === "string"
+    && PAYMENT_TRACK_SCHEDULE_ASSIGNEES.includes(value as PaymentTrackScheduleAssignee);
+}
+
+function deliveryScheduleIsComplete(project: StoredProject) {
+  return validDeliveryDate(project.deliveryScheduledFor)
+    && validScheduleTime(project.deliveryScheduledTime)
+    && validScheduleAssignee(project.deliveryAssignee);
+}
+
+function installationScheduleIsComplete(project: StoredProject) {
+  return validDeliveryDate(project.installationScheduledFor)
+    && validScheduleTime(project.installationScheduledTime)
+    && validScheduleAssignee(project.installationAssignee);
 }
 
 function nextPmNotesTimestamp(project: StoredProject) {
@@ -723,15 +802,27 @@ export function transitionPaymentTrackProject(
       project.history.push(historyEntry("deposit_confirmed", timestamp, "admin", actor, `AUD ${(amount / 100).toFixed(2)}`));
     } else if (action === "schedule_delivery") {
       requireRole(input.actorRole, ["pm"], "Only the Project Manager can schedule delivery.");
-      if (project.stage !== "material_delivery" || project.deliveredAt || !validDeliveryDate(input.deliveryDate)) {
-        throw new PaymentTrackRepositoryError("Choose a valid delivery date before delivery is completed.", 409, "invalid_transition");
+      if (project.stage !== "material_delivery"
+        || project.deliveredAt
+        || !validDeliveryDate(input.deliveryDate)
+        || !validScheduleTime(input.deliveryTime)
+        || !validScheduleAssignee(input.deliveryAssignee)) {
+        throw new PaymentTrackRepositoryError("Choose a valid delivery date, time and assignee before delivery is completed.", 409, "invalid_transition");
       }
       project.deliveryScheduledFor = input.deliveryDate || null;
-      project.history.push(historyEntry("delivery_scheduled", timestamp, "pm", actor, input.deliveryDate || null));
+      project.deliveryScheduledTime = input.deliveryTime;
+      project.deliveryAssignee = input.deliveryAssignee;
+      project.history.push(historyEntry(
+        "delivery_scheduled",
+        timestamp,
+        "pm",
+        actor,
+        `${input.deliveryDate} ${input.deliveryTime} · ${input.deliveryAssignee}`,
+      ));
     } else if (action === "mark_delivered") {
       requireRole(input.actorRole, ["pm"], "Only the Project Manager can mark materials delivered.");
-      if (project.stage !== "material_delivery" || project.deliveredAt || !project.deliveryScheduledFor) {
-        throw new PaymentTrackRepositoryError("Schedule the delivery before marking it delivered.", 409, "invalid_transition");
+      if (project.stage !== "material_delivery" || project.deliveredAt || !deliveryScheduleIsComplete(project)) {
+        throw new PaymentTrackRepositoryError("Schedule the delivery date, time and assignee before marking it delivered.", 409, "invalid_transition");
       }
       project.deliveredAt = timestamp;
       project.history.push(historyEntry("marked_delivered", timestamp, "pm", actor));
@@ -758,23 +849,31 @@ export function transitionPaymentTrackProject(
       project.collection.confirmedBy = actor;
       project.stage = "installing";
       project.installationScheduledFor = null;
+      project.installationScheduledTime = null;
+      project.installationAssignee = null;
       project.history.push(historyEntry("collection_confirmed", timestamp, "admin", actor, `AUD ${(amount / 100).toFixed(2)}`));
     } else if (action === "schedule_installation") {
       requireRole(input.actorRole, ["pm"], "Only the Project Manager can schedule installation.");
-      if (project.stage !== "installing" || project.installedAt || !validDeliveryDate(input.installationDate)) {
+      if (project.stage !== "installing"
+        || project.installedAt
+        || !validDeliveryDate(input.installationDate)
+        || !validScheduleTime(input.installationTime)
+        || !validScheduleAssignee(input.installationAssignee)) {
         throw new PaymentTrackRepositoryError(
-          "Choose a valid installation date while the project is installing.",
+          "Choose a valid installation date, time and assignee while the project is installing.",
           409,
           "invalid_transition",
         );
       }
       project.installationScheduledFor = input.installationDate || null;
+      project.installationScheduledTime = input.installationTime;
+      project.installationAssignee = input.installationAssignee;
       project.history.push(historyEntry(
         "installation_scheduled",
         timestamp,
         "pm",
         actor,
-        input.installationDate || null,
+        `${input.installationDate} ${input.installationTime} · ${input.installationAssignee}`,
       ));
     } else if (action === "acknowledge_payment") {
       requireRole(input.actorRole, ["sales"], "Only Sales can acknowledge a received payment.");
@@ -821,8 +920,8 @@ export function transitionPaymentTrackProject(
       project.history.push(historyEntry("final_payment_confirmed", timestamp, "admin", actor, `AUD ${(amount / 100).toFixed(2)}`));
     } else if (action === "mark_installed") {
       requireRole(input.actorRole, ["pm"], "Only the Project Manager can mark the project installed.");
-      if (project.stage !== "installing" || project.installedAt) {
-        throw new PaymentTrackRepositoryError("Only an installing project can be marked installed.", 409, "invalid_transition");
+      if (project.stage !== "installing" || project.installedAt || !installationScheduleIsComplete(project)) {
+        throw new PaymentTrackRepositoryError("Schedule the installation date, time and assignee before marking the project installed.", 409, "invalid_transition");
       }
       project.installedAt = timestamp;
       project.stage = "waiting_coes";

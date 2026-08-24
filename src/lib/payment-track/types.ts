@@ -13,6 +13,10 @@ export const PAYMENT_TRACK_ROLES = ["sales", "specialist", "pm", "admin"] as con
 
 export type PaymentTrackRole = (typeof PAYMENT_TRACK_ROLES)[number];
 
+export const PAYMENT_TRACK_SCHEDULE_ASSIGNEES = ["Leo", "Daniel"] as const;
+
+export type PaymentTrackScheduleAssignee = (typeof PAYMENT_TRACK_SCHEDULE_ASSIGNEES)[number];
+
 export const PAYMENT_TRACK_ACTIONS = [
   "confirm_deposit",
   "schedule_delivery",
@@ -144,9 +148,13 @@ export interface PaymentTrackProject {
   contract: PaymentTrackFile | null;
   deposit: PaymentTrackReceipt;
   deliveryScheduledFor: string | null;
+  deliveryScheduledTime: string | null;
+  deliveryAssignee: PaymentTrackScheduleAssignee | null;
   deliveredAt: string | null;
   collection: PaymentTrackReceipt;
   installationScheduledFor: string | null;
+  installationScheduledTime: string | null;
+  installationAssignee: PaymentTrackScheduleAssignee | null;
   finalPayments: PaymentTrackFinalPayment[];
   installedAt: string | null;
   coesReceivedAt: string | null;
@@ -207,7 +215,11 @@ export type PaymentTrackActionRequest = {
   amount?: string;
   paymentId?: string;
   deliveryDate?: string;
+  deliveryTime?: string;
+  deliveryAssignee?: PaymentTrackScheduleAssignee;
   installationDate?: string;
+  installationTime?: string;
+  installationAssignee?: PaymentTrackScheduleAssignee;
   actorName?: string;
   notes?: string;
   expectedPmNotesUpdatedAt?: string | null;

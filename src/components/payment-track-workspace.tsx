@@ -38,6 +38,8 @@ import {
   useState,
 } from "react";
 import type { ErpRole } from "@/lib/auth/types";
+import { readJsonResponse } from "@/lib/client/http";
+import { PAYMENT_TRACK_SCHEDULE_ASSIGNEES } from "@/lib/payment-track/types";
 import type {
   PaymentTrackAction,
   PaymentTrackAdminSession,
@@ -46,6 +48,7 @@ import type {
   PaymentTrackMutationResponse,
   PaymentTrackProject,
   PaymentTrackRole,
+  PaymentTrackScheduleAssignee,
   PaymentTrackStage,
 } from "@/lib/payment-track/types";
 import styles from "./payment-track-workspace.module.css";
@@ -110,6 +113,8 @@ const MAX_PROOF_SIZE = 10 * 1024 * 1024;
 const DISCARD_PM_NOTES_MESSAGE = "Discard your unsaved PM notes?";
 const PROOF_TYPES = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
 
+type ScheduleAssignee = PaymentTrackScheduleAssignee | "";
+
 function formatMoney(cents: number) {
   return new Intl.NumberFormat("en-AU", {
     style: "currency",
@@ -128,6 +133,27 @@ function formatDate(value: string | null, includeTime = false) {
     year: "numeric",
     ...(includeTime ? { hour: "numeric", minute: "2-digit" } : {}),
   }).format(date);
+}
+
+function formatScheduledAt(date: string | null, time: string | null) {
+  if (!date) return "Not scheduled";
+  return formatDate(time ? `${date}T${time}` : date, Boolean(time));
+}
+
+function hasDeliverySchedule(project: PaymentTrackProject) {
+  return Boolean(
+    project.deliveryScheduledFor
+    && project.deliveryScheduledTime
+    && project.deliveryAssignee,
+  );
+}
+
+function hasInstallationSchedule(project: PaymentTrackProject) {
+  return Boolean(
+    project.installationScheduledFor
+    && project.installationScheduledTime
+    && project.installationAssignee,
+  );
 }
 
 function fileSize(bytes: number) {
@@ -204,8 +230,8 @@ function projectStatus(project: PaymentTrackProject): { label: string; owner: st
   }
   if (project.stage === "material_delivery") {
     if (!project.deliveredAt) {
-      return project.deliveryScheduledFor
-        ? { label: `Delivery ${formatDate(project.deliveryScheduledFor)}`, owner: "PM", tone: "blue" }
+      return hasDeliverySchedule(project)
+        ? { label: "Delivery scheduled", owner: project.deliveryAssignee || "PM", tone: "blue" }
         : { label: "Delivery scheduling required", owner: "PM", tone: "amber" };
     }
     return project.collection.acknowledgedAt || project.collection.proof
@@ -213,7 +239,9 @@ function projectStatus(project: PaymentTrackProject): { label: string; owner: st
       : { label: "Payment receipt acknowledgement required", owner: "Sales", tone: "amber" };
   }
   if (project.stage === "installing") {
-    return { label: "Installation confirmation required", owner: "PM", tone: "violet" };
+    return hasInstallationSchedule(project)
+      ? { label: "Installation scheduled", owner: project.installationAssignee || "PM", tone: "violet" }
+      : { label: "Installation scheduling required", owner: "PM", tone: "amber" };
   }
   if (project.stage === "waiting_coes") {
     const pendingPayment = pendingLaterPayment(project);
@@ -272,7 +300,7 @@ function projectNextStep(project: PaymentTrackProject, activeRole: PaymentTrackR
   }
   if (project.stage === "material_delivery") {
     if (!project.deliveredAt) {
-      return project.deliveryScheduledFor
+      return hasDeliverySchedule(project)
         ? { label: "Mark Delivered", roles: ["pm"] as PaymentTrackRole[] }
         : { label: "Schedule Delivery", roles: ["pm"] as PaymentTrackRole[] };
     }
@@ -281,7 +309,9 @@ function projectNextStep(project: PaymentTrackProject, activeRole: PaymentTrackR
       : { label: "Payment Received", roles: ["sales"] as PaymentTrackRole[] };
   }
   if (project.stage === "installing") {
-    return { label: "Mark Installed", roles: ["pm"] as PaymentTrackRole[] };
+    return hasInstallationSchedule(project)
+      ? { label: "Mark Installed", roles: ["pm"] as PaymentTrackRole[] }
+      : { label: "Schedule Installation", roles: ["pm"] as PaymentTrackRole[] };
   }
   if (project.stage === "waiting_coes") {
     const pendingPayment = pendingLaterPayment(project);
@@ -445,6 +475,11 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
   const [proofFile, setProofFile] = useState<File | null>(null);
   const [actionAmount, setActionAmount] = useState("");
   const [deliveryDate, setDeliveryDate] = useState("");
+  const [deliveryTime, setDeliveryTime] = useState("");
+  const [deliveryAssignee, setDeliveryAssignee] = useState<ScheduleAssignee>("");
+  const [installationDate, setInstallationDate] = useState("");
+  const [installationTime, setInstallationTime] = useState("");
+  const [installationAssignee, setInstallationAssignee] = useState<ScheduleAssignee>("");
   const [pmNotesDraft, setPmNotesDraft] = useState("");
   const [pmNotesBaseUpdatedAt, setPmNotesBaseUpdatedAt] = useState<string | null>(null);
   const [pmNotesError, setPmNotesError] = useState("");
@@ -480,7 +515,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
     else setLoading(true);
     try {
       const response = await fetch("/api/payment-track", { cache: "no-store" });
-      const body = await response.json() as PaymentTrackListResponse & { error?: string };
+      const body = await readJsonResponse<PaymentTrackListResponse & { error?: string }>(response);
       if (!response.ok) throw new Error(apiError(body, "Unable to load payment projects."));
       if (requestId !== loadRequestRef.current) return;
       setProjects(Array.isArray(body.data) ? body.data : []);
@@ -500,7 +535,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
   const loadAdminSession = useCallback(async () => {
     try {
       const response = await fetch("/api/payment-track/admin", { cache: "no-store" });
-      const body = await response.json() as PaymentTrackAdminSession | { data: PaymentTrackAdminSession };
+      const body = await readJsonResponse<PaymentTrackAdminSession | { data: PaymentTrackAdminSession }>(response);
       if (response.ok) setAdminSession(unwrap(body));
     } catch {
       setAdminSession(EMPTY_ADMIN_SESSION);
@@ -622,6 +657,11 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
     setProofFile(null);
     setActionAmount("");
     setDeliveryDate(project.deliveryScheduledFor || "");
+    setDeliveryTime(project.deliveryScheduledTime || "");
+    setDeliveryAssignee(project.deliveryAssignee || "");
+    setInstallationDate(project.installationScheduledFor || "");
+    setInstallationTime(project.installationScheduledTime || "");
+    setInstallationAssignee(project.installationAssignee || "");
     setPmNotesDraft(project.pmNotes || "");
     setPmNotesBaseUpdatedAt(project.pmNotesUpdatedAt || null);
     setPmNotesError("");
@@ -657,7 +697,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ password: form.get("password") }),
       });
-      const body = await response.json() as { data?: PaymentTrackAdminSession; error?: string };
+      const body = await readJsonResponse<{ data?: PaymentTrackAdminSession; error?: string }>(response);
       if (!response.ok) throw new Error(apiError(body, "Unable to enter Administrator mode."));
       setAdminSession(unwrap(body as { data: PaymentTrackAdminSession }));
       setRole("admin");
@@ -684,7 +724,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
       body.set("agreement", agreement);
       body.set("actorRole", "sales");
       const response = await fetch("/api/payment-track/import", { method: "POST", body });
-      const result = await response.json() as PaymentTrackMutationResponse & { error?: string };
+      const result = await readJsonResponse<PaymentTrackMutationResponse & { error?: string }>(response);
       if (!response.ok) throw new Error(apiError(result, "Unable to import this proposal."));
       updateProject(result.data);
       setShowAdd(false);
@@ -737,7 +777,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const result = await response.json() as PaymentTrackMutationResponse & { error?: string };
+      const result = await readJsonResponse<PaymentTrackMutationResponse & { error?: string }>(response);
       if (!response.ok) throw new Error(apiError(result, "Unable to create this payment project."));
       updateProject(result.data);
       setShowAdd(false);
@@ -764,7 +804,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
       body.set("kind", kind);
       body.set("actorRole", role);
       const response = await fetch(`/api/payment-track/${selected.id}/proof`, { method: "POST", body });
-      const result = await response.json() as PaymentTrackMutationResponse & { error?: string };
+      const result = await readJsonResponse<PaymentTrackMutationResponse & { error?: string }>(response);
       if (!response.ok) throw new Error(apiError(result, "Unable to upload payment proof."));
       updateProject(result.data);
       setProofFile(null);
@@ -792,11 +832,16 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, actorRole: role, ...extra }),
       });
-      const result = await response.json() as PaymentTrackMutationResponse & { error?: string };
+      const result = await readJsonResponse<PaymentTrackMutationResponse & { error?: string }>(response);
       if (!response.ok) throw new Error(apiError(result, "Unable to update this project."));
       updateProject(result.data);
       setActionAmount("");
       setDeliveryDate(result.data.deliveryScheduledFor || deliveryDate);
+      setDeliveryTime(result.data.deliveryScheduledTime || deliveryTime);
+      setDeliveryAssignee(result.data.deliveryAssignee || deliveryAssignee);
+      setInstallationDate(result.data.installationScheduledFor || installationDate);
+      setInstallationTime(result.data.installationScheduledTime || installationTime);
+      setInstallationAssignee(result.data.installationAssignee || installationAssignee);
       setWorkflowConfirmation(null);
       setSelectedId(null);
       setNotice(successMessage);
@@ -825,7 +870,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
           expectedPmNotesUpdatedAt: pmNotesBaseUpdatedAt,
         }),
       });
-      const result = await response.json() as PaymentTrackMutationResponse & { error?: string };
+      const result = await readJsonResponse<PaymentTrackMutationResponse & { error?: string }>(response);
       if (!response.ok) {
         const message = apiError(result, response.status === 409
           ? "These PM notes were updated elsewhere. Review the latest version before trying again."
@@ -834,7 +879,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
           let latestLoaded = false;
           try {
             const latestResponse = await fetch("/api/payment-track", { cache: "no-store" });
-            const latestBody = await latestResponse.json() as PaymentTrackListResponse & { error?: string };
+            const latestBody = await readJsonResponse<PaymentTrackListResponse & { error?: string }>(latestResponse);
             if (latestResponse.ok) {
               const latest = latestBody.data.find((project) => project.id === selected.id);
               if (latest) {
@@ -1128,21 +1173,61 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
         );
       }
       return (
-        <div className={styles.actionPanel}>
-          <div className={styles.actionHeading}>
-            <span><Truck size={17} /></span>
-            <div><strong>Material delivery</strong><small>Set a delivery date before completing delivery.</small></div>
+        <div className={`${styles.actionPanel} ${styles.scheduleActionPanel}`}>
+          <div className={styles.scheduleActionHeader}>
+            <div className={styles.actionHeading}>
+              <span><Truck size={17} /></span>
+              <div>
+                <strong>Material delivery</strong>
+                <small>Choose when the materials will arrive and who will deliver them.</small>
+              </div>
+            </div>
+            <span className={styles.scheduleSyncBadge}><CalendarDays size={14} /> Weekly Schedule task</span>
           </div>
-          <label className={styles.actionField}>
-            Delivery date
-            <input type="date" value={deliveryDate} onChange={(event) => setDeliveryDate(event.target.value)} />
-          </label>
-          <div className={styles.actionButtons}>
+          <div className={styles.scheduleFields}>
+            <label className={styles.actionField}>
+              Delivery date
+              <input
+                type="date"
+                value={deliveryDate}
+                disabled={busy}
+                onChange={(event) => setDeliveryDate(event.target.value)}
+              />
+            </label>
+            <label className={styles.actionField}>
+              Delivery time
+              <input
+                type="time"
+                value={deliveryTime}
+                disabled={busy}
+                onChange={(event) => setDeliveryTime(event.target.value)}
+              />
+            </label>
+            <label className={styles.actionField}>
+              Delivery person
+              <select
+                value={deliveryAssignee}
+                disabled={busy}
+                onChange={(event) => setDeliveryAssignee(event.target.value as ScheduleAssignee)}
+              >
+                <option value="">Select a person</option>
+                {PAYMENT_TRACK_SCHEDULE_ASSIGNEES.map((assignee) => <option key={assignee} value={assignee}>{assignee}</option>)}
+              </select>
+            </label>
+          </div>
+          <p className={styles.scheduleSyncHint}>
+            Saving creates or updates a Weekly Schedule task with this project&apos;s items and delivery person.
+          </p>
+          <div className={`${styles.actionButtons} ${styles.scheduleActionButtons}`}>
             <button
               className={styles.secondaryButton}
               type="button"
-              disabled={busy || !deliveryDate}
-              onClick={() => void performAction("schedule_delivery", { deliveryDate }, "Delivery date saved.")}
+              disabled={busy || !deliveryDate || !deliveryTime || !deliveryAssignee}
+              onClick={() => void performAction(
+                "schedule_delivery",
+                { deliveryDate, deliveryTime, deliveryAssignee },
+                "Delivery schedule saved and Weekly Schedule task updated.",
+              )}
             >
               {busy ? <LoaderCircle className={styles.spinning} size={15} /> : <CalendarDays size={15} />}
               Save Schedule
@@ -1150,7 +1235,13 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
             <button
               className={styles.primaryButton}
               type="button"
-              disabled={busy || !project.deliveryScheduledFor || deliveryDate !== project.deliveryScheduledFor}
+              disabled={
+                busy
+                || !hasDeliverySchedule(project)
+                || deliveryDate !== project.deliveryScheduledFor
+                || deliveryTime !== project.deliveryScheduledTime
+                || deliveryAssignee !== project.deliveryAssignee
+              }
               onClick={() => void performAction("mark_delivered", {}, "Materials marked as delivered. Sales can now acknowledge payment receipt.")}
             >
               <PackageCheck size={15} /> Mark Delivered
@@ -1219,21 +1310,88 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
         return (
           <ReadOnlyNextStep
             owner="Project Manager"
-            label="Confirm when installation has been completed."
+            label="Schedule the installation date, time and installer, then confirm when the work is complete."
             buttonLabel="Continue as Project Manager"
             onContinue={() => selectRole("pm")}
           />
         );
       }
       return (
-        <SimpleAction
-          icon={<Wrench size={18} />}
-          title="Installation in progress"
-          description="Confirm only after the installation work is complete."
-          button="Mark Installed"
-          busy={busy}
-          onClick={() => void performAction("mark_installed", {}, "Installation marked complete. Project moved to Waiting COES.")}
-        />
+        <div className={`${styles.actionPanel} ${styles.scheduleActionPanel}`}>
+          <div className={styles.scheduleActionHeader}>
+            <div className={styles.actionHeading}>
+              <span><Wrench size={17} /></span>
+              <div>
+                <strong>Installation</strong>
+                <small>Choose the installation time and assign Leo or Daniel before completion.</small>
+              </div>
+            </div>
+            <span className={styles.scheduleSyncBadge}><CalendarDays size={14} /> Weekly Schedule task</span>
+          </div>
+          <div className={styles.scheduleFields}>
+            <label className={styles.actionField}>
+              Installation date
+              <input
+                type="date"
+                value={installationDate}
+                disabled={busy}
+                onChange={(event) => setInstallationDate(event.target.value)}
+              />
+            </label>
+            <label className={styles.actionField}>
+              Installation time
+              <input
+                type="time"
+                value={installationTime}
+                disabled={busy}
+                onChange={(event) => setInstallationTime(event.target.value)}
+              />
+            </label>
+            <label className={styles.actionField}>
+              Installer
+              <select
+                value={installationAssignee}
+                disabled={busy}
+                onChange={(event) => setInstallationAssignee(event.target.value as ScheduleAssignee)}
+              >
+                <option value="">Select an installer</option>
+                {PAYMENT_TRACK_SCHEDULE_ASSIGNEES.map((assignee) => <option key={assignee} value={assignee}>{assignee}</option>)}
+              </select>
+            </label>
+          </div>
+          <p className={styles.scheduleSyncHint}>
+            Saving creates or updates a Weekly Schedule task with this project&apos;s items and installer.
+          </p>
+          <div className={`${styles.actionButtons} ${styles.scheduleActionButtons}`}>
+            <button
+              className={styles.secondaryButton}
+              type="button"
+              disabled={busy || !installationDate || !installationTime || !installationAssignee}
+              onClick={() => void performAction(
+                "schedule_installation",
+                { installationDate, installationTime, installationAssignee },
+                "Installation schedule saved and Weekly Schedule task updated.",
+              )}
+            >
+              {busy ? <LoaderCircle className={styles.spinning} size={15} /> : <CalendarDays size={15} />}
+              Save Schedule
+            </button>
+            <button
+              className={styles.primaryButton}
+              type="button"
+              disabled={
+                busy
+                || !hasInstallationSchedule(project)
+                || installationDate !== project.installationScheduledFor
+                || installationTime !== project.installationScheduledTime
+                || installationAssignee !== project.installationAssignee
+              }
+              onClick={() => void performAction("mark_installed", {}, "Installation marked complete. Project moved to Waiting COES.")}
+            >
+              <Wrench size={15} /> Mark Installed
+            </button>
+          </div>
+        </div>
       );
     }
 
@@ -1471,6 +1629,18 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                                 <span><UserRound size={13} /> {project.specialist.name}</span>
                                 <span><Boxes size={13} /> {project.items.length} {project.items.length === 1 ? "item" : "items"}</span>
                               </div>
+                              {project.stage === "material_delivery" && project.deliveryScheduledFor ? (
+                                <div className={styles.cardSchedule}>
+                                  <span><CalendarDays size={13} /> {formatScheduledAt(project.deliveryScheduledFor, project.deliveryScheduledTime)}</span>
+                                  <strong><UserRound size={13} /> {project.deliveryAssignee || "Unassigned"}</strong>
+                                </div>
+                              ) : null}
+                              {project.stage === "installing" && project.installationScheduledFor ? (
+                                <div className={styles.cardSchedule}>
+                                  <span><CalendarDays size={13} /> {formatScheduledAt(project.installationScheduledFor, project.installationScheduledTime)}</span>
+                                  <strong><UserRound size={13} /> {project.installationAssignee || "Unassigned"}</strong>
+                                </div>
+                              ) : null}
                               <div className={styles.cardFooter}>
                                 <span className={`${styles.substatus} ${styles[status.tone]}`}>{status.label}</span>
                                 <small>{status.owner}</small>
@@ -1805,7 +1975,20 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                   <dl>
                     <div><dt>Specialist</dt><dd>{selected.specialist.name || "—"}</dd></div>
                     <div><dt>Specialist phone</dt><dd>{selected.specialist.phone || "—"}</dd></div>
-                    <div><dt>Delivery date</dt><dd>{formatDate(selected.deliveryScheduledFor)}</dd></div>
+                    <div>
+                      <dt>Material delivery</dt>
+                      <dd>
+                        {formatScheduledAt(selected.deliveryScheduledFor, selected.deliveryScheduledTime)}
+                        {selected.deliveryAssignee ? ` · ${selected.deliveryAssignee}` : ""}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Installation</dt>
+                      <dd>
+                        {formatScheduledAt(selected.installationScheduledFor, selected.installationScheduledTime)}
+                        {selected.installationAssignee ? ` · ${selected.installationAssignee}` : ""}
+                      </dd>
+                    </div>
                     <div><dt>Created</dt><dd>{formatDate(selected.createdAt, true)}</dd></div>
                   </dl>
                 </section>

@@ -421,6 +421,33 @@
 .cardMeta span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cardMeta svg { flex: 0 0 auto; }
 
+.cardSchedule {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 9px;
+  padding: 8px 9px;
+  gap: 8px;
+  color: #52616c;
+  background: #f2f4ff;
+  border: 1px solid #dfe3fa;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.cardSchedule span,
+.cardSchedule strong {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+}
+
+.cardSchedule span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cardSchedule strong { flex: 0 0 auto; color: #5262c4; font-weight: 750; }
+.cardSchedule svg { flex: 0 0 auto; }
+
 .cardFooter {
   display: flex;
   min-width: 0;
@@ -749,6 +776,7 @@
 .formGrid textarea,
 .compactFields input,
 .actionField input,
+.actionField select,
 .loginForm input {
   width: 100%;
   min-height: 40px;
@@ -768,6 +796,7 @@
 .formGrid input:focus,
 .formGrid textarea:focus,
 .actionField input:focus,
+.actionField select:focus,
 .loginForm input:focus { border-color: #6574d9; box-shadow: 0 0 0 3px rgba(92, 108, 216, .12); }
 
 .formGrid label > small { margin-top: -2px; color: #88939c; font-size: 12px; font-weight: 500; }
@@ -981,12 +1010,61 @@
 .readOnlyStep small { margin-top: 3px; color: #7b8791; font-size: 12px; line-height: 1.4; }
 
 .actionField { min-width: 195px; }
-.actionField input { min-height: 38px; }
+.actionField input,
+.actionField select { min-height: 38px; }
 .actionPanel > .primaryButton { min-height: 38px; }
 
 .actionButtons { display: flex; align-items: center; gap: 7px; }
 .actionButtons button { min-height: 38px; }
 .readOnlyStep > .secondaryButton { min-height: 38px; flex: 0 0 auto; }
+
+.scheduleActionPanel {
+  align-items: stretch;
+  flex-direction: column;
+  gap: 11px;
+}
+
+.scheduleActionHeader {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.scheduleActionHeader .actionHeading { min-width: 0; }
+
+.scheduleSyncBadge {
+  display: inline-flex;
+  min-height: 29px;
+  flex: 0 0 auto;
+  align-items: center;
+  padding: 5px 8px;
+  gap: 5px;
+  color: #4e5fc1;
+  background: #eef0ff;
+  border: 1px solid #d9defb;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.scheduleFields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.scheduleFields .actionField { min-width: 0; }
+
+.scheduleSyncHint {
+  margin: 0;
+  color: #79858f;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.scheduleActionButtons { justify-content: flex-end; }
 
 .compactUpload {
   position: relative;
@@ -1268,6 +1346,9 @@
   .pmNotesConflict small { text-align: left; }
   .pmNotesFooter button,
   .pmNotesReadOnly button { width: 100%; }
+  .scheduleActionHeader { align-items: flex-start; flex-direction: column; }
+  .scheduleFields { grid-template-columns: 1fr; }
+  .scheduleActionButtons button { min-width: 0; flex: 1; }
   .modalFooter { align-items: stretch; flex-direction: column-reverse; }
   .modalFooter button { width: 100%; }
   .confirmationFooter { align-items: stretch; flex-direction: column-reverse; }
@@ -1284,6 +1365,7 @@
   .pmNotesHeader > small { margin-left: 0; }
   .actionButtons { align-items: stretch; flex-direction: column; }
   .actionButtons button { width: 100%; }
+  .cardSchedule { align-items: flex-start; flex-direction: column; gap: 5px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
