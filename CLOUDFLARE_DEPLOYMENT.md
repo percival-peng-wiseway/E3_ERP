@@ -23,7 +23,7 @@ This repository is configured for full-stack Next.js deployment to Cloudflare Wo
 
 6. Deploy first to the generated `*.workers.dev` address and verify Inventory and QuoteHelp login/session behavior before attaching the production domain.
 
-The Worker name is `e3-erp-workspace`. The upstream Inventory, QuoteHelp and DeepSeek host/model settings are already declared as non-secret runtime variables in `wrangler.jsonc`.
+The Worker name is `e3-erp`. The upstream Inventory, QuoteHelp and DeepSeek host/model settings are already declared as non-secret runtime variables in `wrangler.jsonc`.
 
 ## Required production secrets
 
