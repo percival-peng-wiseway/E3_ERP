@@ -17,6 +17,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const RETRY_PATTERN = /^[1-9][0-9]{0,2}$/;
 
 async function identifiers(context: { params: Promise<{ id: string; photoId: string }> }) {
   const { id, photoId } = await context.params;
@@ -36,8 +37,14 @@ export async function GET(
   const ids = await identifiers(context);
   if (!ids) return siteVisitError(400, "invalid_id", "The site visit photo ID is invalid.");
   const parameters = request.nextUrl.searchParams;
-  if ([...parameters.keys()].some((key) => key !== "token") || parameters.getAll("token").length !== 1) {
+  if (parameters.getAll("token").length !== 1) {
     return siteVisitError(403, "forbidden", "A valid photo access token is required.");
+  }
+  const retries = parameters.getAll("retry");
+  if ([...parameters.keys()].some((key) => key !== "token" && key !== "retry")
+    || retries.length > 1
+    || (retries.length === 1 && !RETRY_PATTERN.test(retries[0]))) {
+    return siteVisitError(400, "invalid_query", "The photo retry parameter is invalid.");
   }
   try {
     const photo = await getSiteVisitPhotoFile(ids.id, ids.photoId);
@@ -64,7 +71,9 @@ export async function GET(
     });
   } catch (error) {
     if (error instanceof SiteVisitRepositoryError) {
-      return siteVisitError(error.status, error.code, error.message);
+      const response = siteVisitError(error.status, error.code, error.message);
+      if (error.code === "photo_not_ready") response.headers.set("retry-after", "5");
+      return response;
     }
     return siteVisitError(500, "photo_unavailable", "The site visit photo is temporarily unavailable.");
   }

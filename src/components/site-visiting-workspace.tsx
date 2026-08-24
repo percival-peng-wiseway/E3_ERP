@@ -35,6 +35,7 @@ import type {
   SiteVisit,
   SiteVisitCheckAnswer,
   SiteVisitChecklistItem,
+  SiteVisitPhoto,
   SiteVisitStatus,
 } from "@/lib/site-visits/types";
 import styles from "./site-visiting-workspace.module.css";
@@ -57,6 +58,9 @@ const ANSWER_OPTIONS: Array<{ value: SiteVisitCheckAnswer; label: string }> = [
 
 const MAX_PHOTO_SIZE = 10 * 1024 * 1024;
 const ACCEPTED_PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const PHOTO_RETRY_DELAYS_MS = [2_000, 5_000, 10_000, 20_000, 30_000, 60_000] as const;
+
+type PhotoLoadState = "loading" | "ready" | "waiting" | "failed";
 
 function cloneVisit(visit: SiteVisit): SiteVisit {
   return {
@@ -140,6 +144,105 @@ function editableVisitPayload(visit: SiteVisit, status = visit.status) {
     checklist: visit.checklist,
     status,
   };
+}
+
+function retriedPhotoUrl(url: string, attempt: number) {
+  if (!attempt) return url;
+  return `${url}${url.includes("?") ? "&" : "?"}retry=${attempt}`;
+}
+
+function SiteVisitPhotoCard({
+  photo,
+  busy,
+  onDelete,
+}: {
+  photo: SiteVisitPhoto;
+  busy: boolean;
+  onDelete: (photoId: string) => void;
+}) {
+  const [attempt, setAttempt] = useState(0);
+  const [failedAttempts, setFailedAttempts] = useState(0);
+  const [loadState, setLoadState] = useState<PhotoLoadState>("loading");
+  const retryTimerRef = useRef<number | null>(null);
+
+  function clearRetryTimer() {
+    if (retryTimerRef.current === null) return;
+    window.clearTimeout(retryTimerRef.current);
+    retryTimerRef.current = null;
+  }
+
+  useEffect(() => {
+    clearRetryTimer();
+    setAttempt(0);
+    setFailedAttempts(0);
+    setLoadState("loading");
+    return clearRetryTimer;
+  }, [photo.id, photo.url]);
+
+  function photoLoaded() {
+    clearRetryTimer();
+    setLoadState("ready");
+  }
+
+  function photoFailed() {
+    clearRetryTimer();
+    const delay = PHOTO_RETRY_DELAYS_MS[failedAttempts];
+    if (delay === undefined) {
+      setLoadState("failed");
+      return;
+    }
+    setLoadState("waiting");
+    retryTimerRef.current = window.setTimeout(() => {
+      retryTimerRef.current = null;
+      setFailedAttempts((current) => current + 1);
+      setAttempt((current) => current + 1);
+      setLoadState("loading");
+    }, delay);
+  }
+
+  function retryPhotoNow() {
+    clearRetryTimer();
+    setFailedAttempts(0);
+    setAttempt((current) => current + 1);
+    setLoadState("loading");
+  }
+
+  const photoName = photo.originalName || "Site visit photo";
+  return (
+    <figure>
+      <div className={`${styles.photoPreview} ${loadState === "ready" ? "" : styles.photoPreviewPending}`}>
+        <a href={photo.url} target="_blank" rel="noreferrer" aria-label={`Open ${photoName}`}>
+          <img
+            src={retriedPhotoUrl(photo.url, attempt)}
+            alt={photoName}
+            onLoad={photoLoaded}
+            onError={photoFailed}
+          />
+        </a>
+        {loadState !== "ready" ? (
+          <div className={styles.photoLoadStatus} role={loadState === "failed" ? "alert" : "status"}>
+            {loadState === "failed" ? (
+              <>
+                <span>Photo is not ready yet.</span>
+                <button type="button" onClick={retryPhotoNow}>Retry photo</button>
+              </>
+            ) : (
+              <>
+                <LoaderCircle className={styles.spinner} size={18} />
+                <span>{loadState === "waiting" ? "Photo syncing…" : "Loading photo…"}</span>
+              </>
+            )}
+          </div>
+        ) : null}
+      </div>
+      <figcaption>
+        <span>{photo.originalName}</span>
+        <button onClick={() => onDelete(photo.id)} disabled={busy} aria-label={`Delete ${photo.originalName}`}>
+          <Trash2 size={16} />
+        </button>
+      </figcaption>
+    </figure>
+  );
 }
 
 export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole: ErpRole }) {
@@ -607,10 +710,12 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
                 {detail.photos.length ? (
                   <div className={styles.photoGrid}>
                     {detail.photos.map((photo) => (
-                      <figure key={photo.id}>
-                        <a href={photo.url} target="_blank" rel="noreferrer"><img src={photo.url} alt={photo.originalName || "Site visit photo"} /></a>
-                        <figcaption><span>{photo.originalName}</span><button onClick={() => void deletePhoto(photo.id)} disabled={busy} aria-label={`Delete ${photo.originalName}`}><Trash2 size={16} /></button></figcaption>
-                      </figure>
+                      <SiteVisitPhotoCard
+                        key={photo.id}
+                        photo={photo}
+                        busy={busy}
+                        onDelete={(photoId) => void deletePhoto(photoId)}
+                      />
                     ))}
                   </div>
                 ) : (

@@ -325,7 +325,15 @@ async function readStoredPhoto(visitId: string, photo: StoredSiteVisitPhoto) {
     }
     const buffer = await bindings.files.get(storedPhotoObjectKey(visitId, photo.storedName), "arrayBuffer");
     if (!buffer) {
-      throw new SiteVisitRepositoryError("The site visit photo is unavailable.", 404, "photo_not_found");
+      // Workers KV is eventually consistent across locations. The D1 photo
+      // metadata can therefore become visible before a newly-created KV key
+      // reaches the location serving this read. Treat that state as retryable
+      // rather than incorrectly reporting that the logical photo is missing.
+      throw new SiteVisitRepositoryError(
+        "The site visit photo is still syncing. Try again shortly.",
+        503,
+        "photo_not_ready",
+      );
     }
     return new Uint8Array(buffer);
   }

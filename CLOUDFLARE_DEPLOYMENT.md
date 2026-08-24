@@ -86,7 +86,7 @@ The migration command intentionally covers Payment Track, Project Schedule and S
 
 Prefer the `AGENT_API_KEY` Cloudflare Secret for long-lived Agent credentials. The settings UI can save a replacement server-side, but local Agent settings—including any existing key—are never copied by the migration script.
 
-Each structured module currently uses one bounded, versioned D1 document. The server rejects a document before it reaches D1's row-size limit; archive or split older records if a module approaches that guard. Private KV objects use random immutable keys. R2 is the preferred future backend if immediate cross-region read-after-write for large files becomes necessary.
+Each structured module currently uses one bounded, versioned D1 document. The server rejects a document before it reaches D1's row-size limit; archive or split older records if a module approaches that guard. Private KV objects use random immutable keys. Because a new KV key can take time to reach another Cloudflare location, Site Visiting marks a temporarily unavailable photo as syncing and retries it automatically. R2 is the preferred future backend if immediate cross-region read-after-write for large files becomes necessary.
 
 ## CLI deployment alternative
 
