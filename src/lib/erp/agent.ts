@@ -118,7 +118,7 @@ export async function answerLocally(
     };
   }
 
-  if (includesAny(message, ["finance", "accounting", "invoice", "profit", "project management", "project progress"])) {
+  if (includesAny(message, ["finance", "accounting", "invoice", "profit", "project management", "weekly schedule", "project progress"])) {
     return {
       mode: "local",
       answer:

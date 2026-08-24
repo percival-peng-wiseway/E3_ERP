@@ -774,7 +774,6 @@ export function ProjectDeliveryBoard() {
     <section className={styles.workspace}>
       <header className={styles.pageHeader}>
         <div>
-          <span className={styles.eyebrow}>Project Management</span>
           <h1 ref={scheduleHeadingRef} id="project-schedule-title" tabIndex={-1}>Weekly Schedule</h1>
         </div>
         <div className={styles.headerActions}>
