@@ -1,17 +1,34 @@
-import {
-  SITE_VISIT_CHECK_ANSWERS,
-  SITE_VISIT_STATUSES,
-  type SiteVisitChecklistItem,
-  type SiteVisitCheckAnswer,
-  type SiteVisitCreateInput,
-  type SiteVisitPatchInput,
-  type SiteVisitStatus,
+// Focused tests execute source TypeScript directly under Node ESM.
+// @ts-expect-error -- explicit extension is required by that runtime.
+import { SITE_VISIT_CHECK_ANSWERS, SITE_VISIT_STATUSES } from "./types.ts";
+import type {
+  SiteVisitChecklistItem,
+  SiteVisitCheckAnswer,
+  SiteVisitCreateInput,
+  SiteVisitPatchInput,
+  SiteVisitStatus,
 } from "./types";
 
 export const SITE_VISIT_BUILT_IN_CHECKS = [
   { id: "roof_tiles_attention", label: "Roof tiles need attention" },
   { id: "switchboard_replacement", label: "Switchboard needs replacement" },
+  { id: "ac_cable_run_under_20m", label: "AC Cable Run <20m" },
+  { id: "roof_material", label: "Roof Material" },
+  { id: "bat_location", label: "BAT Location" },
+  { id: "fire_cement_sheet", label: "Fire Cement Sheet" },
+  { id: "sub_switchboard", label: "Sub-Switchboard" },
+  { id: "switch_upgrade", label: "Switch Upgrade" },
+  { id: "backup_circuit", label: "Backup Circuit" },
+  { id: "concrete_slab", label: "Concrete Slab" },
 ] as const;
+
+const LEGACY_REQUIRED_CHECK_IDS = new Set([
+  "roof_tiles_attention",
+  "switchboard_replacement",
+]);
+const BUILT_IN_CHECK_IDS = new Set<string>(SITE_VISIT_BUILT_IN_CHECKS.map(({ id }) => id));
+const MAX_SITE_VISIT_CUSTOM_CHECKS = 38;
+export const MAX_SITE_VISIT_CHECKS = SITE_VISIT_BUILT_IN_CHECKS.length + MAX_SITE_VISIT_CUSTOM_CHECKS;
 
 const CREATE_FIELDS = new Set([
   "projectName",
@@ -56,9 +73,10 @@ export function initialSiteVisitChecklist(): SiteVisitChecklistItem[] {
   }));
 }
 
-export function parseSiteVisitChecklist(value: unknown): SiteVisitChecklistItem[] | null {
-  if (!Array.isArray(value) || value.length < SITE_VISIT_BUILT_IN_CHECKS.length || value.length > 40) return null;
-
+function parseChecklistItems(value: unknown): SiteVisitChecklistItem[] | null {
+  if (!Array.isArray(value)
+    || value.length < LEGACY_REQUIRED_CHECK_IDS.size
+    || value.length > MAX_SITE_VISIT_CHECKS) return null;
   const ids = new Set<string>();
   const checklist: SiteVisitChecklistItem[] = [];
   for (const candidate of value) {
@@ -74,9 +92,37 @@ export function parseSiteVisitChecklist(value: unknown): SiteVisitChecklistItem[
     ids.add(id);
     checklist.push({ id, label, answer: source.answer as SiteVisitCheckAnswer, notes });
   }
-
-  if (SITE_VISIT_BUILT_IN_CHECKS.some(({ id }) => !ids.has(id))) return null;
   return checklist;
+}
+
+function normalizedChecklist(checklist: SiteVisitChecklistItem[]) {
+  const existingById = new Map(checklist.map((item) => [item.id, item]));
+  const normalized = [
+    ...SITE_VISIT_BUILT_IN_CHECKS.map((definition) => {
+      const existing = existingById.get(definition.id);
+      return existing
+        ? { ...existing, label: definition.label }
+        : { ...definition, answer: "not_checked" as const, notes: "" };
+    }),
+    ...checklist.filter(({ id }) => !BUILT_IN_CHECK_IDS.has(id)),
+  ];
+  return normalized.length <= MAX_SITE_VISIT_CHECKS ? normalized : null;
+}
+
+export function parseSiteVisitChecklist(value: unknown): SiteVisitChecklistItem[] | null {
+  const checklist = parseChecklistItems(value);
+  if (!checklist) return null;
+  const ids = new Set(checklist.map(({ id }) => id));
+  if (SITE_VISIT_BUILT_IN_CHECKS.some(({ id }) => !ids.has(id))) return null;
+  return normalizedChecklist(checklist);
+}
+
+export function normalizeStoredSiteVisitChecklist(value: unknown): SiteVisitChecklistItem[] | null {
+  const checklist = parseChecklistItems(value);
+  if (!checklist) return null;
+  const ids = new Set(checklist.map(({ id }) => id));
+  if ([...LEGACY_REQUIRED_CHECK_IDS].some((id) => !ids.has(id))) return null;
+  return normalizedChecklist(checklist);
 }
 
 export function parseSiteVisitCreate(body: Record<string, unknown>): SiteVisitCreateInput | null {

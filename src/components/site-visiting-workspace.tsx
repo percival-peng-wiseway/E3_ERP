@@ -59,6 +59,11 @@ const ANSWER_OPTIONS: Array<{ value: SiteVisitCheckAnswer; label: string }> = [
 const MAX_PHOTO_SIZE = 10 * 1024 * 1024;
 const ACCEPTED_PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const PHOTO_RETRY_DELAYS_MS = [2_000, 5_000, 10_000, 20_000, 30_000, 60_000] as const;
+const CHECK_NOTE_PLACEHOLDERS: Record<string, string> = {
+  ac_cable_run_under_20m: "Add measured length and cable route",
+  roof_material: "Enter roof material and profile",
+  bat_location: "Enter proposed BAT location and access details",
+};
 
 type PhotoLoadState = "loading" | "ready" | "waiting" | "failed";
 
@@ -692,7 +697,7 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
                             </button>
                           ))}
                         </div>
-                        <label><span>Check notes</span><textarea value={item.notes} maxLength={2000} rows={2} placeholder="Add measurements, damage or follow-up details" onChange={(event) => updateCheck(item.id, { notes: event.target.value })} /></label>
+                        <label><span>Check notes</span><textarea value={item.notes} maxLength={2000} rows={2} placeholder={CHECK_NOTE_PLACEHOLDERS[item.id] || "Add measurements, damage or follow-up details"} onChange={(event) => updateCheck(item.id, { notes: event.target.value })} /></label>
                       </article>
                     ))}
                   </div>

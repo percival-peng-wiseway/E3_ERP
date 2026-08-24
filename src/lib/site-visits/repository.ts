@@ -1,13 +1,13 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import {
-  CloudflareDocumentConflictError,
-  CloudflareStorageConfigurationError,
-  erpCloudflareBindings,
-  readVersionedDocument,
-  writeVersionedDocument,
-} from "@/lib/server/cloudflare-storage";
+// @ts-expect-error -- focused Node ESM tests require the explicit extension.
+import * as cloudflareStorage from "../server/cloudflare-storage.ts";
+// @ts-expect-error -- explicit extension is required by the focused Node ESM tests.
+import { SITE_VISIT_PHOTO_TYPES, SITE_VISIT_STATUSES } from "./types.ts";
+// Focused tests execute source TypeScript directly under Node ESM.
+// @ts-expect-error -- explicit extension is required by that runtime.
+import * as siteVisitValidation from "./validation.ts";
 import type {
   SiteVisit,
   SiteVisitCreateInput,
@@ -16,12 +16,20 @@ import type {
   SiteVisitPhotoType,
   SiteVisitPhotoUpload,
 } from "./types";
-import { SITE_VISIT_PHOTO_TYPES, SITE_VISIT_STATUSES } from "./types";
-import {
+
+const {
+  CloudflareDocumentConflictError,
+  CloudflareStorageConfigurationError,
+  erpCloudflareBindings,
+  readVersionedDocument,
+  writeVersionedDocument,
+} = cloudflareStorage;
+
+const {
   initialSiteVisitChecklist,
-  parseSiteVisitChecklist,
+  normalizeStoredSiteVisitChecklist,
   parseSiteVisitCreate,
-} from "./validation";
+} = siteVisitValidation;
 
 type StoredSiteVisitPhoto = Omit<SiteVisitPhoto, "url"> & {
   storedName: string;
@@ -157,7 +165,7 @@ function normalizeStoredVisit(value: unknown): StoredSiteVisit {
     assignee: source.assignee,
     notes: source.notes,
   });
-  const checklist = parseSiteVisitChecklist(source.checklist);
+  const checklist = normalizeStoredSiteVisitChecklist(source.checklist);
   if (!input || !checklist
     || typeof source.id !== "string" || !ID_PATTERN.test(source.id)
     || typeof source.status !== "string" || !SITE_VISIT_STATUSES.includes(source.status as SiteVisit["status"])

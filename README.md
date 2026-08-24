@@ -51,7 +51,7 @@ Employee access is protected by a unified ERP sign-in. The server issues a signe
 
 - Create a site visit with the project, address, contact, assignee and scheduled date/time
 - Move visits through Scheduled, In Progress, Completed or Cancelled
-- Record an extensible on-site checklist, initially covering roof-tile attention and switchboard replacement
+- Record an extensible on-site checklist covering roof tiles, switchboard replacement, AC cable run, roof material, BAT location, fire cement sheet, sub-switchboard, switch upgrade, backup circuit and concrete slab
 - Add checklist notes, general site notes and multiple photos from a phone camera or photo library
 - Mobile-first visit cards and a focused on-site detail view for use in the field
 
