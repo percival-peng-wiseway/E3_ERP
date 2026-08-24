@@ -202,7 +202,15 @@ async function readStoredFileContent(file: StoredFile) {
     }
     const buffer = await bindings.files.get(storedFileObjectKey(file), "arrayBuffer");
     if (!buffer) {
-      throw new PaymentTrackRepositoryError("The stored file is unavailable.", 404, "file_not_found");
+      // Workers KV is eventually consistent across locations. Project metadata
+      // can become visible in D1 before a newly uploaded immutable file reaches
+      // the location serving this request, so expose a retryable state instead
+      // of incorrectly reporting that the logical file does not exist.
+      throw new PaymentTrackRepositoryError(
+        "The Project Track file is still syncing. Try again shortly.",
+        503,
+        "file_not_ready",
+      );
     }
     return {
       bytes: new Uint8Array(buffer),

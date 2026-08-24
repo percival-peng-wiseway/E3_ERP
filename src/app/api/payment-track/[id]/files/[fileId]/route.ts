@@ -50,7 +50,11 @@ export async function GET(
       },
     });
   } catch (error) {
-    if (error instanceof PaymentTrackRepositoryError) return paymentTrackError(error.status, error.code, error.message);
+    if (error instanceof PaymentTrackRepositoryError) {
+      const response = paymentTrackError(error.status, error.code, error.message);
+      if (error.code === "file_not_ready") response.headers.set("retry-after", "5");
+      return response;
+    }
     return paymentTrackError(500, "file_unavailable", "The file is temporarily unavailable.");
   }
 }

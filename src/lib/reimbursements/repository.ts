@@ -214,7 +214,14 @@ async function readStoredInvoice(storedName: string) {
     }
     const buffer = await bindings.files.get(storedInvoiceObjectKey(storedName), "arrayBuffer");
     if (!buffer) {
-      throw new ReimbursementRepositoryError("The invoice is unavailable.", 404, "invoice_not_found");
+      // The D1 claim can be visible before its new immutable KV object reaches
+      // every location. Treat that window as retryable rather than as a
+      // permanent missing invoice.
+      throw new ReimbursementRepositoryError(
+        "The invoice is still syncing. Try again shortly.",
+        503,
+        "invoice_not_ready",
+      );
     }
     return new Uint8Array(buffer);
   }

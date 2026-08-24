@@ -18,8 +18,10 @@ This repository is configured for full-stack Next.js deployment to Cloudflare Wo
 
    ```text
    Build command:  npm run cf:build
-   Deploy command: npx wrangler deploy
+   Deploy command: npm run cf:deploy-built
    ```
+
+   `cf:deploy-built` applies pending D1 migrations before deploying the existing OpenNext build output. Do not use a raw `wrangler deploy` or `opennextjs-cloudflare deploy` command for production releases because those commands bypass the repository's migration guard.
 
 6. Deploy first to the generated `*.workers.dev` address and verify Inventory and QuoteHelp login/session behavior before attaching the production domain.
 
@@ -68,11 +70,13 @@ Worker-hosted business modules use the resources declared in `wrangler.jsonc`:
 - `ERP_FILES` (private Workers KV) stores immutable Project Track contracts/payment proofs, Site Visiting photos and Reimbursement invoices. API authorization and per-file access tokens still protect every download.
 - Local development continues to use the corresponding `.data` files, so Node-based development and focused repository tests do not need Cloudflare bindings.
 
-Apply D1 migrations before a first deployment:
+Apply D1 migrations manually when needed with the same reusable command used by the deployment hooks:
 
 ```bash
-npx wrangler d1 migrations apply e3-erp-prod --remote
+npm run cf:migrate
 ```
+
+`npm run deploy` runs this migration automatically through its `predeploy` hook before building and deploying. `npm run upload` does the same through `preupload`. For platforms that build and deploy in separate steps, use `npm run cf:build` followed by `npm run cf:deploy-built`; the latter migrates once and deploys the already-built artifact without recursively invoking the normal deploy hook.
 
 To import existing local Project Track, Project Schedule and Site Visiting data without placing customer records or files in Git, run this once after reviewing the destination Cloudflare account:
 

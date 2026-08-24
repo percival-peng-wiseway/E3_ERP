@@ -7,7 +7,10 @@ import {
   erpCloudflareBindings,
   readVersionedDocument,
   writeVersionedDocument,
-} from "@/lib/server/cloudflare-storage";
+// Focused Node ESM tests require the explicit extension; Next's server bundler
+// supports the same import path.
+// @ts-expect-error -- the project intentionally does not enable emit-time extension imports.
+} from "../server/cloudflare-storage.ts";
 
 export const DEFAULT_AGENT_BASE_URL = "https://navigator-spongy-diagnosis.ngrok-free.dev/v1";
 export const DEFAULT_AGENT_MODEL = "qwen3.5:9b";
@@ -230,6 +233,37 @@ async function writeStoredSettings(
   }
 }
 
+async function clearStoredSettings() {
+  const bindings = await erpCloudflareBindings();
+  if (bindings) {
+    if (!bindings.database) {
+      throw new CloudflareStorageConfigurationError("The ERP_DB binding is missing.");
+    }
+    // Deliberately select only the CAS version. An Administrator must be able
+    // to clear a saved document whose JSON or shape is corrupt without reading
+    // or exposing its value. Ordinary reads and saves remain strict.
+    const row = await bindings.database
+      .prepare("SELECT version FROM erp_documents WHERE key = ?1")
+      .bind(CLOUDFLARE_DOCUMENT_KEY)
+      .first<{ version: number }>();
+    const version = row?.version ?? 0;
+    if (!Number.isSafeInteger(version) || version < 0 || (row && version < 1)) {
+      throw new CloudflareStorageConfigurationError("The ERP database returned an invalid document.");
+    }
+    await writeVersionedDocument(
+      bindings.database,
+      CLOUDFLARE_DOCUMENT_KEY,
+      null,
+      version,
+    );
+    return;
+  }
+
+  await unlink(settingsPath).catch((error: unknown) => {
+    if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) throw error;
+  });
+}
+
 function environmentSettings() {
   let apiKey: string | null = null;
   let baseUrl = DEFAULT_AGENT_BASE_URL;
@@ -257,11 +291,27 @@ function environmentSettings() {
   return { apiKey, baseUrl, model, explicit };
 }
 
+/**
+ * Resolves only validated process configuration and built-in defaults. This
+ * deliberately avoids persisted storage so Agent requests can still attempt a
+ * model call when the saved-settings document is temporarily unavailable or
+ * corrupt.
+ */
+export function resolveEnvironmentAgentSettings(): ResolvedAgentSettings {
+  const environment = environmentSettings();
+  return {
+    apiKey: environment.apiKey,
+    baseUrl: environment.baseUrl,
+    model: environment.model,
+    source: environment.explicit ? "environment" : "default",
+  };
+}
+
 export async function resolveAgentSettings(): Promise<ResolvedAgentSettings> {
   await mutationQueue;
   const [document, environment] = await Promise.all([
     readStoredSettingsDocument(),
-    Promise.resolve(environmentSettings()),
+    Promise.resolve(resolveEnvironmentAgentSettings()),
   ]);
   const saved = document.settings;
   const apiKey = saved?.apiKey || environment.apiKey;
@@ -269,7 +319,7 @@ export async function resolveAgentSettings(): Promise<ResolvedAgentSettings> {
     apiKey,
     baseUrl: saved?.baseUrl || environment.baseUrl,
     model: saved?.model || environment.model,
-    source: saved ? "saved" : environment.explicit ? "environment" : "default",
+    source: saved ? "saved" : environment.source,
   };
 }
 
@@ -320,8 +370,7 @@ export function saveAgentSettings(input: {
 
 export function clearAgentSettings(): Promise<PublicAgentSettings> {
   return withMutation(async () => {
-    const document = await readStoredSettingsDocument();
-    await writeStoredSettings(null, document.version);
+    await clearStoredSettings();
     const environment = environmentSettings();
     return {
       configured: true,

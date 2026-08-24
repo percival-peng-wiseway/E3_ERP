@@ -8,8 +8,6 @@ import {
   Eye,
   FileText,
   LoaderCircle,
-  LockKeyhole,
-  LogOut,
   Plus,
   ReceiptText,
   Search,
@@ -24,7 +22,6 @@ import type { ErpRole } from "@/lib/auth/types";
 import { readJsonResponse } from "@/lib/client/http";
 import type {
   ReimbursementAction,
-  ReimbursementAdminSession,
   ReimbursementClaim,
   ReimbursementListResponse,
   ReimbursementMutationResponse,
@@ -35,7 +32,6 @@ import styles from "./reimbursement-workspace.module.css";
 type WorkspaceView = "mine" | "review" | "payment" | "reimbursed";
 type DetailMode = "view" | "review" | "payment";
 
-const EMPTY_SESSION: ReimbursementAdminSession = { admin: false, configured: false };
 const MAX_INVOICE_SIZE = 10 * 1024 * 1024;
 const INVOICE_TYPES = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
 
@@ -45,12 +41,6 @@ const STATUS_LABELS: Record<ReimbursementStatus, string> = {
   reimbursed: "Reimbursed",
   rejected: "Rejected",
 };
-
-function unwrap<T>(value: { data?: T } | T): T {
-  return value && typeof value === "object" && "data" in value
-    ? (value as { data: T }).data
-    : value as T;
-}
 
 function formatMoney(cents: number) {
   return new Intl.NumberFormat("en-AU", {
@@ -91,7 +81,6 @@ function apiError(value: unknown, fallback: string) {
 
 export function ReimbursementWorkspace({ authenticatedRole }: { authenticatedRole: ErpRole }) {
   const [claims, setClaims] = useState<ReimbursementClaim[]>([]);
-  const [session, setSession] = useState<ReimbursementAdminSession>(EMPTY_SESSION);
   const [view, setView] = useState<WorkspaceView>("mine");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -99,7 +88,6 @@ export function ReimbursementWorkspace({ authenticatedRole }: { authenticatedRol
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [showSubmission, setShowSubmission] = useState(false);
-  const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [detail, setDetail] = useState<{ claim: ReimbursementClaim; mode: DetailMode } | null>(null);
   const [reviewNote, setReviewNote] = useState("");
@@ -107,6 +95,7 @@ export function ReimbursementWorkspace({ authenticatedRole }: { authenticatedRol
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const busyRef = useRef(false);
   const claimsRequestIdRef = useRef(0);
+  const isAdmin = authenticatedRole === "admin";
 
   useEffect(() => {
     busyRef.current = busy;
@@ -121,7 +110,6 @@ export function ReimbursementWorkspace({ authenticatedRole }: { authenticatedRol
       if (!response.ok) throw new Error(apiError(body, "Unable to load reimbursements."));
       if (requestId !== claimsRequestIdRef.current) return;
       setClaims(Array.isArray(body.data) ? body.data : []);
-      if (body.meta) setSession((current) => ({ ...current, admin: Boolean(body.meta.admin) }));
       setError("");
     } catch (loadError) {
       if (requestId !== claimsRequestIdRef.current) return;
@@ -131,21 +119,11 @@ export function ReimbursementWorkspace({ authenticatedRole }: { authenticatedRol
     }
   }, []);
 
-  const loadSession = useCallback(async () => {
-    try {
-      const response = await fetch("/api/reimbursements/admin", { cache: "no-store" });
-      const body = await readJsonResponse<{ data?: ReimbursementAdminSession } & ReimbursementAdminSession>(response);
-      if (response.ok) setSession(unwrap(body));
-    } catch {
-      setSession(EMPTY_SESSION);
-    }
-  }, []);
-
   useEffect(() => {
-    void Promise.all([loadClaims(), loadSession()]);
-  }, [loadClaims, loadSession]);
+    void loadClaims();
+  }, [loadClaims]);
 
-  const activeModal = showSubmission || showAdminLogin || Boolean(detail);
+  const activeModal = showSubmission || Boolean(detail);
   useEffect(() => {
     if (!activeModal) return;
     const previousOverflow = document.body.style.overflow;
@@ -153,7 +131,6 @@ export function ReimbursementWorkspace({ authenticatedRole }: { authenticatedRol
     const close = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || busyRef.current) return;
       setShowSubmission(false);
-      setShowAdminLogin(false);
       setDetail(null);
     };
     document.addEventListener("keydown", close);
@@ -215,50 +192,6 @@ export function ReimbursementWorkspace({ authenticatedRole }: { authenticatedRol
       setNotice(`${body.data.reference} was submitted for Admin Review.`);
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Unable to submit the reimbursement.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const loginAdmin = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    setBusy(true);
-    setError("");
-    try {
-      const response = await fetch("/api/reimbursements/admin", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password: form.get("password") }),
-      });
-      const body = await readJsonResponse<{ data?: ReimbursementAdminSession; error?: string }>(response);
-      if (!response.ok) throw new Error(apiError(body, "Unable to enter Admin mode."));
-      setSession(unwrap(body));
-      setShowAdminLogin(false);
-      setNotice("Admin mode enabled.");
-      await loadClaims(true);
-    } catch (loginError) {
-      setError(loginError instanceof Error ? loginError.message : "Unable to enter Admin mode.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const logoutAdmin = async () => {
-    setBusy(true);
-    claimsRequestIdRef.current += 1;
-    setLoading(false);
-    setDetail(null);
-    try {
-      const response = await fetch("/api/reimbursements/admin", { method: "DELETE" });
-      if (!response.ok) throw new Error("Unable to end Admin mode.");
-      setSession((current) => ({ ...current, admin: false }));
-      setClaims([]);
-      setView("mine");
-      setNotice("Admin mode ended.");
-      await loadClaims(true);
-    } catch (logoutError) {
-      setError(logoutError instanceof Error ? logoutError.message : "Unable to end Admin mode.");
     } finally {
       setBusy(false);
     }
@@ -330,7 +263,17 @@ export function ReimbursementWorkspace({ authenticatedRole }: { authenticatedRol
     }
   };
 
-  const adminRequired = view !== "mine" && view !== "reimbursed" && !session.admin;
+  const tabs: Array<[WorkspaceView, string, number]> = isAdmin
+    ? [
+        ["mine", "All Claims", claims.length],
+        ["review", "Admin Review", counts.submitted],
+        ["payment", "Pending Payment", counts.pendingPayment],
+        ["reimbursed", "Reimbursed", counts.reimbursed],
+      ]
+    : [
+        ["mine", "My Claims", claims.length],
+        ["reimbursed", "Reimbursed", counts.reimbursed],
+      ];
 
   return (
     <section className={styles.workspace}>
@@ -339,19 +282,8 @@ export function ReimbursementWorkspace({ authenticatedRole }: { authenticatedRol
           <span className={styles.eyebrow}>EXPENSES · REIMBURSEMENTS</span>
           <h1>Reimbursements</h1>
         </div>
-        <div className={styles.headerActions}>
-          {session.admin ? (
-            <button className={styles.adminActive} onClick={() => void logoutAdmin()} disabled={busy}>
-              <ShieldCheck size={16} />Admin mode<LogOut size={14} />
-            </button>
-          ) : (
-            <button
-              className={styles.secondaryButton}
-              onClick={(event) => { openModal(event.currentTarget); setShowAdminLogin(true); }}
-            >
-              <LockKeyhole size={16} />Admin login
-            </button>
-          )}
+        <div className={`${styles.headerActions} ${!isAdmin ? styles.employeeHeaderActions : ""}`}>
+          {isAdmin ? <span className={styles.adminActive}><ShieldCheck size={16} />ERP Administrator</span> : null}
           <button
             className={styles.primaryButton}
             onClick={(event) => { openModal(event.currentTarget); setSelectedFile(null); setShowSubmission(true); }}
@@ -372,13 +304,12 @@ export function ReimbursementWorkspace({ authenticatedRole }: { authenticatedRol
       {error && <div className={styles.error} role="alert"><AlertCircle size={16} /><span>{error}</span><button onClick={() => setError("")} aria-label="Dismiss error"><X size={15} /></button></div>}
 
       <section className={styles.panel}>
-        <nav className={styles.tabs} aria-label="Reimbursement views">
-          {([
-            ["mine", session.admin ? "All Claims" : "My Claims", claims.length],
-            ["review", "Admin Review", counts.submitted],
-            ["payment", "Pending Payment", counts.pendingPayment],
-            ["reimbursed", "Reimbursed", counts.reimbursed],
-          ] as Array<[WorkspaceView, string, number]>).map(([id, label, count]) => (
+        <nav
+          className={styles.tabs}
+          aria-label="Reimbursement views"
+          style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(140px, 1fr))` }}
+        >
+          {tabs.map(([id, label, count]) => (
             <button key={id} className={view === id ? styles.activeTab : ""} aria-current={view === id ? "page" : undefined} onClick={() => setView(id)}>
               {label}<span>{count}</span>
             </button>
@@ -390,19 +321,12 @@ export function ReimbursementWorkspace({ authenticatedRole }: { authenticatedRol
           <button className={styles.refreshButton} onClick={() => void loadClaims()} disabled={loading || busy}>{loading ? <LoaderCircle className={styles.spinning} size={15} /> : null}Refresh</button>
         </div>
 
-        {adminRequired ? (
-          <div className={styles.lockedState}>
-            <span><LockKeyhole size={24} /></span>
-            <h2>Admin access required</h2>
-            <p>Sign in as an administrator to review and pay reimbursement claims.</p>
-            <button className={styles.primaryButton} onClick={(event) => { openModal(event.currentTarget); setShowAdminLogin(true); }}>Admin login</button>
-          </div>
-        ) : loading ? (
+        {loading ? (
           <div className={styles.loadingState}><LoaderCircle className={styles.spinning} size={24} />Loading reimbursements…</div>
         ) : visibleClaims.length === 0 ? (
           <div className={styles.emptyState}>
             <span><ReceiptText size={25} /></span>
-            <h2>{view === "mine" ? (session.admin ? "No reimbursement claims" : "No claims from this browser") : `No claims in ${view === "review" ? "Admin Review" : view === "payment" ? "Pending Payment" : "Reimbursed"}`}</h2>
+            <h2>{view === "mine" ? (isAdmin ? "No reimbursement claims" : "No claims for your account") : `No claims in ${view === "review" ? "Admin Review" : view === "payment" ? "Pending Payment" : "Reimbursed"}`}</h2>
             <p>{view === "mine" ? "Submit an invoice to create the first claim." : "Claims will appear here when they reach this stage."}</p>
           </div>
         ) : (
@@ -445,16 +369,6 @@ export function ReimbursementWorkspace({ authenticatedRole }: { authenticatedRol
         </Modal>
       )}
 
-      {showAdminLogin && (
-        <Modal title="Admin login" subtitle="Review claims and confirm payments" onClose={() => !busy && setShowAdminLogin(false)} compact>
-          <form className={styles.loginForm} onSubmit={loginAdmin}>
-            <label>Administrator password<input name="password" type="password" autoComplete="current-password" autoFocus required /></label>
-            {session.demoPassword && <p className={styles.demoHint}>Local demo password: <strong>{session.demoPassword}</strong></p>}
-            <footer className={styles.modalFooter}><button type="button" className={styles.secondaryButton} onClick={() => setShowAdminLogin(false)} disabled={busy}>Cancel</button><button className={styles.primaryButton} disabled={busy}>{busy && <LoaderCircle className={styles.spinning} size={15} />}Enter Admin Mode</button></footer>
-          </form>
-        </Modal>
-      )}
-
       {detail && (
         <Modal title={detail.claim.reference} subtitle={`${detail.claim.claimantName} · ${formatMoney(detail.claim.amountCents)}`} onClose={() => !busy && setDetail(null)}>
           <div className={styles.detailBody}>
@@ -466,15 +380,15 @@ export function ReimbursementWorkspace({ authenticatedRole }: { authenticatedRol
               <Detail label="Note">{claimNote(detail.claim) || "—"}</Detail>
             </div>
             <a className={styles.invoiceCard} href={detail.claim.invoice.url} target="_blank" rel="noreferrer"><span><FileText size={20} /></span><div><strong>{detail.claim.invoice.originalName}</strong><small>{fileSize(detail.claim.invoice.size)} · Open invoice</small></div><Eye size={16} /></a>
-            {detail.mode === "review" && <label className={styles.actionField}>Review note<textarea value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} rows={3} placeholder="Required when rejecting; optional when approving" /></label>}
-            {detail.mode === "payment" && <label className={styles.actionField}>Payment reference<input value={paymentReference} onChange={(event) => setPaymentReference(event.target.value)} placeholder="Bank transaction or payment reference" autoFocus /></label>}
+            {isAdmin && detail.mode === "review" && <label className={styles.actionField}>Review note<textarea value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} rows={3} placeholder="Required when rejecting; optional when approving" /></label>}
+            {isAdmin && detail.mode === "payment" && <label className={styles.actionField}>Payment reference<input value={paymentReference} onChange={(event) => setPaymentReference(event.target.value)} placeholder="Bank transaction or payment reference" autoFocus /></label>}
             <div className={styles.timeline}><h3>Status history</h3>{detail.claim.history.map((entry) => <div key={entry.id}><i /><span><strong>{entry.action.replaceAll("_", " ")}</strong><small>{formatDate(entry.at)} · {entry.actor}{entry.note ? ` · ${entry.note}` : ""}</small></span></div>)}</div>
           </div>
           <footer className={styles.modalFooter}>
             {authenticatedRole === "admin" ? <button className={styles.rejectButton} onClick={() => void deleteClaim()} disabled={busy}><Trash2 size={15} />Delete claim</button> : null}
             <button className={styles.secondaryButton} onClick={() => setDetail(null)} disabled={busy}>Close</button>
-            {detail.mode === "review" && <><button className={styles.rejectButton} onClick={() => void performAction("reject")} disabled={busy}>Reject</button><button className={styles.primaryButton} onClick={() => void performAction("approve")} disabled={busy}>{busy && <LoaderCircle className={styles.spinning} size={15} />}Approve for Payment</button></>}
-            {detail.mode === "payment" && <button className={styles.paidButton} onClick={() => void performAction("mark_paid")} disabled={busy}>{busy ? <LoaderCircle className={styles.spinning} size={15} /> : <CheckCircle2 size={15} />}Mark Paid</button>}
+            {isAdmin && detail.mode === "review" && <><button className={styles.rejectButton} onClick={() => void performAction("reject")} disabled={busy}>Reject</button><button className={styles.primaryButton} onClick={() => void performAction("approve")} disabled={busy}>{busy && <LoaderCircle className={styles.spinning} size={15} />}Approve for Payment</button></>}
+            {isAdmin && detail.mode === "payment" && <button className={styles.paidButton} onClick={() => void performAction("mark_paid")} disabled={busy}>{busy ? <LoaderCircle className={styles.spinning} size={15} /> : <CheckCircle2 size={15} />}Mark Paid</button>}
           </footer>
         </Modal>
       )}

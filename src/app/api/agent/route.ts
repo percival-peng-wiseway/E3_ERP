@@ -4,7 +4,11 @@ import {
   readLimitedAgentJson,
   requestHasJsonContentType,
 } from "@/lib/agent/request";
-import { resolveAgentSettings } from "@/lib/agent/settings";
+import {
+  resolveAgentSettings,
+  resolveEnvironmentAgentSettings,
+  type ResolvedAgentSettings,
+} from "@/lib/agent/settings";
 import { localWorkspaceAnswer } from "@/lib/agent/tools";
 import { getERPProvider, type AgentHistoryMessage } from "@/lib/erp";
 import { isAuthorizedMutationRequest } from "@/lib/server/proxy-security";
@@ -22,6 +26,10 @@ function json(data: unknown, init?: ResponseInit) {
 
 function error(status: number, code: string, message: string) {
   return json({ error: { code, message } }, { status });
+}
+
+function safeErrorKind(value: unknown) {
+  return value instanceof Error ? value.name : "UnknownError";
 }
 
 function cleanHistory(value: unknown): AgentHistoryMessage[] | null {
@@ -81,8 +89,22 @@ async function processAgentRequest(request: Request) {
   }
 
   const provider = getERPProvider();
-  let warning: string | undefined;
-  const settings = await resolveAgentSettings();
+  const warnings: string[] = [];
+  let settings: ResolvedAgentSettings;
+  try {
+    settings = await resolveAgentSettings();
+  } catch (settingsError) {
+    // Do not log the exception message: a corrupt JSON document or upstream
+    // error can contain saved credentials or response content.
+    console.error(
+      "Saved Agent settings unavailable; using environment/default configuration",
+      safeErrorKind(settingsError),
+    );
+    settings = resolveEnvironmentAgentSettings();
+    warnings.push(
+      "Saved Agent settings are temporarily unavailable. The environment or default model configuration is being used.",
+    );
+  }
   let data;
   try {
     data = await answerWithOpenAICompatible({
@@ -95,8 +117,10 @@ async function processAgentRequest(request: Request) {
       model: settings.model,
     });
   } catch (modelError) {
-    console.error("Agent model API unavailable; using local fallback", modelError instanceof Error ? modelError.message : modelError);
-    warning = "The model API is temporarily unavailable. Local read-only query mode is being used.";
+    // Model error messages can contain an upstream response body. Log only the
+    // error class and keep the client warning generic.
+    console.error("Agent model API unavailable; using local fallback", safeErrorKind(modelError));
+    warnings.push("The model API is temporarily unavailable. Local read-only query mode is being used.");
     data = await localWorkspaceAnswer(provider, input.message);
   }
 
@@ -107,7 +131,7 @@ async function processAgentRequest(request: Request) {
       generatedAt: new Date().toISOString(),
       configured: true,
       model: settings.model,
-      ...(warning ? { warning } : {}),
+      ...(warnings.length ? { warning: warnings.join(" ") } : {}),
     },
   });
 }
@@ -116,7 +140,7 @@ export async function POST(request: Request) {
   try {
     return await processAgentRequest(request);
   } catch (agentError) {
-    console.error("Agent API error", agentError instanceof Error ? agentError.message : agentError);
+    console.error("Agent API error", safeErrorKind(agentError));
     return error(502, "agent_unavailable", "The Agent cannot process this request right now.");
   }
 }

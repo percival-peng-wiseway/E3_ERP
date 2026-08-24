@@ -2,7 +2,10 @@ import { timingSafeEqual } from "node:crypto";
 import { NextRequest } from "next/server";
 import { getErpSession } from "@/lib/auth/session";
 import { isReimbursementAdmin } from "@/lib/reimbursements/auth";
-import { getReimbursementInvoice } from "@/lib/reimbursements/repository";
+import {
+  getReimbursementInvoice,
+  ReimbursementRepositoryError,
+} from "@/lib/reimbursements/repository";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -61,7 +64,12 @@ export async function GET(
         "x-content-type-options": "nosniff",
       },
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof ReimbursementRepositoryError) {
+      const response = errorResponse(error.status, error.code, error.message);
+      if (error.code === "invoice_not_ready") response.headers.set("retry-after", "5");
+      return response;
+    }
     return errorResponse(500, "invoice_unavailable", "The invoice is temporarily unavailable.");
   }
 }

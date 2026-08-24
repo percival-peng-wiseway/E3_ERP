@@ -26,6 +26,10 @@ function error(status: number, code: string, message: string) {
   return json({ error: { code, message } }, { status });
 }
 
+function safeErrorKind(value: unknown) {
+  return value instanceof Error ? value.name : "UnknownError";
+}
+
 function settingsInput(value: unknown): { apiKey?: string; baseUrl: string; model: string } | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const body = value as Record<string, unknown>;
@@ -44,7 +48,7 @@ export async function GET() {
   try {
     return json({ data: await publicAgentSettings() });
   } catch (settingsError) {
-    console.error("Unable to load Agent settings", settingsError instanceof Error ? settingsError.message : settingsError);
+    console.error("Unable to load Agent settings", safeErrorKind(settingsError));
     return error(500, "settings_unavailable", "Agent settings are temporarily unavailable.");
   }
 }
@@ -71,7 +75,7 @@ export async function PUT(request: Request) {
     if (settingsError instanceof SyntaxError) {
       return error(400, "invalid_json", "The request body must be valid JSON.");
     }
-    console.error("Unable to save Agent settings", settingsError instanceof Error ? settingsError.message : settingsError);
+    console.error("Unable to save Agent settings", safeErrorKind(settingsError));
     return error(500, "settings_unavailable", "Agent settings could not be saved.");
   }
 }
@@ -83,7 +87,7 @@ export async function DELETE(request: Request) {
   try {
     return json({ data: await clearAgentSettings() });
   } catch (settingsError) {
-    console.error("Unable to clear Agent settings", settingsError instanceof Error ? settingsError.message : settingsError);
+    console.error("Unable to clear Agent settings", safeErrorKind(settingsError));
     return error(500, "settings_unavailable", "Agent settings could not be cleared.");
   }
 }
