@@ -274,26 +274,6 @@
   animation: spin 800ms linear infinite;
 }
 
-.footer {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-top: 24px;
-  padding-top: 18px;
-  gap: 7px;
-  color: #82909a;
-  border-top: 1px solid #edf0f2;
-  font-size: 12px;
-}
-
-.statusDot {
-  width: 7px;
-  height: 7px;
-  background: #22a17a;
-  border-radius: 50%;
-  box-shadow: 0 0 0 3px #e1f4ee;
-}
-
 @keyframes spin {
   to { transform: rotate(360deg); }
 }

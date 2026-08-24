@@ -35,11 +35,6 @@ export default function LoginPage() {
         </header>
 
         <LoginForm />
-
-        <footer className={styles.footer}>
-          <span className={styles.statusDot} aria-hidden="true" />
-          <span>Secure team access</span>
-        </footer>
       </section>
     </main>
   );
