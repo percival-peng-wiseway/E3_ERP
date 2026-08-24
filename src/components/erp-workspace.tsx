@@ -49,11 +49,11 @@ const NAVIGATION: Array<{
     group: "Workspace",
     items: [
       { id: "home", label: "Home", icon: Home, enabled: true },
+      { id: "payments", label: "Payment Track", icon: CreditCard, enabled: true },
       { id: "inventory", label: "Inventory", icon: Warehouse, enabled: true },
       { id: "quotations", label: "Quotations", icon: FileText, enabled: true },
       { id: "projects", label: "Weekly Schedule", icon: ClipboardList, enabled: true },
       { id: "site-visits", label: "Site Visiting", icon: MapPin, enabled: true },
-      { id: "payments", label: "Payment Track", icon: CreditCard, enabled: true },
       { id: "reimbursements", label: "Reimbursements", icon: ReceiptText, enabled: true },
     ],
   },
