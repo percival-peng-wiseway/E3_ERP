@@ -1,0 +1,134 @@
+.backdrop {
+  position: fixed;
+  z-index: 1200;
+  inset: 0;
+  display: grid;
+  padding: 24px;
+  place-items: center;
+  background: rgba(28, 37, 45, .48);
+  backdrop-filter: blur(2px);
+}
+
+.dialog {
+  width: min(680px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  color: #26313a;
+  background: #fff;
+  border: 1px solid #dfe4e8;
+  border-radius: 10px;
+  box-shadow: 0 22px 70px rgba(31, 43, 53, .22);
+}
+
+.dialog > header {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  padding: 17px 19px;
+  gap: 11px;
+  border-bottom: 1px solid #e8ecef;
+}
+
+.headingIcon {
+  display: grid;
+  width: 39px;
+  height: 39px;
+  color: #5061ca;
+  background: #eef0ff;
+  border-radius: 8px;
+  place-items: center;
+}
+
+.dialog > header span { color: #89949d; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+.dialog > header h2 { margin: 2px 0 0; color: #202a33; font-size: 21px; line-height: 1.2; }
+.dialog > header button {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  place-items: center;
+  color: #75818a;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.dialog > header button:hover { background: #f1f3f5; }
+.dialog > header button:focus-visible { outline: 2px solid #5f6fd1; outline-offset: 2px; }
+
+.dialog form { display: grid; padding: 19px; gap: 15px; }
+.dialog label { display: grid; gap: 6px; color: #56636d; font-size: 13px; font-weight: 680; }
+.dialog input,
+.dialog select {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 11px;
+  color: #29343d;
+  background: #fff;
+  border: 1px solid #d4dce1;
+  border-radius: 7px;
+  outline: 0;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+}
+.dialog input:focus,
+.dialog select:focus { border-color: #6574d9; box-shadow: 0 0 0 3px rgba(92, 108, 216, .12); }
+
+.fieldGrid { display: grid; grid-template-columns: minmax(180px, .75fr) minmax(260px, 1.25fr); gap: 12px; }
+.secretField { position: relative; display: block; }
+.secretField svg { position: absolute; z-index: 1; top: 14px; left: 12px; color: #84909a; }
+.secretField input { padding-left: 36px; }
+
+.status {
+  display: flex;
+  align-items: center;
+  padding: 11px 12px;
+  gap: 9px;
+  color: #8a5e17;
+  background: #fff8e8;
+  border: 1px solid #f0ddb2;
+  border-radius: 7px;
+}
+.status.ready { color: #287058; background: #eff9f5; border-color: #cce8dd; }
+.status strong,
+.status small { display: block; }
+.status strong { font-size: 13px; }
+.status small { margin-top: 2px; color: #74818a; font-size: 12px; }
+
+.securityNote { display: flex; align-items: flex-start; padding: 11px 12px; gap: 9px; color: #53616b; background: #f7f8fb; border: 1px solid #e3e7ed; border-radius: 7px; }
+.securityNote svg { flex: 0 0 auto; margin-top: 1px; color: #5e6fd2; }
+.securityNote p { margin: 0; font-size: 12px; line-height: 1.5; }
+
+.notice,
+.error { padding: 9px 11px; border-radius: 6px; font-size: 13px; line-height: 1.45; }
+.notice { color: #237158; background: #edf8f4; border: 1px solid #cbe8dd; }
+.error { color: #a33e37; background: #fff1ef; border: 1px solid #efc9c4; }
+.loading { display: flex; min-height: 260px; align-items: center; justify-content: center; gap: 8px; color: #75818a; font-size: 14px; }
+
+.dialog footer { display: flex; align-items: center; justify-content: space-between; padding-top: 3px; gap: 12px; }
+.dialog footer > div { display: flex; gap: 8px; }
+.dialog footer button { display: inline-flex; min-height: 40px; align-items: center; justify-content: center; padding: 0 14px; gap: 6px; border-radius: 7px; font-size: 13px; font-weight: 720; cursor: pointer; }
+.dialog footer button:disabled { opacity: .58; cursor: wait; }
+.primaryButton { color: #fff; background: #5363cf; border: 1px solid #5363cf; }
+.secondaryButton { color: #56636d; background: #fff; border: 1px solid #d5dde2; }
+.deleteButton { color: #a9443d; background: #fff; border: 1px solid #e7c8c4; }
+.dialog footer button:focus-visible { outline: 2px solid #5f6fd1; outline-offset: 2px; }
+
+.spinning { animation: spin 800ms linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 620px) {
+  .backdrop { padding: 10px; }
+  .dialog { max-height: calc(100vh - 20px); }
+  .dialog > header,
+  .dialog form { padding: 15px; }
+  .fieldGrid { grid-template-columns: 1fr; }
+  .dialog footer { align-items: stretch; flex-direction: column-reverse; }
+  .dialog footer > div { display: grid; grid-template-columns: 1fr 1fr; }
+  .deleteButton { width: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinning { animation: none; }
+}
