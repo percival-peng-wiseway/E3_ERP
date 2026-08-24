@@ -134,7 +134,7 @@ export async function POST(request: NextRequest) {
       return noStoreJson({ error: "Too many login attempts. Try again later.", code: "rate_limited" }, { status: 429 });
     }
     const password = typeof body.password === "string" && body.password.length <= 200 ? body.password : "";
-    const user = username && password ? verifyErpCredentials(username, password) : null;
+    const user = username && password ? await verifyErpCredentials(username, password) : null;
     if (!user) {
       recordFailure(ipKey, MAX_IP_FAILURES, now);
       recordFailure(accountKey, MAX_ACCOUNT_FAILURES, now);
@@ -157,6 +157,12 @@ export async function POST(request: NextRequest) {
     if (error instanceof LoginBodyTooLarge) {
       return noStoreJson({ error: "The login request is too large.", code: "request_too_large" }, { status: 413 });
     }
-    return noStoreJson({ error: "The login request is invalid.", code: "invalid_request" }, { status: 400 });
+    if (error instanceof SyntaxError) {
+      return noStoreJson({ error: "The login request is invalid.", code: "invalid_request" }, { status: 400 });
+    }
+    console.error("ERP employee login failed.", {
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    });
+    return noStoreJson({ error: "Employee login is temporarily unavailable.", code: "login_unavailable" }, { status: 500 });
   }
 }

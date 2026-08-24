@@ -1,11 +1,8 @@
 import "server-only";
 
-import { pbkdf2Sync, timingSafeEqual } from "node:crypto";
 import { findErpUser, normalizeErpUsername } from "@/lib/auth/directory";
+import { verifyPbkdf2Password } from "@/lib/auth/password-crypto";
 import type { ErpRole, ErpUser } from "@/lib/auth/types";
-
-const PASSWORD_ITERATIONS = 120_000;
-const PASSWORD_BYTES = 32;
 
 type PasswordVerifier = {
   salt: string;
@@ -51,19 +48,11 @@ const PASSWORD_VERIFIERS: Readonly<Record<string, PasswordVerifier>> = {
 
 const DUMMY_VERIFIER = PASSWORD_VERIFIERS.jerry;
 
-export function verifyErpCredentials(username: string, password: string): ErpUser | null {
+export async function verifyErpCredentials(username: string, password: string): Promise<ErpUser | null> {
   const normalizedUsername = normalizeErpUsername(username);
   const user = findErpUser(normalizedUsername);
   const verifier = PASSWORD_VERIFIERS[normalizedUsername] || DUMMY_VERIFIER;
-  const candidate = pbkdf2Sync(
-    password,
-    Buffer.from(verifier.salt, "base64url"),
-    PASSWORD_ITERATIONS,
-    PASSWORD_BYTES,
-    "sha256",
-  );
-  const expected = Buffer.from(verifier.passwordHash, "base64url");
-  const passwordMatches = candidate.length === expected.length && timingSafeEqual(candidate, expected);
+  const passwordMatches = await verifyPbkdf2Password(password, verifier.salt, verifier.passwordHash);
   return user && passwordMatches ? user : null;
 }
 

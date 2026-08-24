@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "e3-erp-workspace",
+  "name": "e3-erp",
   "main": ".open-next/worker.js",
   "compatibility_date": "2026-08-24",
   "compatibility_flags": [
