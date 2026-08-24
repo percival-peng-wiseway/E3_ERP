@@ -24,7 +24,7 @@ export function verifyPaymentTrackAdminPassword(value: string) {
 
 export function createPaymentTrackAdminToken() {
   const { secret } = paymentTrackAdminConfiguration();
-  if (!secret) throw new Error("Payment Track administrator access is not configured.");
+  if (!secret) throw new Error("Project Track administrator access is not configured.");
   const expiresAt = Math.floor(Date.now() / 1000) + PAYMENT_TRACK_ADMIN_SESSION_SECONDS;
   const payload = Buffer.from(JSON.stringify({ scope: "payment_track", role: "admin", expiresAt }), "utf8")
     .toString("base64url");

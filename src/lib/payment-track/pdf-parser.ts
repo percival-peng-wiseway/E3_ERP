@@ -471,7 +471,7 @@ export async function parsePaymentAgreementPdf(bytes: Uint8Array): Promise<Parse
   if (!items.length) missingFields.push("items");
   if (missingFields.length) {
     throw new PaymentAgreementParseError(
-      `The proposal is missing fields required for Payment Track: ${missingFields.join(", ")}.`,
+      `The proposal is missing fields required for Project Track: ${missingFields.join(", ")}.`,
       missingFields,
     );
   }

@@ -26,7 +26,7 @@ function pendingFinalPayment(project: PaymentTrackProject) {
   ));
 }
 
-/** Returns only the next role-owned work for a Payment Track project. */
+/** Returns only the next role-owned work for a Project Track project. */
 export function paymentTrackResponsibilities(project: PaymentTrackProject): PaymentTrackResponsibility[] {
   if (project.stage === "deposit_not_paid") {
     if (project.deposit.confirmedAt) return [];

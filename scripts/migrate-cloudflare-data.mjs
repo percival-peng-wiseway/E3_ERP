@@ -83,7 +83,7 @@ function remapPaymentFiles(projects, uploads) {
   for (const file of paymentFiles(projects)) {
     const originalStoredName = file.storedName;
     if (!storedFilePattern.test(originalStoredName) || path.basename(originalStoredName) !== originalStoredName) {
-      throw new Error("A Payment Track record contains an unsafe stored filename.");
+      throw new Error("A Project Track record contains an unsafe stored filename.");
     }
     const directory = file.kind === "contract" ? "contracts" : "proofs";
     const extension = path.extname(originalStoredName).toLowerCase();
@@ -121,7 +121,7 @@ assertProductionDocumentsAreAbsent();
 
 const paymentProjects = structuredClone(await readJsonArray(
   path.join(paymentRoot, "records.json"),
-  "Payment Track",
+  "Project Track",
 ));
 const scheduleJobs = await readJsonArray(path.join(scheduleRoot, "records.json"), "Project Schedule");
 const siteVisits = structuredClone(await readJsonArray(path.join(siteVisitRoot, "records.json"), "Site Visiting"));
@@ -166,7 +166,7 @@ try {
 }
 
 console.log(
-  `Imported ${paymentProjects.length} Payment Track project(s), `
+  `Imported ${paymentProjects.length} Project Track project(s), `
     + `${scheduleJobs.length} Project Schedule job(s), ${siteVisits.length} Site Visit(s), `
     + `and ${uploads.length} private file(s).`,
 );

@@ -50,7 +50,7 @@ const NAVIGATION: Array<{
     group: "Workspace",
     items: [
       { id: "home", label: "Home", icon: Home, enabled: true },
-      { id: "payments", label: "Payment Track", icon: CreditCard, enabled: true },
+      { id: "payments", label: "Project Track", icon: CreditCard, enabled: true },
       { id: "inventory", label: "Inventory", icon: Warehouse, enabled: true },
       { id: "quotations", label: "Quotations", icon: FileText, enabled: true },
       { id: "projects", label: "Weekly Schedule", icon: ClipboardList, enabled: true },
@@ -72,7 +72,7 @@ const MODULE_LABELS: Record<ModuleId, string> = {
   quotations: "Quotations",
   projects: "Weekly Schedule",
   "site-visits": "Site Visiting",
-  payments: "Payment Track",
+  payments: "Project Track",
   reimbursements: "Reimbursements",
   reports: "Reports",
   finance: "Finance & Accounting",

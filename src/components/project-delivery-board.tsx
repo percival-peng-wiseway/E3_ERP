@@ -322,7 +322,7 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
       setProjects(Array.isArray(paymentResult.value.body.data) ? paymentResult.value.body.data as ScheduledPaymentProject[] : []);
     } else {
       setProjects([]);
-      warnings.push("Payment Track projects could not be refreshed.");
+      warnings.push("Project Track could not be refreshed.");
     }
     if (customResult.status === "fulfilled" && customResult.value.response.ok) {
       successfulSources += 1;
@@ -702,7 +702,7 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
       await refreshAll(installation ? "Installation marked complete." : "Material delivery marked complete.");
       window.dispatchEvent(new CustomEvent("erp:payment-track-updated", { detail: { source: "project-management" } }));
     } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : "Unable to update the Payment Track project.");
+      setError(actionError instanceof Error ? actionError.message : "Unable to update the Project Track entry.");
     } finally {
       setBusy(false);
     }
@@ -980,7 +980,7 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
         <div className={styles.modalBackdrop} role="presentation" onMouseDown={modalBackdropClick}>
           <form ref={modalRef} className={`${styles.modal} ${styles.compactModal}`} onSubmit={savePaymentSchedule} role="dialog" aria-modal="true" aria-labelledby="payment-editor-title">
             <header>
-              <div><span>Payment Track · {paymentEditor.project.reference}</span><h2 id="payment-editor-title">Schedule {paymentEditor.kind === "delivery" ? "Material Delivery" : "Installation"}</h2></div>
+              <div><span>Project Track · {paymentEditor.project.reference}</span><h2 id="payment-editor-title">Schedule {paymentEditor.kind === "delivery" ? "Material Delivery" : "Installation"}</h2></div>
               <button type="button" onClick={closeModal} disabled={busy} aria-label="Close"><X size={19} /></button>
             </header>
             <div className={styles.modalBody}>

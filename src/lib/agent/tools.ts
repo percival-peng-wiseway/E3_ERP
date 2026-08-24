@@ -37,7 +37,7 @@ export const DEEPSEEK_TOOLS = [
     type: "function",
     function: {
       name: "get_workspace_overview",
-      description: "Get a current high-level summary across stock, quotations, PM deliveries, this week's custom Project Schedule jobs, Payment Track, reimbursements, the shared Reports notes and public announcements.",
+      description: "Get a current high-level summary across stock, quotations, PM deliveries, this week's custom Project Schedule jobs, Project Track, reimbursements, the shared Reports notes and public announcements.",
       strict: true,
       parameters: { type: "object", properties: {}, required: [], additionalProperties: false },
     },
@@ -101,7 +101,7 @@ export const DEEPSEEK_TOOLS = [
     type: "function",
     function: {
       name: "search_payment_projects",
-      description: "Search Payment Track receivables and workflow projects by reference, proposal, customer, Specialist, address, item or PM Notes. Use receipt and receipt_status for exact Solar STC, Battery STC or Solar Rebate questions. Pending means required, not received and currently actionable at the STC Rebate stage. Include customer contact details or PM Notes only when the user explicitly asks for each one.",
+      description: "Search Project Track receivables and workflow projects by reference, proposal, customer, Specialist, address, item or PM Notes. Use receipt and receipt_status for exact Solar STC, Battery STC or Solar Rebate questions. Pending means required, not received and currently actionable at the STC Rebate stage. Include customer contact details or PM Notes only when the user explicitly asks for each one.",
       strict: true,
       parameters: {
         type: "object",
@@ -821,7 +821,7 @@ export async function runAgentTool(provider: ERPProvider, call: ToolCall): Promi
     }
 
     if (call.name === "search_payment_projects") {
-      if (!validPaymentProjectArgs(args)) return safeToolJson({ error: { code: "invalid_arguments", message: "Invalid payment project search arguments." } });
+      if (!validPaymentProjectArgs(args)) return safeToolJson({ error: { code: "invalid_arguments", message: "Invalid Project Track search arguments." } });
       const matched = (await listPaymentTrackProjects()).filter((project) => args.stage === "all" || project.stage === args.stage as PaymentTrackStage)
         .filter((project) => matchesRebateReceipt(
           project,
@@ -992,7 +992,7 @@ export async function localWorkspaceAnswer(provider: ERPProvider, rawMessage: st
   if (/payment|amount due|outstanding|deposit|收款|应收/.test(message)) {
     const projects = await listPaymentTrackProjects();
     const outstanding = projects.reduce((sum, project) => sum + project.outstandingCents, 0) / 100;
-    return { mode: "local" as const, answer: `Payment Track has ${projects.length} projects with AUD ${outstanding.toLocaleString("en-AU", { minimumFractionDigits: 2 })} outstanding. Check the model endpoint in Settings for conversational project-level answers.`, suggestions };
+    return { mode: "local" as const, answer: `Project Track has ${projects.length} projects with AUD ${outstanding.toLocaleString("en-AU", { minimumFractionDigits: 2 })} outstanding. Check the model endpoint in Settings for conversational project-level answers.`, suggestions };
   }
   if (/reimburse|expense|报销/.test(message)) {
     const claims = await listReimbursements({ includeAll: true });
@@ -1031,5 +1031,5 @@ export async function localWorkspaceAnswer(provider: ERPProvider, rawMessage: st
       ? { ...answer, answer: `${answer.answer}\n\nNote: the unified Inventory/Quotation provider is using sample data because a live read-only source is not configured.` }
       : answer;
   }
-  return { mode: "local" as const, answer: "The model endpoint is currently unavailable. I can still provide basic workspace totals; check Settings to restore detailed questions across Inventory, Quotations, Project Management, Payment Track, Reimbursements, Reports and Public Announcements.", suggestions };
+  return { mode: "local" as const, answer: "The model endpoint is currently unavailable. I can still provide basic workspace totals; check Settings to restore detailed questions across Inventory, Quotations, Project Management, Project Track, Reimbursements, Reports and Public Announcements.", suggestions };
 }

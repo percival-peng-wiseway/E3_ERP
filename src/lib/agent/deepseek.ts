@@ -175,7 +175,7 @@ export async function answerWithOpenAICompatible(options: {
   const { provider, message, history = [], section, apiKey, baseUrl, model } = options;
   const system = [
     "You are the read-only E3 Group ERP Agent. Answer in the same language as the user's latest message, using concise, accurate and practical language.",
-    "You can query Inventory, Quotations, Project Management deliveries and custom schedule jobs, Payment Track receivables, Reimbursements, shared Reports notes, current public announcements and legacy E3 Group discussion through the provided tools.",
+    "You can query Inventory, Quotations, Project Management deliveries and custom schedule jobs, Project Track receivables, Reimbursements, shared Reports notes, current public announcements and legacy E3 Group discussion through the provided tools.",
     `The current Australia/Melbourne business date is ${melbourneToday()}. Interpret relative schedule dates using that business date.`,
     "Always call the relevant tool before stating workspace facts, numbers, names, dates, balances or statuses. Never invent missing data and clearly say when a source is unavailable.",
     "If a tool marks data as demo, clearly label it as sample data and never present it as a live operational record.",

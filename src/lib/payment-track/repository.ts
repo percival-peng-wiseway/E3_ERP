@@ -246,14 +246,14 @@ async function readStoredProjectDocument(): Promise<{ projects: StoredProject[];
     }
     const document = await readVersionedDocument<unknown>(bindings.database, CLOUDFLARE_DOCUMENT_KEY);
     const parsed = document.value ?? [];
-    if (!Array.isArray(parsed)) throw new Error("Payment Track data is not an array");
+    if (!Array.isArray(parsed)) throw new Error("Project Track data is not an array");
     return { projects: parsed as StoredProject[], version: document.version };
   }
 
   await ensureStorage();
   try {
     const parsed: unknown = JSON.parse(await readFile(recordsPath, "utf8"));
-    if (!Array.isArray(parsed)) throw new Error("Payment Track data is not an array");
+    if (!Array.isArray(parsed)) throw new Error("Project Track data is not an array");
     return { projects: parsed as StoredProject[], version: null };
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
@@ -289,7 +289,7 @@ function withMutation<T>(work: () => Promise<T>): Promise<T> {
       }
     }
     throw new PaymentTrackRepositoryError(
-      "Payment Track changed while this request was being saved. Try again.",
+      "Project Track changed while this request was being saved. Try again.",
       409,
       "storage_conflict",
     );
@@ -717,7 +717,7 @@ export function deletePaymentTrackProject(id: string) {
     const storedDocument = await readStoredProjectDocument();
     const projects = storedDocument.projects;
     const index = projects.findIndex((candidate) => candidate.id === id);
-    if (index < 0) throw new PaymentTrackRepositoryError("Payment project not found.", 404, "not_found");
+    if (index < 0) throw new PaymentTrackRepositoryError("Project not found.", 404, "not_found");
 
     const [deleted] = projects.splice(index, 1);
     const finalPaymentProofs = (deleted.finalPayments || []).map((payment) => payment.proof);
@@ -753,7 +753,7 @@ export function uploadPaymentTrackProof(
     const projects = storedDocument.projects;
     await migrateLegacyProjectStages(projects, new Date().toISOString());
     const index = projects.findIndex((candidate) => candidate.id === id);
-    if (index < 0) throw new PaymentTrackRepositoryError("Payment project not found.", 404, "not_found");
+    if (index < 0) throw new PaymentTrackRepositoryError("Project not found.", 404, "not_found");
     const project = projects[index];
 
     if (role !== "specialist") throw new PaymentTrackRepositoryError("Only the Specialist can upload deposit proof.", 403, "role_forbidden");
@@ -884,7 +884,7 @@ export function transitionPaymentTrackProject(
     const projects = storedDocument.projects;
     await migrateLegacyProjectStages(projects, new Date().toISOString());
     const index = projects.findIndex((candidate) => candidate.id === id);
-    if (index < 0) throw new PaymentTrackRepositoryError("Payment project not found.", 404, "not_found");
+    if (index < 0) throw new PaymentTrackRepositoryError("Project not found.", 404, "not_found");
     const project = projects[index];
     if (!solarRebateAssessmentIsCurrent(project) && action !== "update_pm_notes") {
       throw new PaymentTrackRepositoryError(

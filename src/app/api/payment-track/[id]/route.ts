@@ -202,7 +202,7 @@ export async function PATCH(
     if (error instanceof PaymentTrackRepositoryError) return paymentTrackError(error.status, error.code, error.message);
     if (error instanceof PaymentTrackRequestBodyTooLarge) return paymentTrackError(413, "request_too_large", "The project action is too large.");
     if (error instanceof SyntaxError) return paymentTrackError(400, "invalid_json", "The project action is invalid.");
-    return paymentTrackError(500, "update_failed", "The payment project could not be updated.");
+    return paymentTrackError(500, "update_failed", "The project could not be updated.");
   }
 }
 
@@ -214,7 +214,7 @@ export async function DELETE(
     return paymentTrackError(403, "forbidden", "This request is not allowed.");
   }
   if (!isAuthorizedActorRequest(request, "admin")) {
-    return paymentTrackError(403, "role_forbidden", "Only Administrators can delete payment projects.");
+    return paymentTrackError(403, "role_forbidden", "Only Administrators can delete projects in Project Track.");
   }
   if (!isPaymentTrackAdmin(request)) {
     return paymentTrackError(401, "admin_required", "Administrator access is required.");
@@ -240,6 +240,6 @@ export async function DELETE(
     if (error instanceof PaymentTrackRequestBodyTooLarge) {
       return paymentTrackError(400, "invalid_request", "Delete does not accept a request body.");
     }
-    return paymentTrackError(500, "delete_failed", "The payment project could not be deleted.");
+    return paymentTrackError(500, "delete_failed", "The project could not be deleted.");
   }
 }

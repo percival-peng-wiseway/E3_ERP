@@ -517,14 +517,14 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
     try {
       const response = await fetch("/api/payment-track", { cache: "no-store" });
       const body = await readJsonResponse<PaymentTrackListResponse & { error?: string }>(response);
-      if (!response.ok) throw new Error(apiError(body, "Unable to load payment projects."));
+      if (!response.ok) throw new Error(apiError(body, "Unable to load projects."));
       if (requestId !== loadRequestRef.current) return;
       setProjects(Array.isArray(body.data) ? body.data : []);
       setAdminSession((current) => ({ ...current, admin: Boolean(body.meta?.admin) }));
       setError("");
     } catch (loadError) {
       if (requestId !== loadRequestRef.current) return;
-      setError(loadError instanceof Error ? loadError.message : "Unable to load payment projects.");
+      setError(loadError instanceof Error ? loadError.message : "Unable to load projects.");
     } finally {
       if (requestId === loadRequestRef.current) {
         setLoading(false);
@@ -645,7 +645,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
     returnFocusRef.current = element;
     setError("");
     if (authenticatedRole !== "admin" && role !== "sales") {
-      setNotice("Only Sales or an Administrator can add a payment project.");
+      setNotice("Only Sales or an Administrator can add a project.");
       return;
     }
     setAddMode("agreement");
@@ -779,12 +779,12 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
         body: JSON.stringify(payload),
       });
       const result = await readJsonResponse<PaymentTrackMutationResponse & { error?: string }>(response);
-      if (!response.ok) throw new Error(apiError(result, "Unable to create this payment project."));
+      if (!response.ok) throw new Error(apiError(result, "Unable to create this project."));
       updateProject(result.data);
       setShowAdd(false);
       setNotice(`${result.data.reference} was added to Deposit Not Paid.`);
     } catch (createError) {
-      setError(createError instanceof Error ? createError.message : "Unable to create this payment project.");
+      setError(createError instanceof Error ? createError.message : "Unable to create this project.");
     } finally {
       setBusy(false);
     }
@@ -928,7 +928,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
     try {
       const response = await fetch(`/api/payment-track/${encodeURIComponent(project.id)}`, { method: "DELETE" });
       const body = await readJsonResponse<{ error?: string }>(response);
-      if (!response.ok) throw new Error(apiError(body, "Unable to delete the payment project."));
+      if (!response.ok) throw new Error(apiError(body, "Unable to delete the project."));
       setProjects((current) => current.filter((item) => item.id !== project.id));
       pmNotesDirtyRef.current = false;
       setSelectedId(null);
@@ -937,7 +937,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
       setNotice(`${project.reference} deleted.`);
       window.dispatchEvent(new CustomEvent("erp:payment-track-updated"));
     } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : "Unable to delete the payment project.");
+      setError(deleteError instanceof Error ? deleteError.message : "Unable to delete the project.");
     } finally {
       setBusy(false);
     }
@@ -1546,7 +1546,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
       <header className={styles.pageHeader}>
         <div>
           <span className={styles.eyebrow}>ACCOUNTS RECEIVABLE</span>
-          <h1 id="payment-track-title">Payment Track</h1>
+          <h1 id="payment-track-title">Project Track</h1>
         </div>
         <div className={styles.headerActions}>
           <button className={styles.primaryButton} type="button" onClick={(event) => openAdd(event.currentTarget)}>
@@ -1555,7 +1555,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
         </div>
       </header>
 
-      <div className={styles.metrics} aria-label="Payment Track summary">
+      <div className={styles.metrics} aria-label="Project Track summary">
         <article>
           <span className={styles.metricIcon}><CircleDollarSign size={19} /></span>
           <div><small>Original Receivable</small><strong>{formatMoney(metrics.receivable)}</strong></div>
@@ -1601,7 +1601,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
       </div>
 
       {loading ? (
-        <div className={styles.loadingState}><LoaderCircle className={styles.spinning} size={20} /> Loading payment projects…</div>
+        <div className={styles.loadingState}><LoaderCircle className={styles.spinning} size={20} /> Loading projects…</div>
       ) : (
         <div className={styles.boardScroller} tabIndex={0} aria-label="Payment workflow board">
           <div className={styles.board}>
@@ -1733,7 +1733,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
         <div className={styles.backdrop} onMouseDown={closeFromBackdrop}>
           <div className={styles.modal} role="dialog" aria-modal="true" aria-labelledby="add-project-title">
             <header>
-              <div><span>Sales workspace</span><h2 id="add-project-title">Add payment project</h2></div>
+              <div><span>Sales workspace</span><h2 id="add-project-title">Add project</h2></div>
               <button type="button" aria-label="Close" disabled={busy} onClick={() => setShowAdd(false)}><X size={19} /></button>
             </header>
             <div className={styles.modalTabs} role="tablist" aria-label="Project entry method">

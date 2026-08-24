@@ -64,8 +64,8 @@ Inventory and QuoteHelp continue to save to their existing upstream services, so
 
 Worker-hosted business modules use the resources declared in `wrangler.jsonc`:
 
-- `ERP_DB` (D1) stores versioned Payment Track, Project Schedule, Site Visiting, Reimbursements, Reports, Group Chat, Public Announcements and saved Agent-settings documents. Compare-and-swap updates are retried so separate Worker isolates cannot silently overwrite each other.
-- `ERP_FILES` (private Workers KV) stores immutable Payment Track contracts/payment proofs, Site Visiting photos and Reimbursement invoices. API authorization and per-file access tokens still protect every download.
+- `ERP_DB` (D1) stores versioned Project Track, Project Schedule, Site Visiting, Reimbursements, Reports, Group Chat, Public Announcements and saved Agent-settings documents. Compare-and-swap updates are retried so separate Worker isolates cannot silently overwrite each other.
+- `ERP_FILES` (private Workers KV) stores immutable Project Track contracts/payment proofs, Site Visiting photos and Reimbursement invoices. API authorization and per-file access tokens still protect every download.
 - Local development continues to use the corresponding `.data` files, so Node-based development and focused repository tests do not need Cloudflare bindings.
 
 Apply D1 migrations before a first deployment:
@@ -74,7 +74,7 @@ Apply D1 migrations before a first deployment:
 npx wrangler d1 migrations apply e3-erp-prod --remote
 ```
 
-To import existing local Payment Track, Project Schedule and Site Visiting data without placing customer records or files in Git, run this once after reviewing the destination Cloudflare account:
+To import existing local Project Track, Project Schedule and Site Visiting data without placing customer records or files in Git, run this once after reviewing the destination Cloudflare account:
 
 ```bash
 npm run cf:migrate-local-data -- --confirm-sensitive-upload
@@ -82,7 +82,7 @@ npm run cf:migrate-local-data -- --confirm-sensitive-upload
 
 The import stops before uploading when any destination D1 document already exists. Referenced private files receive fresh immutable object keys before they are uploaded to `ERP_FILES`.
 
-The migration command intentionally covers Payment Track, Project Schedule and Site Visiting only. Reimbursement records/invoices and other local documents can contain additional private employee data and must not be uploaded without a separate review and explicit approval. New production records in those modules are persisted automatically.
+The migration command intentionally covers Project Track, Project Schedule and Site Visiting only. Reimbursement records/invoices and other local documents can contain additional private employee data and must not be uploaded without a separate review and explicit approval. New production records in those modules are persisted automatically.
 
 Prefer the `AGENT_API_KEY` Cloudflare Secret for long-lived Agent credentials. The settings UI can save a replacement server-side, but local Agent settings—including any existing key—are never copied by the migration script.
 

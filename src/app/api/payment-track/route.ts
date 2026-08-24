@@ -147,7 +147,7 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch {
-    return paymentTrackError(500, "storage_unavailable", "Payment Track records are temporarily unavailable.");
+    return paymentTrackError(500, "storage_unavailable", "Project Track records are temporarily unavailable.");
   }
 }
 
@@ -159,7 +159,7 @@ export async function POST(request: NextRequest) {
   try {
     const body = await readPaymentTrackJson(request, MAX_JSON_SIZE);
     if (!isAuthorizedActorRequest(request, "sales")) {
-      return paymentTrackError(403, "role_forbidden", "Only Sales or an Administrator can create a payment project.");
+      return paymentTrackError(403, "role_forbidden", "Only Sales or an Administrator can create a project in Project Track.");
     }
     const input = createInput(body);
     if (!input) {
@@ -170,6 +170,6 @@ export async function POST(request: NextRequest) {
     if (error instanceof PaymentTrackRepositoryError) return paymentTrackError(error.status, error.code, error.message);
     if (error instanceof PaymentTrackRequestBodyTooLarge) return paymentTrackError(413, "request_too_large", "The project request is too large.");
     if (error instanceof SyntaxError) return paymentTrackError(400, "invalid_json", "The project request is invalid.");
-    return paymentTrackError(500, "create_failed", "The payment project could not be created.");
+    return paymentTrackError(500, "create_failed", "The project could not be created.");
   }
 }

@@ -1,18 +1,18 @@
 # Unify ERP
 
-An ERPNext-inspired operations workspace that brings Inventory, QuoteHelp, project delivery, payment tracking and employee reimbursements into one native interface.
+An ERPNext-inspired operations workspace that brings Inventory, QuoteHelp, Project Track delivery and payment workflows, and employee reimbursements into one native interface.
 
 The application no longer uses iframes. The browser calls same-origin ERP APIs, and controlled server-side proxies connect to the existing Inventory and QuoteHelp services. Existing data, accounts and business rules remain in use.
 
-Employee access is protected by a unified ERP sign-in. The server issues a signed, HttpOnly session cookie and keeps salted password verifiers out of the browser bundle. Current employee account roles are Administrator, Project Manager and Sales; authenticated administrators inherit the protected Reimbursements and Payment Track administration permissions.
+Employee access is protected by a unified ERP sign-in. The server issues a signed, HttpOnly session cookie and keeps salted password verifiers out of the browser bundle. Current employee account roles are Administrator, Project Manager and Sales; authenticated administrators inherit the protected Reimbursements and Project Track administration permissions.
 
 ## Current modules
 
 ### Home and Agent
 
 - Home shows role-specific action reminders and Admin-managed public announcements on the left, with E3 Agent on the right
-- Sales reminders are limited to actionable Payment Track collections; PM receives only delivery and installation scheduling reminders; Admin receives submitted payment confirmations and reimbursement actions
-- The OpenAI-compatible Ollama endpoint answers questions across Inventory, Quotations, Project Management deliveries, Payment Track, Reimbursements, Reports and public announcements using bounded read-only tools
+- Sales reminders are limited to actionable Project Track collections; PM receives only delivery and installation scheduling reminders; Admin receives submitted payment confirmations and reimbursement actions
+- The OpenAI-compatible Ollama endpoint answers questions across Inventory, Quotations, Project Management deliveries, Project Track, Reimbursements, Reports and public announcements using bounded read-only tools
 - `qwen3.5:9b` is the default model; the other models advertised by the endpoint can be selected from Settings
 - The current endpoint does not require an API key; an optional key remains supported for future compatible endpoints
 - If the endpoint is unavailable, basic local summaries remain available
@@ -64,7 +64,7 @@ Employee access is protected by a unified ERP sign-in. The server issues a signe
 - Every claim includes an invoice link and status history
 - Claims are private to the submitting ERP employee account across browsers and devices; Administrators can view all claims
 
-### Payment Track
+### Project Track
 
 - Sales can import an E3 Solar Proposal PDF or create a project manually
 - Proposal import extracts the Specialist, Proposal Number, customer details, system items, expected deposit and printed Balance Due
@@ -77,7 +77,7 @@ Employee access is protected by a unified ERP sign-in. The server issues a signe
 - Only the initial deposit requires a payment screenshot or PDF; every successful workflow action closes Project Details
 - Cards show the live remaining Amount Due, while Project Details retains the original proposal, every proof and the final-payment ledger
 
-Payment Track starts from the signed-in employee role. PM and Sales accounts cannot switch roles; Administrator accounts can cover Sales, PM and Specialist workflow steps until a dedicated Specialist account is added. The API verifies the signed-in role instead of trusting the role submitted by the browser.
+Project Track starts from the signed-in employee role. PM and Sales accounts cannot switch roles; Administrator accounts can cover Sales, PM and Specialist workflow steps until a dedicated Specialist account is added. The API verifies the signed-in role instead of trusting the role submitted by the browser.
 
 ### Reports
 
@@ -175,9 +175,9 @@ PAYMENT_TRACK_ENFORCE_UNIQUE_PROPOSAL=false
 SITE_VISIT_DATA_DIR=
 ```
 
-Local development includes the legacy Admin demo password `admin` for the module-specific fallback. Production employee login requires `ERP_AUTH_SESSION_SECRET` with at least 32 random characters. Cloudflare production uses D1 for the app's structured records and private Workers KV for Payment Track files, Site Visiting photos and Reimbursement invoices; local development retains the `.data` fallback. Company SSO can replace the built-in employee directory later without changing the module APIs.
+Local development includes the legacy Admin demo password `admin` for the module-specific fallback. Production employee login requires `ERP_AUTH_SESSION_SECRET` with at least 32 random characters. Cloudflare production uses D1 for the app's structured records and private Workers KV for Project Track files, Site Visiting photos and Reimbursement invoices; local development retains the `.data` fallback. Company SSO can replace the built-in employee directory later without changing the module APIs.
 
-Payment Track currently allows repeated Proposal Numbers so the same proposal can be uploaded more than once during testing. Set `PAYMENT_TRACK_ENFORCE_UNIQUE_PROPOSAL=true` when testing is complete to restore the duplicate check. Every duplicate still receives its own project ID, `PAY-...` reference and stored contract file.
+Project Track currently allows repeated Proposal Numbers so the same proposal can be uploaded more than once during testing. Set `PAYMENT_TRACK_ENFORCE_UNIQUE_PROPOSAL=true` when testing is complete to restore the duplicate check. Every duplicate still receives its own project ID, `PAY-...` reference and stored contract file.
 
 ## Web APIs
 
@@ -198,11 +198,11 @@ Payment Track currently allows repeated Proposal Numbers so the same proposal ca
 | `DELETE /api/reimbursements/:id` | Permanently remove a claim and its invoice as Administrator |
 | `GET/POST/DELETE /api/reimbursements/admin` | Reimbursement Admin session |
 | `GET /api/reimbursements/:id/invoice` | Protected invoice viewing |
-| `GET/POST /api/payment-track` | List projects or create a manual Payment Track project |
+| `GET/POST /api/payment-track` | List projects or create a manual project in Project Track |
 | `POST /api/payment-track/import` | Import and extract an E3 Solar Proposal PDF |
 | `PATCH/DELETE /api/payment-track/:id` | Apply an authorised workflow transition or permanently remove a project as Administrator |
 | `POST /api/payment-track/:id/proof` | Upload the initial deposit proof |
-| `GET/POST/DELETE /api/payment-track/admin` | Payment Track Admin session |
+| `GET/POST/DELETE /api/payment-track/admin` | Project Track Admin session |
 | `GET /api/payment-track/:id/files/:fileId` | Protected proposal or proof viewing |
 | `GET/POST /api/site-visits` | List and create scheduled site visits |
 | `GET/PATCH/DELETE /api/site-visits/:id` | View or update a site visit; permanent deletion requires Administrator access |
@@ -260,7 +260,7 @@ mcp-server/                                        Optional read-only MCP Server
 The current version includes a unified built-in employee identity and role system. Before broader external production access:
 
 1. Replace the built-in directory with company SSO or Clerk when central onboarding, offboarding and password recovery are required.
-2. Confirm detailed per-module permissions beyond the enforced Payment Track roles; hidden buttons are not authorisation.
+2. Confirm detailed per-module permissions beyond the enforced Project Track roles; hidden buttons are not authorisation.
 3. Add distributed login rate limits, audit logs and operational alerts.
 4. Confirm that the upstream Inventory and QuoteHelp cookie policies match the final HTTPS ERP domain.
 5. Preserve explicit confirmation and traceability for deletion, stock loss, delivery cancellation and delivery completion.

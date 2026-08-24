@@ -27,7 +27,7 @@ export async function GET(
 
   try {
     const file = await getPaymentTrackFile(id, fileId);
-    if (!file) return paymentTrackError(404, "not_found", "Payment Track file not found.");
+    if (!file) return paymentTrackError(404, "not_found", "Project Track file not found.");
     const suppliedToken = request.nextUrl.searchParams.get("token") || "";
     if (!isPaymentTrackAdmin(request) && !equalToken(suppliedToken, file.accessToken)) {
       return paymentTrackError(403, "forbidden", "You do not have access to this file.");

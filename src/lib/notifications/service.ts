@@ -207,7 +207,7 @@ async function loadOperationalSnapshot(): Promise<OperationalSnapshot> {
 function paymentNotifications(projects: PaymentTrackProject[], now: Date) {
   const items: WorkspaceNotification[] = [];
   for (const project of projects.slice(0, MAX_SOURCE_RECORDS)) {
-    const reference = cleanText(project.reference, 100) || "Payment project";
+    const reference = cleanText(project.reference, 100) || "Project";
     for (const task of paymentTrackResponsibilities(project)) {
       if (task.action === "upload_deposit_proof") {
         items.push(notification({
