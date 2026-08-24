@@ -1,12 +1,12 @@
 // Focused tests execute source TypeScript directly under Node ESM.
 // @ts-expect-error -- explicit extension is required by that runtime.
-import { SITE_VISIT_CHECK_ANSWERS, SITE_VISIT_STATUSES } from "./types.ts";
+import { SITE_VISIT_ACTIONS, SITE_VISIT_CHECK_ANSWERS } from "./types.ts";
 import type {
+  SiteVisitAction,
+  SiteVisitActionInput,
   SiteVisitChecklistItem,
   SiteVisitCheckAnswer,
   SiteVisitCreateInput,
-  SiteVisitPatchInput,
-  SiteVisitStatus,
 } from "./types";
 
 export const SITE_VISIT_BUILT_IN_CHECKS = [
@@ -34,17 +34,34 @@ const CREATE_FIELDS = new Set([
   "projectName",
   "address",
   "contact",
-  "scheduledDate",
-  "scheduledTime",
-  "assignee",
-  "notes",
+  "reason",
+  "requestedDate",
+  "requestedTime",
 ]);
-const PATCH_FIELDS = new Set([...CREATE_FIELDS, "status", "checklist"]);
+const ACTION_FIELDS: Record<SiteVisitAction, ReadonlySet<string>> = {
+  update_request: new Set(["action", "expectedUpdatedAt", ...CREATE_FIELDS]),
+  approve: new Set(["action", "expectedUpdatedAt"]),
+  schedule: new Set(["action", "expectedUpdatedAt", "scheduledDate", "scheduledTime", "assignee"]),
+  start: new Set(["action", "expectedUpdatedAt"]),
+  save_visit: new Set([
+    "action",
+    "expectedUpdatedAt",
+    "projectName",
+    "address",
+    "contact",
+    "checklist",
+    "notes",
+  ]),
+  complete: new Set(["action", "expectedUpdatedAt"]),
+  reopen: new Set(["action", "expectedUpdatedAt"]),
+  cancel: new Set(["action", "expectedUpdatedAt"]),
+  restore: new Set(["action", "expectedUpdatedAt"]),
+};
 const CHECKLIST_FIELDS = new Set(["id", "label", "answer", "notes"]);
 const CHECK_ID_PATTERN = /^[a-z][a-z0-9_]{1,63}$/;
 const UNSAFE_CONTROLS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
 
-function onlyFields(body: Record<string, unknown>, allowed: Set<string>) {
+function onlyFields(body: Record<string, unknown>, allowed: ReadonlySet<string>) {
   return Object.keys(body).every((field) => allowed.has(field));
 }
 
@@ -63,6 +80,12 @@ export function siteVisitDate(value: unknown): value is string {
 
 export function siteVisitTime(value: unknown): value is string {
   return typeof value === "string" && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value);
+}
+
+export function siteVisitTimestamp(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return false;
+  const parsed = new Date(value);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value;
 }
 
 export function initialSiteVisitChecklist(): SiteVisitChecklistItem[] {
@@ -129,55 +152,70 @@ export function parseSiteVisitCreate(body: Record<string, unknown>): SiteVisitCr
   if (!onlyFields(body, CREATE_FIELDS)) return null;
   const projectName = text(body.projectName, 160, true);
   const address = text(body.address, 300, true);
-  const contact = text(body.contact ?? "", 240, false);
-  const assignee = text(body.assignee ?? "", 120, false);
-  const notes = text(body.notes ?? "", 10_000, false);
-  if (!projectName || !address || contact === null || assignee === null || notes === null
-    || !siteVisitDate(body.scheduledDate) || !siteVisitTime(body.scheduledTime)) return null;
+  const contact = text(body.contact, 240, true);
+  const reason = text(body.reason, 2_000, true);
+  if (!projectName || !address || !contact || !reason
+    || !siteVisitDate(body.requestedDate) || !siteVisitTime(body.requestedTime)) return null;
   return {
     projectName,
     address,
     contact,
-    scheduledDate: body.scheduledDate,
-    scheduledTime: body.scheduledTime,
-    assignee,
-    notes,
+    reason,
+    requestedDate: body.requestedDate,
+    requestedTime: body.requestedTime,
   };
 }
 
-export function parseSiteVisitPatch(body: Record<string, unknown>): SiteVisitPatchInput | null {
-  const fields = Object.keys(body);
-  if (!fields.length || !onlyFields(body, PATCH_FIELDS)) return null;
+function requestFields(body: Record<string, unknown>) {
+  const projectName = text(body.projectName, 160, true);
+  const address = text(body.address, 300, true);
+  const contact = text(body.contact, 240, true);
+  const reason = text(body.reason, 2_000, true);
+  if (!projectName || !address || !contact || !reason
+    || !siteVisitDate(body.requestedDate) || !siteVisitTime(body.requestedTime)) return null;
+  return {
+    projectName,
+    address,
+    contact,
+    reason,
+    requestedDate: body.requestedDate,
+    requestedTime: body.requestedTime,
+  };
+}
 
-  const patch: SiteVisitPatchInput = {};
-  for (const [field, maximum, required] of [
-    ["projectName", 160, true],
-    ["address", 300, true],
-    ["contact", 240, false],
-    ["assignee", 120, false],
-    ["notes", 10_000, false],
-  ] as const) {
-    if (!(field in body)) continue;
-    const value = text(body[field], maximum, required);
-    if (value === null || (required && !value)) return null;
-    patch[field] = value;
+export function parseSiteVisitAction(body: Record<string, unknown>): SiteVisitActionInput | null {
+  const action = typeof body.action === "string"
+    && SITE_VISIT_ACTIONS.includes(body.action as SiteVisitAction)
+    ? body.action as SiteVisitAction
+    : null;
+  if (!action || !onlyFields(body, ACTION_FIELDS[action]) || !siteVisitTimestamp(body.expectedUpdatedAt)) return null;
+  const version = { expectedUpdatedAt: body.expectedUpdatedAt };
+
+  if (action === "update_request") {
+    const fields = requestFields(body);
+    return fields ? { action, ...version, ...fields } : null;
   }
-  if ("scheduledDate" in body) {
-    if (!siteVisitDate(body.scheduledDate)) return null;
-    patch.scheduledDate = body.scheduledDate;
+  if (action === "schedule") {
+    const assignee = text(body.assignee, 120, true);
+    if (!assignee || !siteVisitDate(body.scheduledDate) || !siteVisitTime(body.scheduledTime)) return null;
+    return {
+      action,
+      ...version,
+      scheduledDate: body.scheduledDate,
+      scheduledTime: body.scheduledTime,
+      assignee,
+    };
   }
-  if ("scheduledTime" in body) {
-    if (!siteVisitTime(body.scheduledTime)) return null;
-    patch.scheduledTime = body.scheduledTime;
-  }
-  if ("status" in body) {
-    if (typeof body.status !== "string" || !SITE_VISIT_STATUSES.includes(body.status as SiteVisitStatus)) return null;
-    patch.status = body.status as SiteVisitStatus;
-  }
-  if ("checklist" in body) {
+  if (action === "save_visit") {
+    const projectName = text(body.projectName, 160, true);
+    const address = text(body.address, 300, true);
+    // Legacy scheduled records may not have a contact. New requests still
+    // require one, but an old record must remain saveable on site.
+    const contact = text(body.contact, 240, false);
     const checklist = parseSiteVisitChecklist(body.checklist);
-    if (!checklist) return null;
-    patch.checklist = checklist;
+    const notes = text(body.notes, 10_000, false);
+    if (!projectName || !address || contact === null || !checklist || notes === null) return null;
+    return { action, ...version, projectName, address, contact, checklist, notes };
   }
-  return patch;
+  return { action, ...version } as SiteVisitActionInput;
 }

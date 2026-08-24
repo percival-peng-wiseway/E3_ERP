@@ -49,11 +49,12 @@ Employee access is protected by a unified ERP sign-in. The server issues a signe
 
 ### Site Visiting
 
-- Create a site visit with the project, address, contact, assignee and scheduled date/time
-- Move visits through Scheduled, In Progress, Completed or Cancelled
+- Submit a site visit request with the customer name, address, phone, reason and preferred date/time
+- Move requests through Pending Approval, Approved, Scheduled, In Progress and Completed, with Admin approval and PM/Admin scheduling
+- Keep the preferred time separate from the confirmed visit time and assigned team member
 - Record an extensible on-site checklist covering roof tiles, switchboard replacement, AC cable run, roof material, BAT location, fire cement sheet, sub-switchboard, switch upgrade, backup circuit and concrete slab
 - Add checklist notes, general site notes and multiple photos from a phone camera or photo library
-- Mobile-first visit cards and a focused on-site detail view for use in the field
+- Open the focused detail view from the whole mobile-first card, with the current workflow stage visible on every card
 
 ### Reimbursements
 

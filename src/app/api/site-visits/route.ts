@@ -46,7 +46,11 @@ export async function POST(request: NextRequest) {
   try {
     const input = parseSiteVisitCreate(await readSiteVisitJson(request, MAX_JSON_SIZE));
     if (!input) {
-      return siteVisitError(400, "invalid_visit", "Complete the site visit with valid information.");
+      return siteVisitError(
+        400,
+        "invalid_visit",
+        "Enter a customer name, address, phone, reason and valid preferred date and time.",
+      );
     }
     const visit = await createSiteVisit(input);
     return siteVisitJson({ data: { visit } }, { status: 201 });

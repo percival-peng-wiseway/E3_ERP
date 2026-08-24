@@ -1,9 +1,10 @@
 import { NextRequest } from "next/server";
+import { getErpSession } from "@/lib/auth/session";
 import {
   deleteSiteVisit,
   getSiteVisit,
   SiteVisitRepositoryError,
-  updateSiteVisit,
+  transitionSiteVisit,
 } from "@/lib/site-visits/repository";
 import {
   declaredSiteVisitBodyTooLarge,
@@ -13,7 +14,8 @@ import {
   siteVisitJson,
   SiteVisitRequestBodyTooLarge,
 } from "@/lib/site-visits/request";
-import { parseSiteVisitPatch } from "@/lib/site-visits/validation";
+import type { SiteVisitAction, SiteVisitActor } from "@/lib/site-visits/types";
+import { parseSiteVisitAction } from "@/lib/site-visits/validation";
 import { isAuthorizedActorRequest, isAuthorizedMutationRequest } from "@/lib/server/proxy-security";
 
 export const dynamic = "force-dynamic";
@@ -21,6 +23,7 @@ export const runtime = "nodejs";
 
 const MAX_JSON_SIZE = 128 * 1024;
 const ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const PM_ADMIN_ACTIONS = new Set<SiteVisitAction>(["schedule", "reopen", "cancel", "restore"]);
 
 async function siteVisitId(context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
@@ -65,9 +68,31 @@ export async function PATCH(
     return siteVisitError(415, "unsupported_request", "Submit the site visit update as JSON.");
   }
   try {
-    const patch = parseSiteVisitPatch(await readSiteVisitJson(request, MAX_JSON_SIZE));
-    if (!patch) return siteVisitError(400, "invalid_visit", "The site visit update is invalid.");
-    return siteVisitJson({ data: { visit: await updateSiteVisit(id, patch) } });
+    const input = parseSiteVisitAction(await readSiteVisitJson(request, MAX_JSON_SIZE));
+    if (!input) return siteVisitError(400, "invalid_action", "The site visit action is invalid.");
+
+    const browserRequest = request.headers.has("origin") || request.headers.has("sec-fetch-site");
+    const session = browserRequest ? getErpSession(request) : null;
+    if (browserRequest && !session) {
+      return siteVisitError(403, "forbidden", "This request is not allowed.");
+    }
+    // A non-browser mutation reached this point only through the trusted
+    // internal bearer token checked above. It receives Administrator authority
+    // and a stable audit label instead of trusting actor fields in the body.
+    const actor: SiteVisitActor = session
+      ? { role: session.user.role, name: session.user.displayName }
+      : { role: "admin", name: "Internal API" };
+    if (input.action === "approve" && actor.role !== "admin") {
+      return siteVisitError(403, "role_forbidden", "Only an Administrator can approve site visits.");
+    }
+    if (PM_ADMIN_ACTIONS.has(input.action) && actor.role !== "pm" && actor.role !== "admin") {
+      return siteVisitError(
+        403,
+        "role_forbidden",
+        "Only a Project Manager or Administrator can perform this site visit action.",
+      );
+    }
+    return siteVisitJson({ data: { visit: await transitionSiteVisit(id, input, actor) } });
   } catch (error) {
     if (error instanceof SiteVisitRepositoryError) {
       return siteVisitError(error.status, error.code, error.message);

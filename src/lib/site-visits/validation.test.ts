@@ -6,10 +6,21 @@ const {
   initialSiteVisitChecklist,
   MAX_SITE_VISIT_CHECKS,
   normalizeStoredSiteVisitChecklist,
+  parseSiteVisitAction,
   parseSiteVisitChecklist,
-  parseSiteVisitPatch,
+  parseSiteVisitCreate,
   SITE_VISIT_BUILT_IN_CHECKS,
 } = await import(validationModule) as typeof import("./validation");
+
+const expectedUpdatedAt = "2026-08-24T01:02:03.004Z";
+const validCreate = {
+  projectName: "Smith residence",
+  address: "1 Test Street, Melbourne VIC 3000",
+  contact: "+61 400 000 000",
+  reason: "Confirm roof and switchboard requirements",
+  requestedDate: "2026-08-28",
+  requestedTime: "10:30",
+};
 
 const legacyChecklist = [
   {
@@ -48,6 +59,129 @@ test("new site visits receive every current built-in check in the requested orde
   );
 });
 
+test("site visit requests strictly require customer, phone, reason and requested date/time", () => {
+  assert.deepEqual(parseSiteVisitCreate(validCreate), validCreate);
+
+  for (const field of Object.keys(validCreate)) {
+    const missing = { ...validCreate } as Record<string, unknown>;
+    delete missing[field];
+    assert.equal(parseSiteVisitCreate(missing), null, `${field} must be required`);
+  }
+
+  assert.equal(parseSiteVisitCreate({ ...validCreate, contact: "" }), null);
+  assert.equal(parseSiteVisitCreate({ ...validCreate, reason: "" }), null);
+  assert.equal(parseSiteVisitCreate({ ...validCreate, requestedDate: "2026-02-30" }), null);
+  assert.equal(parseSiteVisitCreate({ ...validCreate, requestedTime: "24:00" }), null);
+  assert.equal(parseSiteVisitCreate({ ...validCreate, scheduledDate: "2026-08-29" }), null);
+  assert.equal(parseSiteVisitCreate({ ...validCreate, unexpected: true }), null);
+});
+
+test("workflow actions require an exact action payload and current updated timestamp", () => {
+  for (const action of ["approve", "start", "complete", "reopen", "cancel", "restore"] as const) {
+    assert.deepEqual(
+      parseSiteVisitAction({ action, expectedUpdatedAt }),
+      { action, expectedUpdatedAt },
+    );
+    assert.equal(parseSiteVisitAction({ action }), null, `${action} needs expectedUpdatedAt`);
+    assert.equal(
+      parseSiteVisitAction({ action, expectedUpdatedAt, status: "completed" }),
+      null,
+      `${action} must reject extra fields`,
+    );
+  }
+
+  assert.equal(parseSiteVisitAction({ action: "approve", expectedUpdatedAt: "2026-08-24" }), null);
+  assert.equal(parseSiteVisitAction({ action: "unknown", expectedUpdatedAt }), null);
+  assert.equal(parseSiteVisitAction({ status: "completed", expectedUpdatedAt }), null);
+});
+
+test("request, schedule and visit-save actions parse only their exact fields", () => {
+  assert.deepEqual(parseSiteVisitAction({
+    action: "update_request",
+    expectedUpdatedAt,
+    ...validCreate,
+  }), {
+    action: "update_request",
+    expectedUpdatedAt,
+    ...validCreate,
+  });
+  assert.equal(parseSiteVisitAction({
+    action: "update_request",
+    expectedUpdatedAt,
+    ...validCreate,
+    assignee: "Field Team",
+  }), null);
+
+  assert.deepEqual(parseSiteVisitAction({
+    action: "schedule",
+    expectedUpdatedAt,
+    scheduledDate: "2026-09-01",
+    scheduledTime: "13:45",
+    assignee: "Field Team",
+  }), {
+    action: "schedule",
+    expectedUpdatedAt,
+    scheduledDate: "2026-09-01",
+    scheduledTime: "13:45",
+    assignee: "Field Team",
+  });
+  assert.equal(parseSiteVisitAction({
+    action: "schedule",
+    expectedUpdatedAt,
+    scheduledDate: "2026-09-01",
+    scheduledTime: "13:45",
+    assignee: "",
+  }), null);
+  assert.equal(parseSiteVisitAction({
+    action: "schedule",
+    expectedUpdatedAt,
+    scheduledDate: "2026-09-01",
+    scheduledTime: "13:45",
+    assignee: "Field Team",
+    requestedDate: "2026-08-28",
+  }), null);
+
+  const checklist = initialSiteVisitChecklist();
+  checklist[0] = { ...checklist[0], answer: "yes", notes: "Replace two cracked tiles" };
+  assert.deepEqual(parseSiteVisitAction({
+    action: "save_visit",
+    expectedUpdatedAt,
+    projectName: validCreate.projectName,
+    address: validCreate.address,
+    contact: validCreate.contact,
+    checklist,
+    notes: "Gate code is 1234",
+  }), {
+    action: "save_visit",
+    expectedUpdatedAt,
+    projectName: validCreate.projectName,
+    address: validCreate.address,
+    contact: validCreate.contact,
+    checklist,
+    notes: "Gate code is 1234",
+  });
+  const legacySave = parseSiteVisitAction({
+    action: "save_visit",
+    expectedUpdatedAt,
+    projectName: validCreate.projectName,
+    address: validCreate.address,
+    contact: "",
+    checklist,
+    notes: "Legacy record without a stored phone",
+  });
+  assert.equal(legacySave?.action === "save_visit" ? legacySave.contact : null, "");
+  assert.equal(parseSiteVisitAction({
+    action: "save_visit",
+    expectedUpdatedAt,
+    projectName: validCreate.projectName,
+    address: validCreate.address,
+    contact: validCreate.contact,
+    checklist,
+    notes: "",
+    reason: validCreate.reason,
+  }), null);
+});
+
 test("stored legacy checklists are hydrated without losing answers or notes", () => {
   const parsed = normalizeStoredSiteVisitChecklist(legacyChecklist);
   assert.ok(parsed);
@@ -58,7 +192,15 @@ test("stored legacy checklists are hydrated without losing answers or notes", ()
     SITE_VISIT_BUILT_IN_CHECKS.slice(2).map((item) => ({ ...item, answer: "not_checked", notes: "" })),
   );
   assert.equal(parseSiteVisitChecklist(legacyChecklist), null);
-  assert.equal(parseSiteVisitPatch({ checklist: legacyChecklist }), null);
+  assert.equal(parseSiteVisitAction({
+    action: "save_visit",
+    expectedUpdatedAt,
+    projectName: validCreate.projectName,
+    address: validCreate.address,
+    contact: validCreate.contact,
+    checklist: legacyChecklist,
+    notes: "",
+  }), null);
 });
 
 test("stored built-in labels are canonical and extension checks remain after built-ins", () => {
@@ -90,7 +232,16 @@ test("current checklists parse strictly and retain the legacy custom-item capaci
   const current = initialSiteVisitChecklist();
   current[2] = { ...current[2], answer: "yes", notes: "Measured 18 m" };
   assert.deepEqual(parseSiteVisitChecklist(current), current);
-  assert.equal(parseSiteVisitPatch({ checklist: current })?.checklist?.[2].notes, "Measured 18 m");
+  const saved = parseSiteVisitAction({
+    action: "save_visit",
+    expectedUpdatedAt,
+    projectName: validCreate.projectName,
+    address: validCreate.address,
+    contact: validCreate.contact,
+    checklist: current,
+    notes: "",
+  });
+  assert.equal(saved?.action === "save_visit" ? saved.checklist[2].notes : null, "Measured 18 m");
 
   const customChecks = Array.from({ length: 38 }, (_, index) => ({
     id: `custom_check_${index}`,

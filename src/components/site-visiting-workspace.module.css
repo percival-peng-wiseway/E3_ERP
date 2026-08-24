@@ -39,6 +39,7 @@
 
 .primaryButton,
 .secondaryButton,
+.approveButton,
 .startButton,
 .completeButton,
 .mapButton {
@@ -63,12 +64,28 @@
 
 .primaryButton:hover:not(:disabled) { background: #1c6fae; }
 .primaryButton:disabled { cursor: not-allowed; opacity: .54; }
+.primaryButton:focus-visible,
+.secondaryButton:focus-visible,
+.approveButton:focus-visible,
+.startButton:focus-visible,
+.completeButton:focus-visible,
+.mapButton:focus-visible { outline: 3px solid rgba(65, 145, 198, .34); outline-offset: 2px; }
+.secondaryButton:disabled,
+.approveButton:disabled,
+.startButton:disabled,
+.completeButton:disabled { cursor: not-allowed; opacity: .54; }
 
 .secondaryButton,
 .mapButton {
   color: #4d5e69;
   background: #fff;
   border: 1px solid #d7e0e5;
+}
+
+.approveButton {
+  color: #fff;
+  background: #2478ae;
+  border: 1px solid #2478ae;
 }
 
 .startButton {
@@ -112,10 +129,11 @@
 
 .metrics {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   margin-top: 21px;
+  gap: 1px;
   overflow: hidden;
-  background: #fff;
+  background: #edf1f3;
   border: 1px solid var(--visit-border);
   border-radius: 12px;
   box-shadow: 0 2px 8px rgba(32, 51, 64, .03);
@@ -127,16 +145,16 @@
   align-items: center;
   padding: 16px 19px;
   gap: 12px;
-  border-right: 1px solid #edf1f3;
+  background: #fff;
 }
 
-.metric:last-child { border-right: 0; }
 .metric > span { display: grid; width: 38px; height: 38px; flex: 0 0 auto; place-items: center; border-radius: 10px; }
 .metric small, .metric strong { display: block; }
 .metric small { color: #77858f; font-size: 12px; }
 .metric strong { margin-top: 2px; color: #293740; font-size: 24px; line-height: 1.1; }
 .metric_blue { color: #2779b6; background: #eaf5fd; }
 .metric_amber { color: #a16d19; background: #fff3dc; }
+.metric_teal { color: #16736a; background: #e7f6f3; }
 .metric_violet { color: #6b56bf; background: #f0edff; }
 .metric_green { color: #177a5e; background: #e7f6f0; }
 
@@ -193,6 +211,7 @@
 }
 
 .visitCard {
+  position: relative;
   min-width: 0;
   padding: 12px;
   overflow: hidden;
@@ -203,9 +222,12 @@
   transition: border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
 }
 
-.visitCard:hover { border-color: #b7d3e6; box-shadow: 0 7px 22px rgba(28, 48, 61, .075); transform: translateY(-1px); }
+.visitCard:hover,
+.visitCard:focus-within { border-color: #9fc6df; box-shadow: 0 7px 22px rgba(28, 48, 61, .085); transform: translateY(-1px); }
 .cardTop { display: flex; min-height: 24px; align-items: center; justify-content: space-between; gap: 8px; }
 .statusBadge, .todayBadge { display: inline-flex; min-height: 24px; align-items: center; padding: 0 9px; border-radius: 999px; font-size: 11px; font-weight: 750; }
+.status_pending_approval { color: #955b19; background: #fff0d6; }
+.status_approved { color: #226e9e; background: #e7f3fb; }
 .status_scheduled { color: #8b611b; background: #fff3da; }
 .status_in_progress { color: #6650b6; background: #efebff; }
 .status_completed { color: #126e54; background: #e4f5ee; }
@@ -219,11 +241,70 @@
 .cardMeta { display: flex; flex-wrap: wrap; margin-top: 8px; gap: 5px 12px; color: #536670; font-size: 12px; }
 .cardMeta span, .cardProgress span { display: inline-flex; min-width: 0; align-items: center; gap: 5px; overflow-wrap: anywhere; }
 .cardMeta svg { color: #8797a1; }
-.cardFooter { display: flex; min-width: 0; min-height: 39px; align-items: stretch; margin: 10px -12px -12px; padding-left: 12px; gap: 6px; background: #f8fafb; border-top: 1px solid #edf1f3; }
+.cardFooter { display: flex; min-width: 0; min-height: 44px; align-items: stretch; margin: 10px -12px -12px; padding: 6px 12px; gap: 6px; background: #f8fafb; border-top: 1px solid #edf1f3; }
 .cardProgress { display: flex; min-width: 0; flex: 1; align-items: center; justify-content: flex-start; gap: 6px 12px; color: #70808a; font-size: 12px; }
-.openButton { display: inline-flex; min-width: 94px; min-height: 39px; flex: 0 0 auto; align-items: center; justify-content: center; padding: 0 10px; gap: 4px; color: #226fa9; background: transparent; border: 0; border-left: 1px solid #e6ecef; font-size: 13px; font-weight: 720; cursor: pointer; }
-.openButton:hover { background: #eef6fb; }
-.openButton:focus-visible { outline: 2px solid #77b2dc; outline-offset: -3px; }
+.cardReason { max-width: 58%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cardOpenButton { position: absolute; inset: 0; z-index: 3; width: 100%; height: 100%; padding: 0; background: transparent; border: 0; border-radius: 10px; cursor: pointer; }
+.cardOpenButton:focus-visible { outline: 3px solid #4f9bd0; outline-offset: -3px; }
+
+.workflowProgress {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin: 0 0 13px;
+  padding: 12px 14px;
+  gap: 0;
+  list-style: none;
+  background: #fff;
+  border: 1px solid var(--visit-border);
+  border-radius: 10px;
+}
+
+.workflowProgress li {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: #8a969e;
+  font-size: 11px;
+  font-weight: 690;
+}
+
+.workflowProgress li:not(:last-child)::after {
+  position: absolute;
+  top: 50%;
+  right: -28%;
+  width: 56%;
+  height: 2px;
+  content: "";
+  background: #dfe6ea;
+  transform: translateY(-50%);
+}
+
+.workflowProgress i {
+  z-index: 1;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  place-items: center;
+  color: #7d8b94;
+  background: #edf1f3;
+  border-radius: 999px;
+  font-size: 10px;
+  font-style: normal;
+}
+
+.workflowProgress .workflowComplete { color: #31745f; }
+.workflowProgress .workflowComplete i { color: #fff; background: #52a287; }
+.workflowProgress .workflowComplete:not(:last-child)::after { background: #9dcdbc; }
+.workflowProgress .workflowCurrent { color: #256d9d; }
+.workflowProgress .workflowCurrent i { color: #fff; background: #3187bf; box-shadow: 0 0 0 3px #e5f2fa; }
+.compactWorkflow { margin: 8px 0 6px; padding: 0; background: transparent; border: 0; border-radius: 0; }
+.compactWorkflow li { flex-direction: column; gap: 2px; font-size: 9px; line-height: 1.1; }
+.compactWorkflow li:not(:last-child)::after { top: 9px; right: -26%; width: 52%; }
+.compactWorkflow i { width: 18px; height: 18px; font-size: 8px; }
 
 .loadingState,
 .emptyState {
@@ -284,14 +365,17 @@
 .formBody { display: grid; min-height: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 20px; gap: 15px; overflow-y: auto; }
 .formBody label,
 .fieldGrid label,
+.scheduleForm label,
 .checkItem label { display: flex; min-width: 0; flex-direction: column; gap: 6px; }
 .formBody label > span,
 .fieldGrid label > span,
+.scheduleForm label > span,
 .checkItem label > span { color: #53636e; font-size: 12px; font-weight: 680; }
 .formBody input,
 .formBody textarea,
 .fieldGrid input,
 .fieldGrid textarea,
+.scheduleForm input,
 .checkItem textarea,
 .notesArea {
   width: 100%;
@@ -309,8 +393,13 @@
 .formBody textarea:focus,
 .fieldGrid input:focus,
 .fieldGrid textarea:focus,
+.scheduleForm input:focus,
 .checkItem textarea:focus,
 .notesArea:focus { border-color: #77b2dc; box-shadow: 0 0 0 3px rgba(48, 143, 210, .1); }
+.fieldGrid input[readonly],
+.fieldGrid textarea[readonly],
+.checkItem textarea[readonly],
+.notesArea[readonly] { color: #52636d; background: #f4f6f7; border-color: #e1e6e9; cursor: default; }
 .fullField { grid-column: 1 / -1; }
 .sheetFooter { display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; padding: 13px 19px calc(13px + env(safe-area-inset-bottom)); gap: 9px; background: #fff; border-top: 1px solid var(--visit-border); }
 
@@ -321,7 +410,7 @@
 .detailBody { min-height: 0; padding: 17px; overflow-y: auto; overscroll-behavior: contain; }
 .visitActions { display: flex; align-items: center; margin-bottom: 13px; gap: 8px; }
 .mapButton { margin-left: auto; }
-.detailGrid { display: grid; grid-template-columns: minmax(280px, .82fr) minmax(420px, 1.18fr); gap: 13px; }
+.detailGrid { display: grid; grid-template-columns: minmax(360px, 1.12fr) minmax(300px, .88fr); gap: 13px; }
 .panel { min-width: 0; margin-bottom: 13px; padding: 17px; background: #fff; border: 1px solid var(--visit-border); border-radius: 11px; box-shadow: 0 2px 7px rgba(31, 50, 63, .025); }
 .panelTitle { display: flex; align-items: center; margin-bottom: 15px; gap: 10px; }
 .panelTitle > span { display: grid; width: 36px; height: 36px; flex: 0 0 auto; place-items: center; color: #2779b5; background: #ebf5fc; border-radius: 9px; }
@@ -330,12 +419,27 @@
 .panelTitle p { margin-top: 2px; color: #83909a; font-size: 11px; }
 .fieldGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 
+.stagePanel,
+.schedulePanel { align-self: start; }
+.stageCallout { padding: 15px; color: #58707f; background: #f4f8fa; border: 1px solid #dce8ee; border-radius: 9px; }
+.stageCallout strong { display: block; color: #324b5a; font-size: 14px; }
+.stageCallout p { margin: 5px 0 0; font-size: 12px; line-height: 1.55; }
+.scheduleForm { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.scheduleForm .primaryButton { grid-column: 1 / -1; justify-self: start; margin-top: 2px; }
+.scheduleSummary { display: grid; margin: 0; gap: 0; }
+.scheduleSummary div { display: grid; grid-template-columns: minmax(90px, .6fr) minmax(0, 1.4fr); padding: 10px 0; gap: 10px; border-bottom: 1px solid #edf1f3; }
+.scheduleSummary div:first-child { padding-top: 0; }
+.scheduleSummary div:last-child { padding-bottom: 0; border-bottom: 0; }
+.scheduleSummary dt { color: #7b8992; font-size: 12px; }
+.scheduleSummary dd { margin: 0; color: #344650; font-size: 13px; font-weight: 680; overflow-wrap: anywhere; }
+
 .checklist { display: grid; gap: 11px; }
 .checkItem { padding: 14px; background: #fafbfc; border: 1px solid #e7ecef; border-radius: 10px; }
 .checkItem h4 { margin: 0; color: #32434e; font-size: 14px; }
 .checkItem small { display: block; margin-top: 2px; color: #8a969e; font-size: 11px; }
 .answerGrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 11px 0; gap: 5px; }
 .answerButton { display: inline-flex; min-height: 39px; align-items: center; justify-content: center; padding: 0 7px; gap: 4px; color: #667580; background: #fff; border: 1px solid #dbe3e7; border-radius: 7px; font-size: 11px; font-weight: 690; cursor: pointer; }
+.answerButton:disabled { cursor: default; opacity: .82; }
 .answer_not_checked { color: #4f5f69; background: #edf1f3; border-color: #cfd8dd; }
 .answer_yes { color: #a34e25; background: #fff0e7; border-color: #f1c4ac; }
 .answer_no { color: #176d55; background: #e9f7f1; border-color: #bfe2d5; }
@@ -373,11 +477,13 @@
 .dangerZone button { display: inline-flex; min-height: 39px; align-items: center; padding: 0 11px; gap: 6px; color: #a04f48; background: transparent; border: 1px solid #e3c8c5; border-radius: 8px; cursor: pointer; }
 .stickyFooter { display: flex; min-height: 68px; flex: 0 0 auto; align-items: center; justify-content: space-between; padding: 11px 17px calc(11px + env(safe-area-inset-bottom)); gap: 14px; background: #fff; border-top: 1px solid var(--visit-border); box-shadow: 0 -5px 18px rgba(30, 48, 61, .05); }
 .stickyFooter > div { color: #7a8790; font-size: 12px; }
+.readOnlyLabel { color: #87949c; font-size: 12px; font-weight: 650; }
 .spinner { animation: spin .8s linear infinite; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 1000px) {
+  .metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .detailGrid { grid-template-columns: 1fr; }
   .photoGrid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
@@ -387,16 +493,13 @@
   .hero .primaryButton { width: 100%; }
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .metric { min-height: 78px; padding: 13px; }
-  .metric:nth-child(2) { border-right: 0; }
-  .metric:nth-child(-n+2) { border-bottom: 1px solid #edf1f3; }
   .toolbar { align-items: stretch; flex-direction: column; }
   .searchBox { width: 100%; }
   .filters { width: 100%; }
   .filters button { flex: 0 0 auto; min-height: 39px; }
   .visitGrid { grid-template-columns: 1fr; }
   .visitCard { padding: 13px; }
-  .cardFooter { min-height: 44px; margin: 11px -13px -13px; padding-left: 13px; }
-  .openButton { min-height: 44px; padding-inline: 13px; }
+  .cardFooter { min-height: 44px; margin: 11px -13px -13px; padding-inline: 13px; }
   .overlay { align-items: stretch; padding: 0; background: #f5f7f8; }
   .sheet { width: 100%; max-height: 100dvh; border: 0; border-radius: 0; box-shadow: none; }
   .sheetHeader { min-height: 70px; padding: max(10px, env(safe-area-inset-top)) 14px 10px; }
@@ -405,6 +508,8 @@
   .sheetFooter { justify-content: stretch; padding-inline: 14px; }
   .sheetFooter button { flex: 1; }
   .detailBody { padding: 12px; }
+  .workflowProgress { padding-inline: 9px; }
+  .workflowProgress li { gap: 4px; font-size: 10px; }
   .visitActions { display: grid; grid-template-columns: 1fr 1fr; }
   .visitActions > button:first-child:last-of-type { grid-column: 1; }
   .visitActions .mapButton { width: 100%; margin: 0; }
@@ -416,12 +521,21 @@
 
 @media (max-width: 480px) {
   .formBody,
-  .fieldGrid { grid-template-columns: 1fr; }
+  .fieldGrid,
+  .scheduleForm { grid-template-columns: 1fr; }
   .formBody .fullField,
-  .fieldGrid .fullField { grid-column: auto; }
+  .fieldGrid .fullField,
+  .scheduleForm .fullField,
+  .scheduleForm .primaryButton { grid-column: auto; }
+  .scheduleForm .primaryButton { width: 100%; }
   .cardMeta { display: grid; grid-template-columns: 1fr 1fr; }
   .cardMeta span:last-child:nth-child(3) { grid-column: 1 / -1; }
   .cardProgress { align-items: flex-start; flex-direction: column; }
+  .cardReason { max-width: 100%; }
+  .compactWorkflow li { font-size: 8px; }
+  .compactWorkflow li span { overflow: hidden; max-width: 100%; text-overflow: ellipsis; white-space: nowrap; }
+  .workflowProgress:not(.compactWorkflow) li { flex-direction: column; gap: 3px; text-align: center; }
+  .workflowProgress:not(.compactWorkflow) li:not(:last-child)::after { top: 11px; right: -24%; width: 48%; }
   .answerGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .answerButton { min-height: 44px; }
   .photoActions { grid-template-columns: 1fr; }
@@ -431,6 +545,7 @@
   .dangerZone button { justify-content: center; }
   .stickyFooter > div { display: none; }
   .stickyFooter .primaryButton { width: 100%; }
+  .readOnlyLabel { width: 100%; text-align: center; }
 }
 
 @media (prefers-reduced-motion: reduce) {

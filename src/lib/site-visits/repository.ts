@@ -10,8 +10,10 @@ import { SITE_VISIT_PHOTO_TYPES, SITE_VISIT_STATUSES } from "./types.ts";
 import * as siteVisitValidation from "./validation.ts";
 import type {
   SiteVisit,
+  SiteVisitActionInput,
+  SiteVisitActor,
+  SiteVisitCancellableStatus,
   SiteVisitCreateInput,
-  SiteVisitPatchInput,
   SiteVisitPhoto,
   SiteVisitPhotoType,
   SiteVisitPhotoUpload,
@@ -29,6 +31,8 @@ const {
   initialSiteVisitChecklist,
   normalizeStoredSiteVisitChecklist,
   parseSiteVisitCreate,
+  siteVisitDate,
+  siteVisitTime,
 } = siteVisitValidation;
 
 type StoredSiteVisitPhoto = Omit<SiteVisitPhoto, "url"> & {
@@ -79,6 +83,7 @@ const TOKEN_PATTERN = /^[A-Za-z0-9_-]{32}$/;
 const STORED_PHOTO_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(?:jpg|png|webp)$/i;
 const EXACT_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const MAX_PHOTOS_PER_VISIT = 100;
+const UNSAFE_CONTROLS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
 let mutationQueue: Promise<void> = Promise.resolve();
 
 function withMutation<T>(work: () => Promise<T>) {
@@ -113,6 +118,25 @@ function exactTimestamp(value: unknown): value is string {
   if (typeof value !== "string" || !EXACT_TIMESTAMP.test(value)) return false;
   const parsed = new Date(value);
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value;
+}
+
+function storedText(value: unknown, maximum: number, required: boolean) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  if ((required && !normalized)
+    || normalized.length > maximum
+    || UNSAFE_CONTROLS.test(normalized)) return null;
+  return normalized;
+}
+
+function optionalStoredTimestamp(value: unknown) {
+  if (value === undefined || value === null) return null;
+  return exactTimestamp(value) ? value : undefined;
+}
+
+function optionalStoredActor(value: unknown) {
+  if (value === undefined || value === null) return null;
+  return storedText(value, 120, true) || undefined;
 }
 
 function safeOriginalName(value: unknown) {
@@ -156,19 +180,71 @@ function normalizeStoredVisit(value: unknown): StoredSiteVisit {
     throw new SiteVisitRepositoryError("Site Visiting data is invalid.", 500, "invalid_storage");
   }
   const source = value as Record<string, unknown>;
-  const input = parseSiteVisitCreate({
-    projectName: source.projectName,
-    address: source.address,
-    contact: source.contact,
-    scheduledDate: source.scheduledDate,
-    scheduledTime: source.scheduledTime,
-    assignee: source.assignee,
-    notes: source.notes,
-  });
+  const projectName = storedText(source.projectName, 160, true);
+  const address = storedText(source.address, 300, true);
+  const contact = storedText(source.contact ?? "", 240, false);
+  const reason = storedText(source.reason ?? "", 2_000, false);
+  const assignee = storedText(source.assignee ?? "", 120, false);
+  const notes = storedText(source.notes ?? "", 10_000, false);
+
+  const scheduledDate = source.scheduledDate === undefined || source.scheduledDate === null
+    ? null
+    : siteVisitDate(source.scheduledDate) ? source.scheduledDate : undefined;
+  const scheduledTime = source.scheduledTime === undefined || source.scheduledTime === null
+    ? null
+    : siteVisitTime(source.scheduledTime) ? source.scheduledTime : undefined;
+  const requestedDate = siteVisitDate(source.requestedDate)
+    ? source.requestedDate
+    : scheduledDate;
+  const requestedTime = siteVisitTime(source.requestedTime)
+    ? source.requestedTime
+    : scheduledTime;
+
+  const approvedAt = optionalStoredTimestamp(source.approvedAt);
+  const approvedBy = optionalStoredActor(source.approvedBy);
+  const scheduledAt = optionalStoredTimestamp(source.scheduledAt);
+  const scheduledBy = optionalStoredActor(source.scheduledBy);
+  const status = typeof source.status === "string"
+    && SITE_VISIT_STATUSES.includes(source.status as SiteVisit["status"])
+    ? source.status as SiteVisit["status"]
+    : null;
+  let cancelledFrom: SiteVisitCancellableStatus | null = null;
+  if (status === "cancelled") {
+    const candidate = source.cancelledFrom ?? "scheduled";
+    if (typeof candidate !== "string"
+      || candidate === "cancelled"
+      || candidate === "completed"
+      || !SITE_VISIT_STATUSES.includes(candidate as SiteVisit["status"])) {
+      throw new SiteVisitRepositoryError("A stored site visit is invalid.", 500, "invalid_storage");
+    }
+    cancelledFrom = candidate as SiteVisitCancellableStatus;
+  } else if (source.cancelledFrom !== undefined && source.cancelledFrom !== null) {
+    throw new SiteVisitRepositoryError("A stored site visit is invalid.", 500, "invalid_storage");
+  }
+
   const checklist = normalizeStoredSiteVisitChecklist(source.checklist);
-  if (!input || !checklist
+  const scheduleIsPaired = (scheduledDate === null) === (scheduledTime === null);
+  const approvalAuditIsPaired = (approvedAt === null) === (approvedBy === null);
+  const schedulingAuditIsPaired = (scheduledAt === null) === (scheduledBy === null);
+  const effectiveStatus = status === "cancelled" ? cancelledFrom : status;
+  const statusNeedsSchedule = effectiveStatus === "scheduled"
+    || effectiveStatus === "in_progress"
+    || effectiveStatus === "completed";
+  const statusMustBeUnscheduled = effectiveStatus === "pending_approval" || effectiveStatus === "approved";
+  const statusNeedsApprovalAudit = effectiveStatus === "approved";
+  const newRequestIsComplete = effectiveStatus !== "pending_approval" && effectiveStatus !== "approved"
+    || Boolean(contact && reason);
+  if (!projectName || !address || contact === null || reason === null || assignee === null || notes === null
+    || !requestedDate || !requestedTime
+    || scheduledDate === undefined || scheduledTime === undefined || !scheduleIsPaired
+    || approvedAt === undefined || approvedBy === undefined || !approvalAuditIsPaired
+    || scheduledAt === undefined || scheduledBy === undefined || !schedulingAuditIsPaired
+    || !status || !newRequestIsComplete
+    || (statusNeedsSchedule && (!scheduledDate || !scheduledTime))
+    || (statusMustBeUnscheduled && (scheduledDate || scheduledTime))
+    || (statusNeedsApprovalAudit && (!approvedAt || !approvedBy))
+    || !checklist
     || typeof source.id !== "string" || !ID_PATTERN.test(source.id)
-    || typeof source.status !== "string" || !SITE_VISIT_STATUSES.includes(source.status as SiteVisit["status"])
     || !Array.isArray(source.photos) || source.photos.length > MAX_PHOTOS_PER_VISIT
     || !exactTimestamp(source.createdAt) || !exactTimestamp(source.updatedAt)) {
     throw new SiteVisitRepositoryError("A stored site visit is invalid.", 500, "invalid_storage");
@@ -179,9 +255,23 @@ function normalizeStoredVisit(value: unknown): StoredSiteVisit {
   }
   return {
     id: source.id,
-    ...input,
-    status: source.status as SiteVisit["status"],
+    projectName,
+    address,
+    contact,
+    reason,
+    requestedDate,
+    requestedTime,
+    scheduledDate,
+    scheduledTime,
+    assignee,
+    status,
+    approvedAt,
+    approvedBy,
+    scheduledAt,
+    scheduledBy,
+    cancelledFrom,
     checklist,
+    notes,
     photos,
     createdAt: source.createdAt,
     updatedAt: source.updatedAt,
@@ -262,10 +352,45 @@ function nextTimestamp(previous: string) {
 }
 
 function siteVisitSort(left: StoredSiteVisit, right: StoredSiteVisit) {
-  return left.scheduledDate.localeCompare(right.scheduledDate)
-    || left.scheduledTime.localeCompare(right.scheduledTime)
+  const leftDate = left.scheduledDate ?? left.requestedDate;
+  const rightDate = right.scheduledDate ?? right.requestedDate;
+  const leftTime = left.scheduledTime ?? left.requestedTime;
+  const rightTime = right.scheduledTime ?? right.requestedTime;
+  return leftDate.localeCompare(rightDate)
+    || leftTime.localeCompare(rightTime)
     || left.projectName.localeCompare(right.projectName)
     || left.id.localeCompare(right.id);
+}
+
+function pmOrAdmin(actor: SiteVisitActor) {
+  return actor.role === "pm" || actor.role === "admin";
+}
+
+function assertSiteVisitActionRole(input: SiteVisitActionInput, actor: SiteVisitActor) {
+  if (input.action === "approve" && actor.role !== "admin") {
+    throw new SiteVisitRepositoryError("Only an Administrator can approve site visits.", 403, "role_forbidden");
+  }
+  if ((input.action === "schedule"
+      || input.action === "reopen"
+      || input.action === "cancel"
+      || input.action === "restore")
+    && !pmOrAdmin(actor)) {
+    throw new SiteVisitRepositoryError(
+      "Only a Project Manager or Administrator can perform this site visit action.",
+      403,
+      "role_forbidden",
+    );
+  }
+}
+
+function invalidTransition(message: string): never {
+  throw new SiteVisitRepositoryError(message, 409, "invalid_transition");
+}
+
+function assertSiteWorkCanChange(visit: StoredSiteVisit) {
+  if (visit.status !== "scheduled" && visit.status !== "in_progress") {
+    invalidTransition("Site visit work can only be changed after the visit is scheduled and before it is completed.");
+  }
 }
 
 function visitPhotosDirectory(visitId: string) {
@@ -371,8 +496,17 @@ export function createSiteVisit(input: SiteVisitCreateInput): Promise<SiteVisit>
     const visit: StoredSiteVisit = {
       id: randomUUID(),
       ...normalized,
-      status: "scheduled",
+      scheduledDate: null,
+      scheduledTime: null,
+      assignee: "",
+      status: "pending_approval",
+      approvedAt: null,
+      approvedBy: null,
+      scheduledAt: null,
+      scheduledBy: null,
+      cancelledFrom: null,
       checklist: initialSiteVisitChecklist(),
+      notes: "",
       photos: [],
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -383,20 +517,111 @@ export function createSiteVisit(input: SiteVisitCreateInput): Promise<SiteVisit>
   });
 }
 
-export function updateSiteVisit(id: string, patch: SiteVisitPatchInput): Promise<SiteVisit> {
+export function transitionSiteVisit(
+  id: string,
+  input: SiteVisitActionInput,
+  actor: SiteVisitActor,
+): Promise<SiteVisit> {
   return withMutation(async () => {
     if (!ID_PATTERN.test(id)) throw new SiteVisitRepositoryError("The site visit ID is invalid.", 400, "invalid_id");
+    const actorName = storedText(actor.name, 120, true);
+    if (!actorName || !["admin", "pm", "sales", "specialist"].includes(actor.role)) {
+      throw new SiteVisitRepositoryError("The site visit actor is invalid.", 400, "invalid_actor");
+    }
+    assertSiteVisitActionRole(input, actor);
     const storedDocument = await readStoredVisitDocument();
     const visits = storedDocument.visits;
     const index = visits.findIndex((candidate) => candidate.id === id);
     if (index < 0) throw new SiteVisitRepositoryError("Site visit not found.", 404, "not_found");
     const current = visits[index];
+    if (current.updatedAt !== input.expectedUpdatedAt) {
+      throw new SiteVisitRepositoryError(
+        "This site visit changed after you opened it. Refresh and try again.",
+        409,
+        "stale_visit",
+      );
+    }
+    const timestamp = nextTimestamp(current.updatedAt);
     const updated: StoredSiteVisit = {
       ...current,
-      ...patch,
-      checklist: patch.checklist?.map((item) => ({ ...item })) ?? current.checklist,
-      updatedAt: nextTimestamp(current.updatedAt),
+      updatedAt: timestamp,
     };
+
+    switch (input.action) {
+      case "update_request":
+        if (current.status !== "pending_approval") {
+          invalidTransition("The request can only be changed while it is awaiting approval.");
+        }
+        Object.assign(updated, {
+          projectName: input.projectName,
+          address: input.address,
+          contact: input.contact,
+          reason: input.reason,
+          requestedDate: input.requestedDate,
+          requestedTime: input.requestedTime,
+        });
+        break;
+      case "approve":
+        if (current.status !== "pending_approval") {
+          invalidTransition("Only a pending site visit request can be approved.");
+        }
+        updated.status = "approved";
+        updated.approvedAt = timestamp;
+        updated.approvedBy = actorName;
+        break;
+      case "schedule":
+        if (current.status !== "approved" && current.status !== "scheduled") {
+          invalidTransition("Approve the site visit request before scheduling it.");
+        }
+        updated.status = "scheduled";
+        updated.scheduledDate = input.scheduledDate;
+        updated.scheduledTime = input.scheduledTime;
+        updated.assignee = input.assignee;
+        updated.scheduledAt = timestamp;
+        updated.scheduledBy = actorName;
+        break;
+      case "start":
+        if (current.status !== "scheduled") {
+          invalidTransition("Only a scheduled site visit can be started.");
+        }
+        updated.status = "in_progress";
+        break;
+      case "save_visit":
+        assertSiteWorkCanChange(current);
+        updated.projectName = input.projectName;
+        updated.address = input.address;
+        updated.contact = input.contact;
+        updated.checklist = input.checklist.map((item) => ({ ...item }));
+        updated.notes = input.notes;
+        break;
+      case "complete":
+        if (current.status !== "in_progress") {
+          invalidTransition("Only a site visit in progress can be completed.");
+        }
+        updated.status = "completed";
+        break;
+      case "reopen":
+        if (current.status !== "completed") {
+          invalidTransition("Only a completed site visit can be reopened.");
+        }
+        updated.status = "in_progress";
+        break;
+      case "cancel":
+        if (current.status === "cancelled" || current.status === "completed") {
+          invalidTransition("This site visit cannot be cancelled from its current stage.");
+        }
+        updated.cancelledFrom = current.status;
+        updated.status = "cancelled";
+        break;
+      case "restore":
+        if (current.status !== "cancelled" || !current.cancelledFrom) {
+          invalidTransition("Only a cancelled site visit can be restored.");
+        }
+        updated.status = current.cancelledFrom;
+        updated.cancelledFrom = null;
+        break;
+    }
+
     visits[index] = normalizeStoredVisit(updated);
     await writeStoredVisits(visits, storedDocument.version);
     return publicVisit(visits[index]);
@@ -431,6 +656,7 @@ export function addSiteVisitPhotos(
     const index = visits.findIndex((candidate) => candidate.id === id);
     if (index < 0) throw new SiteVisitRepositoryError("Site visit not found.", 404, "not_found");
     const visit = visits[index];
+    assertSiteWorkCanChange(visit);
     if (visit.photos.length + uploads.length > MAX_PHOTOS_PER_VISIT) {
       throw new SiteVisitRepositoryError("A site visit can store up to 100 photos.", 409, "photo_limit_reached");
     }
@@ -475,6 +701,7 @@ export function deleteSiteVisitPhoto(id: string, photoId: string): Promise<SiteV
     const visitIndex = visits.findIndex((candidate) => candidate.id === id);
     if (visitIndex < 0) throw new SiteVisitRepositoryError("Site visit not found.", 404, "not_found");
     const visit = visits[visitIndex];
+    assertSiteWorkCanChange(visit);
     const photoIndex = visit.photos.findIndex((candidate) => candidate.id === photoId);
     if (photoIndex < 0) throw new SiteVisitRepositoryError("Site visit photo not found.", 404, "photo_not_found");
     const [deleted] = visit.photos.splice(photoIndex, 1);

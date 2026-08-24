@@ -1,4 +1,6 @@
 export const SITE_VISIT_STATUSES = [
+  "pending_approval",
+  "approved",
   "scheduled",
   "in_progress",
   "completed",
@@ -6,6 +8,23 @@ export const SITE_VISIT_STATUSES = [
 ] as const;
 
 export type SiteVisitStatus = (typeof SITE_VISIT_STATUSES)[number];
+
+export type SiteVisitActiveStatus = Exclude<SiteVisitStatus, "cancelled">;
+export type SiteVisitCancellableStatus = Exclude<SiteVisitActiveStatus, "completed">;
+
+export const SITE_VISIT_ACTIONS = [
+  "update_request",
+  "approve",
+  "schedule",
+  "start",
+  "save_visit",
+  "complete",
+  "reopen",
+  "cancel",
+  "restore",
+] as const;
+
+export type SiteVisitAction = (typeof SITE_VISIT_ACTIONS)[number];
 
 export const SITE_VISIT_CHECK_ANSWERS = [
   "not_checked",
@@ -41,10 +60,18 @@ export interface SiteVisit {
   projectName: string;
   address: string;
   contact: string;
-  scheduledDate: string;
-  scheduledTime: string;
+  reason: string;
+  requestedDate: string;
+  requestedTime: string;
+  scheduledDate: string | null;
+  scheduledTime: string | null;
   assignee: string;
   status: SiteVisitStatus;
+  approvedAt: string | null;
+  approvedBy: string | null;
+  scheduledAt: string | null;
+  scheduledBy: string | null;
+  cancelledFrom: SiteVisitCancellableStatus | null;
   checklist: SiteVisitChecklistItem[];
   notes: string;
   photos: SiteVisitPhoto[];
@@ -54,21 +81,48 @@ export interface SiteVisit {
 
 export type SiteVisitCreateInput = Pick<
   SiteVisit,
-  "projectName" | "address" | "contact" | "scheduledDate" | "scheduledTime" | "assignee" | "notes"
+  "projectName" | "address" | "contact" | "reason" | "requestedDate" | "requestedTime"
 >;
 
-export type SiteVisitPatchInput = Partial<Pick<
-  SiteVisit,
-  | "projectName"
-  | "address"
-  | "contact"
-  | "scheduledDate"
-  | "scheduledTime"
-  | "assignee"
-  | "status"
-  | "checklist"
-  | "notes"
->>;
+type VersionedSiteVisitAction = {
+  expectedUpdatedAt: string;
+};
+
+export type SiteVisitActionInput =
+  | (VersionedSiteVisitAction & {
+    action: "update_request";
+    projectName: string;
+    address: string;
+    contact: string;
+    reason: string;
+    requestedDate: string;
+    requestedTime: string;
+  })
+  | (VersionedSiteVisitAction & { action: "approve" })
+  | (VersionedSiteVisitAction & {
+    action: "schedule";
+    scheduledDate: string;
+    scheduledTime: string;
+    assignee: string;
+  })
+  | (VersionedSiteVisitAction & { action: "start" })
+  | (VersionedSiteVisitAction & {
+    action: "save_visit";
+    projectName: string;
+    address: string;
+    contact: string;
+    checklist: SiteVisitChecklistItem[];
+    notes: string;
+  })
+  | (VersionedSiteVisitAction & { action: "complete" })
+  | (VersionedSiteVisitAction & { action: "reopen" })
+  | (VersionedSiteVisitAction & { action: "cancel" })
+  | (VersionedSiteVisitAction & { action: "restore" });
+
+export type SiteVisitActor = {
+  role: "admin" | "pm" | "sales" | "specialist";
+  name: string;
+};
 
 export interface SiteVisitPhotoUpload {
   bytes: Uint8Array;

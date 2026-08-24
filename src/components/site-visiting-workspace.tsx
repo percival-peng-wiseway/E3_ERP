@@ -5,14 +5,15 @@ import {
   Camera,
   Check,
   CheckCircle2,
-  ChevronRight,
   CircleAlert,
   ClipboardCheck,
   Clock3,
+  FileText,
   ImagePlus,
   LoaderCircle,
   MapPin,
   Navigation,
+  Phone,
   Plus,
   Save,
   Search,
@@ -33,6 +34,7 @@ import {
 import type { ErpRole } from "@/lib/auth/types";
 import type {
   SiteVisit,
+  SiteVisitActionInput,
   SiteVisitCheckAnswer,
   SiteVisitChecklistItem,
   SiteVisitPhoto,
@@ -43,11 +45,35 @@ import styles from "./site-visiting-workspace.module.css";
 type StatusFilter = "all" | SiteVisitStatus;
 
 const STATUS_LABELS: Record<SiteVisitStatus, string> = {
+  pending_approval: "Awaiting approval",
+  approved: "Awaiting schedule",
   scheduled: "Scheduled",
   in_progress: "In progress",
   completed: "Completed",
   cancelled: "Cancelled",
 };
+
+const STATUS_ORDER: Record<SiteVisitStatus, number> = {
+  pending_approval: 0,
+  approved: 1,
+  scheduled: 2,
+  in_progress: 3,
+  completed: 4,
+  cancelled: 5,
+};
+
+const WORKFLOW_STAGES = [
+  { label: "Request", status: "pending_approval" },
+  { label: "Approved", status: "approved" },
+  { label: "Scheduled", status: "scheduled" },
+  { label: "Visit", status: "in_progress" },
+  { label: "Done", status: "completed" },
+] as const satisfies ReadonlyArray<{ label: string; status: SiteVisitStatus }>;
+
+type SiteVisitAction = SiteVisitActionInput["action"];
+type SimpleWorkflowAction = Exclude<SiteVisitAction, "update_request" | "schedule" | "save_visit">;
+type DetailDirtyKind = "request" | "visit" | null;
+type ScheduleDraft = { scheduledDate: string; scheduledTime: string; assignee: string };
 
 const ANSWER_OPTIONS: Array<{ value: SiteVisitCheckAnswer; label: string }> = [
   { value: "not_checked", label: "Not checked" },
@@ -97,7 +123,8 @@ function defaultSchedule() {
   };
 }
 
-function formatDate(value: string) {
+function formatDate(value: string | null) {
+  if (!value) return "Not scheduled";
   const date = new Date(`${value}T00:00:00`);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat("en-AU", {
@@ -108,7 +135,8 @@ function formatDate(value: string) {
   }).format(date);
 }
 
-function formatTime(value: string) {
+function formatTime(value: string | null) {
+  if (!value) return "Time pending";
   const [hours, minutes] = value.split(":").map(Number);
   const date = new Date(2000, 0, 1, hours, minutes);
   if (Number.isNaN(date.getTime())) return value;
@@ -116,7 +144,19 @@ function formatTime(value: string) {
 }
 
 function scheduleKey(visit: SiteVisit) {
-  return `${visit.scheduledDate}T${visit.scheduledTime}`;
+  return `${visit.scheduledDate || visit.requestedDate}T${visit.scheduledTime || visit.requestedTime}`;
+}
+
+function hasActualSchedule(visit: SiteVisit) {
+  return Boolean(visit.scheduledDate && visit.scheduledTime);
+}
+
+function visitScheduleDraft(visit: SiteVisit, fallback: ReturnType<typeof defaultSchedule>): ScheduleDraft {
+  return {
+    scheduledDate: visit.scheduledDate || visit.requestedDate || fallback.date,
+    scheduledTime: visit.scheduledTime || visit.requestedTime || fallback.time,
+    assignee: visit.assignee,
+  };
 }
 
 function mapsUrl(address: string) {
@@ -137,20 +177,6 @@ async function responseBody(response: Response) {
   }
 }
 
-function editableVisitPayload(visit: SiteVisit, status = visit.status) {
-  return {
-    projectName: visit.projectName,
-    address: visit.address,
-    contact: visit.contact,
-    scheduledDate: visit.scheduledDate,
-    scheduledTime: visit.scheduledTime,
-    assignee: visit.assignee,
-    notes: visit.notes,
-    checklist: visit.checklist,
-    status,
-  };
-}
-
 function retriedPhotoUrl(url: string, attempt: number) {
   if (!attempt) return url;
   return `${url}${url.includes("?") ? "&" : "?"}retry=${attempt}`;
@@ -159,10 +185,12 @@ function retriedPhotoUrl(url: string, attempt: number) {
 function SiteVisitPhotoCard({
   photo,
   busy,
+  editable,
   onDelete,
 }: {
   photo: SiteVisitPhoto;
   busy: boolean;
+  editable: boolean;
   onDelete: (photoId: string) => void;
 }) {
   const [attempt, setAttempt] = useState(0);
@@ -242,9 +270,11 @@ function SiteVisitPhotoCard({
       </div>
       <figcaption>
         <span>{photo.originalName}</span>
-        <button onClick={() => onDelete(photo.id)} disabled={busy} aria-label={`Delete ${photo.originalName}`}>
-          <Trash2 size={16} />
-        </button>
+        {editable ? (
+          <button type="button" onClick={() => onDelete(photo.id)} disabled={busy} aria-label={`Delete ${photo.originalName}`}>
+            <Trash2 size={16} />
+          </button>
+        ) : null}
       </figcaption>
     </figure>
   );
@@ -260,12 +290,20 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [detail, setDetail] = useState<SiteVisit | null>(null);
-  const [detailDirty, setDetailDirty] = useState(false);
+  const [detailDirtyKind, setDetailDirtyKind] = useState<DetailDirtyKind>(null);
   const suggestedSchedule = useMemo(defaultSchedule, []);
+  const [scheduleDraft, setScheduleDraft] = useState<ScheduleDraft>(() => ({
+    scheduledDate: suggestedSchedule.date,
+    scheduledTime: suggestedSchedule.time,
+    assignee: "",
+  }));
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
+  const detailCloseButtonRef = useRef<HTMLButtonElement>(null);
+  const detailTriggerRef = useRef<HTMLButtonElement | null>(null);
   const requestIdRef = useRef(0);
   const busyRef = useRef(false);
+  const detailDirty = detailDirtyKind !== null;
 
   useEffect(() => {
     busyRef.current = busy;
@@ -303,7 +341,8 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
       if (detail && detailDirty && !window.confirm("Discard the unsaved site visit changes?")) return;
       setCreateOpen(false);
       setDetail(null);
-      setDetailDirty(false);
+      setDetailDirtyKind(null);
+      window.requestAnimationFrame(() => detailTriggerRef.current?.focus());
     };
     document.addEventListener("keydown", onKeyDown);
     return () => {
@@ -313,56 +352,63 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
   }, [activeModal, detail, detailDirty]);
 
   useEffect(() => {
+    if (!detail) return;
+    window.requestAnimationFrame(() => detailCloseButtonRef.current?.focus());
+  }, [detail?.id]);
+
+  useEffect(() => {
     if (!notice) return;
     const timer = window.setTimeout(() => setNotice(""), 4200);
     return () => window.clearTimeout(timer);
   }, [notice]);
 
   const counts = useMemo(() => ({
+    pendingApproval: visits.filter((visit) => visit.status === "pending_approval").length,
+    approved: visits.filter((visit) => visit.status === "approved").length,
     scheduled: visits.filter((visit) => visit.status === "scheduled").length,
     inProgress: visits.filter((visit) => visit.status === "in_progress").length,
     completed: visits.filter((visit) => visit.status === "completed").length,
-    today: visits.filter((visit) => visit.scheduledDate === localToday() && visit.status !== "cancelled").length,
   }), [visits]);
 
   const visibleVisits = useMemo(() => {
     const term = search.trim().toLocaleLowerCase("en-AU");
-    const statusOrder: Record<SiteVisitStatus, number> = {
-      in_progress: 0,
-      scheduled: 1,
-      completed: 2,
-      cancelled: 3,
-    };
     return visits
       .filter((visit) => statusFilter === "all" || visit.status === statusFilter)
       .filter((visit) => !term || [
         visit.projectName,
         visit.address,
         visit.contact,
+        visit.reason,
         visit.assignee,
         visit.notes,
       ].join(" ").toLocaleLowerCase("en-AU").includes(term))
       .slice()
-      .sort((left, right) => statusOrder[left.status] - statusOrder[right.status]
+      .sort((left, right) => STATUS_ORDER[left.status] - STATUS_ORDER[right.status]
         || scheduleKey(left).localeCompare(scheduleKey(right)));
   }, [search, statusFilter, visits]);
 
   function replaceVisit(visit: SiteVisit, updateDraft = true) {
     setVisits((current) => current.map((item) => item.id === visit.id ? visit : item));
-    if (updateDraft) setDetail(cloneVisit(visit));
+    if (updateDraft) {
+      setDetail(cloneVisit(visit));
+      setScheduleDraft(visitScheduleDraft(visit, suggestedSchedule));
+    }
   }
 
-  function openDetail(visit: SiteVisit) {
+  function openDetail(visit: SiteVisit, trigger: HTMLButtonElement) {
     setError("");
+    detailTriggerRef.current = trigger;
     setDetail(cloneVisit(visit));
-    setDetailDirty(false);
+    setScheduleDraft(visitScheduleDraft(visit, suggestedSchedule));
+    setDetailDirtyKind(null);
   }
 
   function closeDetail() {
     if (busy) return;
     if (detailDirty && !window.confirm("Discard the unsaved site visit changes?")) return;
     setDetail(null);
-    setDetailDirty(false);
+    setDetailDirtyKind(null);
+    window.requestAnimationFrame(() => detailTriggerRef.current?.focus());
   }
 
   async function createVisit(event: FormEvent<HTMLFormElement>) {
@@ -379,10 +425,9 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
           projectName: String(data.get("projectName") || ""),
           address: String(data.get("address") || ""),
           contact: String(data.get("contact") || ""),
-          scheduledDate: String(data.get("scheduledDate") || ""),
-          scheduledTime: String(data.get("scheduledTime") || ""),
-          assignee: String(data.get("assignee") || ""),
-          notes: String(data.get("notes") || ""),
+          reason: String(data.get("reason") || ""),
+          requestedDate: String(data.get("requestedDate") || ""),
+          requestedTime: String(data.get("requestedTime") || ""),
         }),
       });
       const body = await responseBody(response) as { data?: { visit?: SiteVisit } } | null;
@@ -393,8 +438,11 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
       setVisits((current) => [...current, visit]);
       setCreateOpen(false);
       form.reset();
-      setNotice(`${visit.projectName} was scheduled.`);
-      openDetail(visit);
+      setNotice(`${visit.projectName} was submitted for approval.`);
+      detailTriggerRef.current = null;
+      setDetail(cloneVisit(visit));
+      setScheduleDraft(visitScheduleDraft(visit, suggestedSchedule));
+      setDetailDirtyKind(null);
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : "Unable to create the site visit.");
     } finally {
@@ -402,11 +450,11 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
     }
   }
 
-  async function patchVisit(visit: SiteVisit, status = visit.status) {
+  async function patchVisitAction(visit: SiteVisit, input: SiteVisitActionInput) {
     const response = await fetch(`/api/site-visits/${encodeURIComponent(visit.id)}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(editableVisitPayload(visit, status)),
+      body: JSON.stringify(input),
     });
     const body = await responseBody(response) as { data?: { visit?: SiteVisit } } | null;
     if (!response.ok || !body?.data?.visit) {
@@ -415,15 +463,42 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
     return body.data.visit;
   }
 
+  async function persistDirtyDetail(source: SiteVisit) {
+    if (!detailDirtyKind) return source;
+    const input: SiteVisitActionInput = detailDirtyKind === "request"
+      ? {
+          action: "update_request",
+          expectedUpdatedAt: source.updatedAt,
+          projectName: source.projectName,
+          address: source.address,
+          contact: source.contact,
+          reason: source.reason,
+          requestedDate: source.requestedDate,
+          requestedTime: source.requestedTime,
+        }
+      : {
+          action: "save_visit",
+          expectedUpdatedAt: source.updatedAt,
+          projectName: source.projectName,
+          address: source.address,
+          contact: source.contact,
+          checklist: source.checklist,
+          notes: source.notes,
+        };
+    const saved = await patchVisitAction(source, input);
+    replaceVisit(saved);
+    setDetailDirtyKind(null);
+    return saved;
+  }
+
   async function saveDetail() {
-    if (!detail) return;
+    if (!detail || !detailDirtyKind) return;
     setBusy(true);
     setError("");
     try {
-      const saved = await patchVisit(detail);
-      replaceVisit(saved);
-      setDetailDirty(false);
-      setNotice("Site visit details saved.");
+      const savedKind = detailDirtyKind;
+      await persistDirtyDetail(detail);
+      setNotice(savedKind === "request" ? "Site visit request saved." : "Site visit details saved.");
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Unable to save the site visit.");
     } finally {
@@ -431,17 +506,45 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
     }
   }
 
-  async function changeStatus(status: SiteVisitStatus) {
+  async function runWorkflowAction(action: SimpleWorkflowAction, successMessage: string) {
     if (!detail) return;
     setBusy(true);
     setError("");
     try {
-      const saved = await patchVisit(detail, status);
+      const current = await persistDirtyDetail(detail);
+      const saved = await patchVisitAction(current, {
+        action,
+        expectedUpdatedAt: current.updatedAt,
+      } as SiteVisitActionInput);
       replaceVisit(saved);
-      setDetailDirty(false);
-      setNotice(`Site visit moved to ${STATUS_LABELS[status]}.`);
+      setDetailDirtyKind(null);
+      setNotice(successMessage);
     } catch (statusError) {
       setError(statusError instanceof Error ? statusError.message : "Unable to update the visit status.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function scheduleVisit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!detail || !scheduleDraft.scheduledDate || !scheduleDraft.scheduledTime || !scheduleDraft.assignee.trim()) return;
+    setBusy(true);
+    setError("");
+    try {
+      const current = await persistDirtyDetail(detail);
+      const saved = await patchVisitAction(current, {
+        action: "schedule",
+        expectedUpdatedAt: current.updatedAt,
+        scheduledDate: scheduleDraft.scheduledDate,
+        scheduledTime: scheduleDraft.scheduledTime,
+        assignee: scheduleDraft.assignee,
+      });
+      replaceVisit(saved);
+      setDetailDirtyKind(null);
+      setNotice(current.status === "approved" ? "Site visit scheduled." : "Site visit schedule updated.");
+    } catch (scheduleError) {
+      setError(scheduleError instanceof Error ? scheduleError.message : "Unable to schedule the site visit.");
     } finally {
       setBusy(false);
     }
@@ -457,7 +560,7 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
       if (!response.ok) throw new Error(apiError(body, "Unable to delete the site visit."));
       setVisits((current) => current.filter((visit) => visit.id !== detail.id));
       setDetail(null);
-      setDetailDirty(false);
+      setDetailDirtyKind(null);
       setNotice("Site visit deleted.");
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : "Unable to delete the site visit.");
@@ -466,9 +569,9 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
     }
   }
 
-  function updateDetail(patch: Partial<SiteVisit>) {
+  function updateDetail(patch: Partial<SiteVisit>, kind: Exclude<DetailDirtyKind, null>) {
     setDetail((current) => current ? { ...current, ...patch } : current);
-    setDetailDirty(true);
+    setDetailDirtyKind(kind);
   }
 
   function updateCheck(id: string, patch: Partial<SiteVisitChecklistItem>) {
@@ -476,7 +579,7 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
       ...current,
       checklist: current.checklist.map((item) => item.id === id ? { ...item, ...patch } : item),
     } : current);
-    setDetailDirty(true);
+    setDetailDirtyKind("visit");
   }
 
   async function uploadPhotos(event: ChangeEvent<HTMLInputElement>) {
@@ -501,9 +604,8 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
     try {
       let current = detail;
       if (detailDirty) {
-        current = await patchVisit(detail);
-        replaceVisit(current);
-        setDetailDirty(false);
+        current = await persistDirtyDetail(detail);
+        setDetailDirtyKind(null);
       }
       const data = new FormData();
       files.forEach((file) => data.append("photos", file, file.name));
@@ -529,8 +631,12 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
     setBusy(true);
     setError("");
     try {
+      let current = detail;
+      if (detailDirty) {
+        current = await persistDirtyDetail(detail);
+      }
       const response = await fetch(
-        `/api/site-visits/${encodeURIComponent(detail.id)}/photos/${encodeURIComponent(photoId)}`,
+        `/api/site-visits/${encodeURIComponent(current.id)}/photos/${encodeURIComponent(photoId)}`,
         { method: "DELETE" },
       );
       const body = await responseBody(response) as { data?: { visit?: SiteVisit } } | null;
@@ -538,12 +644,8 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
         throw new Error(apiError(body, "Unable to remove the site photo."));
       }
       const serverVisit = body.data.visit;
-      setVisits((current) => current.map((visit) => visit.id === serverVisit.id ? serverVisit : visit));
-      setDetail((current) => current ? {
-        ...current,
-        photos: serverVisit.photos,
-        updatedAt: serverVisit.updatedAt,
-      } : current);
+      replaceVisit(serverVisit);
+      setDetailDirtyKind(null);
       setNotice("Site photo removed.");
     } catch (photoError) {
       setError(photoError instanceof Error ? photoError.message : "Unable to remove the site photo.");
@@ -552,15 +654,25 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
     }
   }
 
+  const canApprove = authenticatedRole === "admin";
+  const canSchedule = authenticatedRole === "admin" || authenticatedRole === "pm";
+  const requestEditable = detail?.status === "pending_approval";
+  const visitEditable = detail?.status === "scheduled" || detail?.status === "in_progress";
+  const coreDetailsEditable = requestEditable || visitEditable;
+  const coreDetailsDirtyKind: Exclude<DetailDirtyKind, null> = requestEditable ? "request" : "visit";
+  const showOnSiteDetails = detail?.status === "scheduled"
+    || detail?.status === "in_progress"
+    || detail?.status === "completed";
+
   return (
     <section className={styles.workspace}>
       <header className={styles.hero}>
         <div>
           <span className={styles.kicker}>FIELD OPERATIONS</span>
           <h1>Site Visiting</h1>
-          <p>Schedule a visit, capture site conditions and keep every photo and note with the project.</p>
+          <p>Request, approve and schedule each visit before the team captures site conditions.</p>
         </div>
-        <button className={styles.primaryButton} onClick={() => { setError(""); setCreateOpen(true); }}>
+        <button type="button" className={styles.primaryButton} onClick={() => { setError(""); setCreateOpen(true); }}>
           <Plus size={18} />New site visit
         </button>
       </header>
@@ -569,13 +681,14 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
         <div className={`${styles.message} ${error ? styles.errorMessage : styles.successMessage}`} role={error ? "alert" : "status"}>
           {error ? <CircleAlert size={19} /> : <CheckCircle2 size={19} />}
           <span>{error || notice}</span>
-          <button onClick={() => { setError(""); setNotice(""); }} aria-label="Dismiss message"><X size={17} /></button>
+          <button type="button" onClick={() => { setError(""); setNotice(""); }} aria-label="Dismiss message"><X size={17} /></button>
         </div>
       )}
 
       <div className={styles.metrics}>
-        <Metric label="Today" value={counts.today} icon={<CalendarDays size={19} />} tone="blue" />
-        <Metric label="Scheduled" value={counts.scheduled} icon={<Clock3 size={19} />} tone="amber" />
+        <Metric label="Awaiting approval" value={counts.pendingApproval} icon={<Clock3 size={19} />} tone="amber" />
+        <Metric label="Awaiting schedule" value={counts.approved} icon={<CheckCircle2 size={19} />} tone="blue" />
+        <Metric label="Scheduled" value={counts.scheduled} icon={<CalendarDays size={19} />} tone="teal" />
         <Metric label="In progress" value={counts.inProgress} icon={<Navigation size={19} />} tone="violet" />
         <Metric label="Completed" value={counts.completed} icon={<CheckCircle2 size={19} />} tone="green" />
       </div>
@@ -583,14 +696,16 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
       <div className={styles.toolbar}>
         <label className={styles.searchBox}>
           <Search size={17} />
-          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search project, address or assignee" />
+          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search customer, address, phone or assignee" />
         </label>
-        <div className={styles.filters} aria-label="Filter site visits by status">
-          {(["all", "scheduled", "in_progress", "completed", "cancelled"] as StatusFilter[]).map((status) => (
+        <div className={styles.filters} role="group" aria-label="Filter site visits by status">
+          {(["all", "pending_approval", "approved", "scheduled", "in_progress", "completed", "cancelled"] as StatusFilter[]).map((status) => (
             <button
+              type="button"
               key={status}
               className={statusFilter === status ? styles.activeFilter : ""}
               onClick={() => setStatusFilter(status)}
+              aria-pressed={statusFilter === status}
             >
               {status === "all" ? "All" : STATUS_LABELS[status]}
             </button>
@@ -603,15 +718,15 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
       ) : visibleVisits.length ? (
         <div className={styles.visitGrid}>
           {visibleVisits.map((visit) => (
-            <VisitCard key={visit.id} visit={visit} onOpen={() => openDetail(visit)} />
+            <VisitCard key={visit.id} visit={visit} onOpen={(trigger) => openDetail(visit, trigger)} />
           ))}
         </div>
       ) : (
         <div className={styles.emptyState}>
           <span><MapPin size={28} /></span>
-          <h2>{visits.length ? "No visits match this view" : "Schedule your first site visit"}</h2>
-          <p>{visits.length ? "Try another search or status filter." : "Create the project now, then open it on your phone when you arrive on site."}</p>
-          {!visits.length && <button className={styles.primaryButton} onClick={() => setCreateOpen(true)}><Plus size={18} />New site visit</button>}
+          <h2>{visits.length ? "No visits match this view" : "Create your first site visit request"}</h2>
+          <p>{visits.length ? "Try another search or status filter." : "Submit the customer request now, then approve and schedule it before the visit."}</p>
+          {!visits.length && <button type="button" className={styles.primaryButton} onClick={() => setCreateOpen(true)}><Plus size={18} />New site visit</button>}
         </div>
       )}
 
@@ -621,23 +736,22 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
         }}>
           <section className={`${styles.sheet} ${styles.createSheet}`} role="dialog" aria-modal="true" aria-labelledby="create-site-visit-title">
             <div className={styles.sheetHeader}>
-              <div><span>NEW VISIT</span><h2 id="create-site-visit-title">Schedule a site visit</h2></div>
-              <button onClick={() => setCreateOpen(false)} disabled={busy} aria-label="Close"><X size={21} /></button>
+              <div><span>NEW REQUEST</span><h2 id="create-site-visit-title">Request a site visit</h2></div>
+              <button type="button" onClick={() => setCreateOpen(false)} disabled={busy} aria-label="Close"><X size={21} /></button>
             </div>
             {error && <ModalMessage message={error} error onDismiss={() => setError("")} />}
             <form className={styles.createForm} onSubmit={createVisit}>
               <div className={styles.formBody}>
-                <label className={styles.fullField}><span>Project or customer name *</span><input name="projectName" required maxLength={160} autoFocus placeholder="e.g. Smith residence" /></label>
-                <label className={styles.fullField}><span>Site address *</span><textarea name="address" required maxLength={300} rows={2} placeholder="Street address, suburb and postcode" /></label>
-                <label><span>Visit date *</span><input name="scheduledDate" type="date" required defaultValue={suggestedSchedule.date} /></label>
-                <label><span>Visit time *</span><input name="scheduledTime" type="time" required defaultValue={suggestedSchedule.time} /></label>
-                <label><span>Contact</span><input name="contact" maxLength={240} inputMode="tel" placeholder="Name or phone number" /></label>
-                <label><span>Assigned to</span><input name="assignee" maxLength={120} placeholder="Team member" /></label>
-                <label className={styles.fullField}><span>Planning notes</span><textarea name="notes" maxLength={10000} rows={3} placeholder="Access instructions or anything to know before the visit" /></label>
+                <label className={styles.fullField}><span>Customer name *</span><input name="projectName" required maxLength={160} autoComplete="name" autoFocus placeholder="e.g. Smith residence" /></label>
+                <label className={styles.fullField}><span>Site address *</span><textarea name="address" required maxLength={300} rows={2} autoComplete="street-address" placeholder="Street address, suburb and postcode" /></label>
+                <label className={styles.fullField}><span>Phone *</span><input name="contact" required maxLength={240} inputMode="tel" autoComplete="tel" placeholder="Customer phone number" /></label>
+                <label className={styles.fullField}><span>Reason for visit *</span><textarea name="reason" required maxLength={2000} rows={3} placeholder="Explain why the site visit is needed" /></label>
+                <label><span>Preferred date *</span><input name="requestedDate" type="date" required defaultValue={suggestedSchedule.date} /></label>
+                <label><span>Preferred time *</span><input name="requestedTime" type="time" required defaultValue={suggestedSchedule.time} /></label>
               </div>
               <div className={styles.sheetFooter}>
                 <button type="button" className={styles.secondaryButton} onClick={() => setCreateOpen(false)} disabled={busy}>Cancel</button>
-                <button className={styles.primaryButton} disabled={busy}>{busy ? <LoaderCircle className={styles.spinner} size={18} /> : <CalendarDays size={18} />}Schedule visit</button>
+                <button type="submit" className={styles.primaryButton} disabled={busy}>{busy ? <LoaderCircle className={styles.spinner} size={18} /> : <ClipboardCheck size={18} />}Submit for approval</button>
               </div>
             </form>
           </section>
@@ -651,34 +765,74 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
               <div className={styles.detailTitle}>
                 <StatusBadge status={detail.status} />
                 <h2 id="site-visit-detail-title">{detail.projectName}</h2>
-                <p><CalendarDays size={14} />{formatDate(detail.scheduledDate)} at {formatTime(detail.scheduledTime)}</p>
+                <p><CalendarDays size={14} />{hasActualSchedule(detail) ? `${formatDate(detail.scheduledDate)} at ${formatTime(detail.scheduledTime)}` : `Preferred ${formatDate(detail.requestedDate)} at ${formatTime(detail.requestedTime)}`}</p>
               </div>
-              <button onClick={closeDetail} disabled={busy} aria-label="Close"><X size={21} /></button>
+              <button ref={detailCloseButtonRef} type="button" onClick={closeDetail} disabled={busy} aria-label="Close"><X size={21} /></button>
             </div>
             {(error || notice) && <ModalMessage message={error || notice} error={Boolean(error)} onDismiss={() => { setError(""); setNotice(""); }} />}
 
             <div className={styles.detailBody}>
+              <WorkflowProgress status={detail.status} />
               <div className={styles.visitActions}>
-                {detail.status === "scheduled" && <button className={styles.startButton} onClick={() => void changeStatus("in_progress")} disabled={busy}><Navigation size={18} />Start visit</button>}
-                {detail.status === "in_progress" && <button className={styles.completeButton} onClick={() => void changeStatus("completed")} disabled={busy}><CheckCircle2 size={18} />Complete visit</button>}
-                {detail.status === "completed" && <button className={styles.secondaryButton} onClick={() => void changeStatus("in_progress")} disabled={busy}>Reopen visit</button>}
-                {detail.status === "cancelled" && <button className={styles.secondaryButton} onClick={() => void changeStatus("scheduled")} disabled={busy}>Restore schedule</button>}
+                {detail.status === "pending_approval" && canApprove ? <button type="button" className={styles.approveButton} onClick={() => void runWorkflowAction("approve", "Site visit approved and ready to schedule.")} disabled={busy}><CheckCircle2 size={18} />Approve request</button> : null}
+                {detail.status === "scheduled" ? <button type="button" className={styles.startButton} onClick={() => void runWorkflowAction("start", "Site visit started.")} disabled={busy}><Navigation size={18} />Start visit</button> : null}
+                {detail.status === "in_progress" ? <button type="button" className={styles.completeButton} onClick={() => void runWorkflowAction("complete", "Site visit completed.")} disabled={busy}><CheckCircle2 size={18} />Complete visit</button> : null}
+                {detail.status === "completed" && canSchedule ? <button type="button" className={styles.secondaryButton} onClick={() => void runWorkflowAction("reopen", "Site visit reopened.")} disabled={busy}>Reopen visit</button> : null}
+                {detail.status === "cancelled" && canSchedule ? <button type="button" className={styles.secondaryButton} onClick={() => void runWorkflowAction("restore", "Site visit restored.")} disabled={busy}>Restore visit</button> : null}
                 <a className={styles.mapButton} href={mapsUrl(detail.address)} target="_blank" rel="noreferrer"><Navigation size={17} />Directions</a>
               </div>
 
               <div className={styles.detailGrid}>
                 <section className={styles.panel}>
-                  <div className={styles.panelTitle}><span><CalendarDays size={18} /></span><div><h3>Visit details</h3><p>Schedule and contact information</p></div></div>
+                  <div className={styles.panelTitle}><span><FileText size={18} /></span><div><h3>Request details</h3><p>Customer, reason and preferred time</p></div></div>
                   <div className={styles.fieldGrid}>
-                    <label className={styles.fullField}><span>Project or customer</span><input value={detail.projectName} maxLength={160} onChange={(event) => updateDetail({ projectName: event.target.value })} /></label>
-                    <label className={styles.fullField}><span>Site address</span><textarea value={detail.address} maxLength={300} rows={2} onChange={(event) => updateDetail({ address: event.target.value })} /></label>
-                    <label><span>Date</span><input type="date" value={detail.scheduledDate} onChange={(event) => updateDetail({ scheduledDate: event.target.value })} /></label>
-                    <label><span>Time</span><input type="time" value={detail.scheduledTime} onChange={(event) => updateDetail({ scheduledTime: event.target.value })} /></label>
-                    <label><span>Contact</span><input value={detail.contact} maxLength={240} inputMode="tel" placeholder="Name or phone" onChange={(event) => updateDetail({ contact: event.target.value })} /></label>
-                    <label><span>Assigned to</span><input value={detail.assignee} maxLength={120} placeholder="Team member" onChange={(event) => updateDetail({ assignee: event.target.value })} /></label>
+                    <label className={styles.fullField}><span>Customer name</span><input value={detail.projectName} maxLength={160} readOnly={!coreDetailsEditable} onChange={(event) => updateDetail({ projectName: event.target.value }, coreDetailsDirtyKind)} /></label>
+                    <label className={styles.fullField}><span>Site address</span><textarea value={detail.address} maxLength={300} rows={2} readOnly={!coreDetailsEditable} onChange={(event) => updateDetail({ address: event.target.value }, coreDetailsDirtyKind)} /></label>
+                    <label className={styles.fullField}><span>Phone</span><input value={detail.contact} maxLength={240} inputMode="tel" autoComplete="tel" readOnly={!coreDetailsEditable} placeholder="No phone recorded" onChange={(event) => updateDetail({ contact: event.target.value }, coreDetailsDirtyKind)} /></label>
+                    <label className={styles.fullField}><span>Reason for visit</span><textarea value={detail.reason} maxLength={2000} rows={3} readOnly={!requestEditable} placeholder="No reason recorded" onChange={(event) => updateDetail({ reason: event.target.value }, "request")} /></label>
+                    <label><span>Preferred date</span><input type="date" value={detail.requestedDate} readOnly={!requestEditable} onChange={(event) => updateDetail({ requestedDate: event.target.value }, "request")} /></label>
+                    <label><span>Preferred time</span><input type="time" value={detail.requestedTime} readOnly={!requestEditable} onChange={(event) => updateDetail({ requestedTime: event.target.value }, "request")} /></label>
                   </div>
                 </section>
 
+                {detail.status === "pending_approval" ? (
+                  <section className={`${styles.panel} ${styles.stagePanel}`}>
+                    <div className={styles.panelTitle}><span><CheckCircle2 size={18} /></span><div><h3>Approval</h3><p>The request must be approved before scheduling</p></div></div>
+                    <div className={styles.stageCallout}>
+                      <strong>{canApprove ? "Review this request" : "Awaiting administrator approval"}</strong>
+                      <p>{canApprove ? "Confirm the customer details, reason and preferred time, then approve the request." : "An administrator will review this request. Site checks and photos unlock after it is scheduled."}</p>
+                    </div>
+                  </section>
+                ) : detail.status === "cancelled" && !hasActualSchedule(detail) ? (
+                  <section className={`${styles.panel} ${styles.stagePanel}`}>
+                    <div className={styles.panelTitle}><span><CircleAlert size={18} /></span><div><h3>Request cancelled</h3><p>This request is no longer active</p></div></div>
+                    <div className={styles.stageCallout}><strong>Cancelled before scheduling</strong><p>{canSchedule ? "Restore the request to return it to its previous stage." : "A Project Manager or Administrator can restore this request."}</p></div>
+                  </section>
+                ) : (
+                  <section className={`${styles.panel} ${styles.schedulePanel}`}>
+                    <div className={styles.panelTitle}><span><CalendarDays size={18} /></span><div><h3>Visit schedule</h3><p>{detail.status === "approved" ? "Set the confirmed visit time and assignee" : "Confirmed appointment and team member"}</p></div></div>
+                    {(detail.status === "approved" || detail.status === "scheduled") && canSchedule ? (
+                      <form className={styles.scheduleForm} onSubmit={scheduleVisit}>
+                        <label><span>Visit date *</span><input type="date" required value={scheduleDraft.scheduledDate} onChange={(event) => setScheduleDraft((current) => ({ ...current, scheduledDate: event.target.value }))} /></label>
+                        <label><span>Visit time *</span><input type="time" required value={scheduleDraft.scheduledTime} onChange={(event) => setScheduleDraft((current) => ({ ...current, scheduledTime: event.target.value }))} /></label>
+                        <label className={styles.fullField}><span>Assigned to *</span><input required maxLength={120} value={scheduleDraft.assignee} placeholder="Team member" onChange={(event) => setScheduleDraft((current) => ({ ...current, assignee: event.target.value }))} /></label>
+                        <button type="submit" className={styles.primaryButton} disabled={busy}>{busy ? <LoaderCircle className={styles.spinner} size={18} /> : <CalendarDays size={18} />}{detail.status === "approved" ? "Confirm schedule" : "Update schedule"}</button>
+                      </form>
+                    ) : hasActualSchedule(detail) ? (
+                      <dl className={styles.scheduleSummary}>
+                        <div><dt>Date</dt><dd>{formatDate(detail.scheduledDate)}</dd></div>
+                        <div><dt>Time</dt><dd>{formatTime(detail.scheduledTime)}</dd></div>
+                        <div><dt>Assigned to</dt><dd>{detail.assignee || "Not assigned"}</dd></div>
+                      </dl>
+                    ) : (
+                      <div className={styles.stageCallout}><strong>Approved and ready to schedule</strong><p>A Project Manager or Administrator needs to confirm the date, time and assignee.</p></div>
+                    )}
+                  </section>
+                )}
+              </div>
+
+              {showOnSiteDetails ? (
+                <>
                 <section className={`${styles.panel} ${styles.checklistPanel}`}>
                   <div className={styles.panelTitle}><span><ClipboardCheck size={18} /></span><div><h3>Site checks</h3><p>{detail.checklist.filter((item) => item.answer !== "not_checked").length} of {detail.checklist.length} checked</p></div></div>
                   <div className={styles.checklist}>
@@ -691,27 +845,27 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
                               type="button"
                               key={option.value}
                               className={`${styles.answerButton} ${item.answer === option.value ? styles[`answer_${option.value}`] : ""}`}
+                              disabled={!visitEditable || busy}
                               onClick={() => updateCheck(item.id, { answer: option.value })}
                             >
                               {item.answer === option.value && <Check size={15} />}{option.label}
                             </button>
                           ))}
                         </div>
-                        <label><span>Check notes</span><textarea value={item.notes} maxLength={2000} rows={2} placeholder={CHECK_NOTE_PLACEHOLDERS[item.id] || "Add measurements, damage or follow-up details"} onChange={(event) => updateCheck(item.id, { notes: event.target.value })} /></label>
+                        <label><span>Check notes</span><textarea value={item.notes} maxLength={2000} rows={2} readOnly={!visitEditable} placeholder={CHECK_NOTE_PLACEHOLDERS[item.id] || "Add measurements, damage or follow-up details"} onChange={(event) => updateCheck(item.id, { notes: event.target.value })} /></label>
                       </article>
                     ))}
                   </div>
                 </section>
-              </div>
 
-              <section className={styles.panel}>
+                <section className={styles.panel}>
                 <div className={styles.panelTitle}><span><Camera size={18} /></span><div><h3>Site photos</h3><p>{detail.photos.length} attached to this visit</p></div></div>
-                <div className={styles.photoActions}>
-                  <button className={styles.cameraButton} onClick={() => cameraInputRef.current?.click()} disabled={busy}><Camera size={20} /><span><strong>Take a photo</strong><small>Open the rear camera</small></span></button>
-                  <button className={styles.uploadButton} onClick={() => galleryInputRef.current?.click()} disabled={busy}><ImagePlus size={20} /><span><strong>Add from phone</strong><small>Select up to 10 photos</small></span></button>
+                {visitEditable ? <div className={styles.photoActions}>
+                  <button type="button" className={styles.cameraButton} onClick={() => cameraInputRef.current?.click()} disabled={busy}><Camera size={20} /><span><strong>Take a photo</strong><small>Open the rear camera</small></span></button>
+                  <button type="button" className={styles.uploadButton} onClick={() => galleryInputRef.current?.click()} disabled={busy}><ImagePlus size={20} /><span><strong>Add from phone</strong><small>Select up to 10 photos</small></span></button>
                   <input ref={cameraInputRef} className={styles.hiddenInput} tabIndex={-1} aria-hidden="true" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={(event) => void uploadPhotos(event)} />
                   <input ref={galleryInputRef} className={styles.hiddenInput} tabIndex={-1} aria-hidden="true" type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={(event) => void uploadPhotos(event)} />
-                </div>
+                </div> : null}
                 {detail.photos.length ? (
                   <div className={styles.photoGrid}>
                     {detail.photos.map((photo) => (
@@ -719,31 +873,34 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
                         key={photo.id}
                         photo={photo}
                         busy={busy}
+                        editable={visitEditable}
                         onDelete={(photoId) => void deletePhoto(photoId)}
                       />
                     ))}
                   </div>
                 ) : (
-                  <div className={styles.photoEmpty}><Upload size={24} /><span>No photos yet. Use the camera when you arrive on site.</span></div>
+                  <div className={styles.photoEmpty}><Upload size={24} /><span>{visitEditable ? "No photos yet. Use the camera when you arrive on site." : "No photos were attached to this visit."}</span></div>
                 )}
               </section>
 
               <section className={styles.panel}>
                 <div className={styles.panelTitle}><span><ClipboardCheck size={18} /></span><div><h3>General notes</h3><p>Observations, measurements and next steps</p></div></div>
-                <textarea className={styles.notesArea} value={detail.notes} maxLength={10000} rows={6} placeholder="Add anything the office or installation team should know…" onChange={(event) => updateDetail({ notes: event.target.value })} />
+                <textarea className={styles.notesArea} value={detail.notes} maxLength={10000} rows={6} readOnly={!visitEditable} placeholder="Add anything the office or installation team should know…" onChange={(event) => updateDetail({ notes: event.target.value }, "visit")} />
               </section>
+                </>
+              ) : null}
 
               <div className={styles.dangerZone}>
-                {detail.status !== "cancelled" && <button onClick={() => void changeStatus("cancelled")} disabled={busy}>Cancel visit</button>}
-                {authenticatedRole === "admin" ? <button onClick={() => void deleteVisit()} disabled={busy}><Trash2 size={16} />Delete visit</button> : null}
+                {canSchedule && detail.status !== "cancelled" && detail.status !== "completed" ? <button type="button" onClick={() => void runWorkflowAction("cancel", detail.status === "pending_approval" ? "Site visit request cancelled." : "Site visit cancelled.")} disabled={busy}>{detail.status === "pending_approval" ? "Cancel request" : "Cancel visit"}</button> : null}
+                {authenticatedRole === "admin" ? <button type="button" onClick={() => void deleteVisit()} disabled={busy}><Trash2 size={16} />Delete visit</button> : null}
               </div>
             </div>
 
             <div className={styles.stickyFooter}>
-              <div>{detailDirty ? "You have unsaved changes" : "All changes saved"}</div>
-              <button className={styles.primaryButton} onClick={() => void saveDetail()} disabled={busy || !detailDirty}>
+              <div>{detailDirty ? "You have unsaved changes" : requestEditable || visitEditable ? "All changes saved" : "Read only at this stage"}</div>
+              {requestEditable || visitEditable ? <button type="button" className={styles.primaryButton} onClick={() => void saveDetail()} disabled={busy || !detailDirty}>
                 {busy ? <LoaderCircle className={styles.spinner} size={18} /> : <Save size={18} />}Save changes
-              </button>
+              </button> : <span className={styles.readOnlyLabel}>No editable site fields</span>}
             </div>
           </section>
         </div>
@@ -761,7 +918,7 @@ function ModalMessage({ message, error, onDismiss }: { message: string; error: b
     <div className={`${styles.modalMessage} ${error ? styles.modalError : styles.modalSuccess}`} role={error ? "alert" : "status"}>
       {error ? <CircleAlert size={17} /> : <CheckCircle2 size={17} />}
       <span>{message}</span>
-      <button onClick={onDismiss} aria-label="Dismiss message"><X size={16} /></button>
+      <button type="button" onClick={onDismiss} aria-label="Dismiss message"><X size={16} /></button>
     </div>
   );
 }
@@ -770,34 +927,76 @@ function StatusBadge({ status }: { status: SiteVisitStatus }) {
   return <span className={`${styles.statusBadge} ${styles[`status_${status}`]}`}>{STATUS_LABELS[status]}</span>;
 }
 
-function VisitCard({ visit, onOpen }: { visit: SiteVisit; onOpen: () => void }) {
+function WorkflowProgress({ status, compact = false }: { status: SiteVisitStatus; compact?: boolean }) {
+  const currentIndex = status === "cancelled"
+    ? -1
+    : WORKFLOW_STAGES.findIndex((stage) => stage.status === status);
+  return (
+    <ol
+      className={`${styles.workflowProgress} ${compact ? styles.compactWorkflow : ""}`}
+      aria-label={`Site visit workflow: ${STATUS_LABELS[status]}`}
+    >
+      {WORKFLOW_STAGES.map((stage, index) => (
+        <li
+          key={stage.status}
+          className={currentIndex === index
+            ? styles.workflowCurrent
+            : currentIndex > index ? styles.workflowComplete : ""}
+          aria-current={currentIndex === index ? "step" : undefined}
+        >
+          <i aria-hidden="true">{currentIndex > index ? <Check size={11} /> : index + 1}</i>
+          <span>{stage.label}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function VisitCard({ visit, onOpen }: { visit: SiteVisit; onOpen: (trigger: HTMLButtonElement) => void }) {
   const checked = visit.checklist.filter((item) => item.answer !== "not_checked").length;
-  const today = visit.scheduledDate === localToday();
+  const actualSchedule = hasActualSchedule(visit);
+  const today = actualSchedule && visit.scheduledDate === localToday() && visit.status !== "cancelled";
+  const beforeSchedule = !actualSchedule;
+  const displayDate = actualSchedule ? visit.scheduledDate : visit.requestedDate;
+  const displayTime = actualSchedule ? visit.scheduledTime : visit.requestedTime;
   return (
     <article className={styles.visitCard}>
       <div className={styles.cardTop}>
         <StatusBadge status={visit.status} />
         {today && visit.status !== "cancelled" && <span className={styles.todayBadge}>Today</span>}
       </div>
+      <WorkflowProgress status={visit.status} compact />
       <h2>{visit.projectName}</h2>
       <p className={styles.address} title={visit.address}>
         <MapPin size={16} />
         <span>{visit.address}</span>
       </p>
       <div className={styles.cardMeta}>
-        <span><CalendarDays size={15} />{formatDate(visit.scheduledDate)}</span>
-        <span><Clock3 size={15} />{formatTime(visit.scheduledTime)}</span>
+        <span><CalendarDays size={15} />{beforeSchedule ? "Preferred " : ""}{formatDate(displayDate)}</span>
+        <span><Clock3 size={15} />{formatTime(displayTime)}</span>
         {visit.assignee && <span><UserRound size={15} />{visit.assignee}</span>}
       </div>
       <div className={styles.cardFooter}>
         <div className={styles.cardProgress}>
-          <span><ClipboardCheck size={15} />{checked}/{visit.checklist.length} site checks</span>
-          <span><Camera size={15} />{visit.photos.length} photos</span>
+          {beforeSchedule ? (
+            <>
+              <span className={styles.cardReason}><FileText size={15} />{visit.reason || "No reason recorded"}</span>
+              <span><Phone size={15} />{visit.contact || "No phone recorded"}</span>
+            </>
+          ) : (
+            <>
+              <span><ClipboardCheck size={15} />{checked}/{visit.checklist.length} site checks</span>
+              <span><Camera size={15} />{visit.photos.length} photos</span>
+            </>
+          )}
         </div>
-        <button className={styles.openButton} onClick={onOpen} aria-label={`Open site visit for ${visit.projectName}`}>
-          Open visit <ChevronRight size={16} />
-        </button>
       </div>
+      <button
+        type="button"
+        className={styles.cardOpenButton}
+        onClick={(event) => onOpen(event.currentTarget)}
+        aria-label={`Open site visit details for ${visit.projectName}, ${STATUS_LABELS[visit.status]}`}
+      />
     </article>
   );
 }
