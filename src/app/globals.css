@@ -31,12 +31,21 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .desk-actions > button:not(.user-menu) { position: relative; display: grid; width: 34px; height: 34px; place-items: center; color: #66737d; background: none; border: 0; border-radius: 6px; cursor: pointer; }
 .desk-actions > button:hover { background: #f1f3f5; }
 .notification i { position: absolute; top: 7px; right: 7px; width: 5px; height: 5px; background: #f15b5b; border: 1px solid #fff; border-radius: 50%; }
+.user-account { position: relative; }
 .user-menu { display: grid; min-width: 184px; height: 42px; grid-template-columns: 29px minmax(0, 1fr) auto; align-items: center; padding: 4px 7px; gap: 8px; background: transparent; border: 0; border-left: 1px solid var(--erp-border); cursor: pointer; text-align: left; }
 .user-menu > span { display: grid; width: 29px; height: 29px; place-items: center; color: #fff; background: #5e7182; border-radius: 50%; font-size: 12px; font-weight: 700; }
 .user-menu strong, .user-menu small { display: block; }
 .user-menu strong { overflow: hidden; color: #38434c; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .user-menu small { overflow: hidden; margin-top: 1px; color: #909aa3; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .user-menu svg { color: #9aa3aa; }
+.user-popover { position: absolute; top: calc(100% + 7px); right: 0; z-index: 120; width: 230px; padding: 8px; background: #fff; border: 1px solid var(--erp-border); border-radius: 8px; box-shadow: 0 14px 36px rgba(28, 45, 57, .16); }
+.user-popover > div { padding: 8px 9px 10px; border-bottom: 1px solid #edf0f2; }
+.user-popover strong, .user-popover small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.user-popover strong { color: #35414a; font-size: 13px; }
+.user-popover small { margin-top: 3px; color: #7f8b94; font-size: 12px; }
+.user-popover button { display: flex; width: 100%; min-height: 38px; align-items: center; margin-top: 6px; padding: 0 9px; gap: 8px; color: #b33b3b; background: transparent; border: 0; border-radius: 5px; cursor: pointer; font-size: 13px; font-weight: 650; }
+.user-popover button:hover:not(:disabled) { background: #fff1f1; }
+.user-popover button:disabled { cursor: wait; opacity: .6; }
 .mobile-nav-trigger { display: none; padding: 6px; background: none; border: 0; cursor: pointer; }
 
 .desk-sidebar { position: fixed; inset: 56px auto 0 0; z-index: 60; display: flex; width: 228px; flex-direction: column; padding: 14px 12px; background: var(--erp-sidebar); border-right: 1px solid var(--erp-border); }

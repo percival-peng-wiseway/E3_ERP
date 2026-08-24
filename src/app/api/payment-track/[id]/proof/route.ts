@@ -17,7 +17,7 @@ import type {
   PaymentTrackRole,
   PaymentTrackUploadContentType,
 } from "@/lib/payment-track/types";
-import { isAuthorizedMutationRequest } from "@/lib/server/proxy-security";
+import { isAuthorizedActorRequest, isAuthorizedMutationRequest } from "@/lib/server/proxy-security";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -54,6 +54,9 @@ export async function POST(
     }
     if (role !== "specialist") {
       return paymentTrackError(403, "role_forbidden", "Only the Specialist can upload deposit proof.");
+    }
+    if (!isAuthorizedActorRequest(request, role)) {
+      return paymentTrackError(403, "role_forbidden", "Only an Administrator can perform the Specialist step.");
     }
     const proof = form.get("proof");
     if (!(proof instanceof File) || proof.size < 1 || proof.size > MAX_PROOF_SIZE) {

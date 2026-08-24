@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getErpSession } from "@/lib/auth/session";
 import {
   createPaymentTrackAdminToken,
   isPaymentTrackAdmin,
@@ -55,6 +56,10 @@ export function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   if (!isAuthorizedMutationRequest(request)) return paymentTrackError(403, "forbidden", "This request is not allowed.");
+  const employeeSession = getErpSession(request);
+  if (employeeSession && employeeSession.user.role !== "admin") {
+    return paymentTrackError(403, "admin_required", "Administrator access is required.");
+  }
   if (declaredPaymentTrackBodyTooLarge(request, MAX_LOGIN_BODY_SIZE)) {
     return paymentTrackError(413, "request_too_large", "The login request is too large.");
   }

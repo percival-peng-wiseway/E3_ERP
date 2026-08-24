@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { getErpSession } from "@/lib/auth/session";
 import {
   reimbursementAdminConfiguration,
   verifyReimbursementAdminPassword,
@@ -43,6 +44,8 @@ function cookieValue(request: Request, name: string) {
 }
 
 export function isPaymentTrackAdmin(request: Request) {
+  const employeeSession = getErpSession(request);
+  if (employeeSession) return employeeSession.user.role === "admin";
   const { secret } = paymentTrackAdminConfiguration();
   const token = cookieValue(request, PAYMENT_TRACK_ADMIN_COOKIE);
   if (!secret || !token) return false;

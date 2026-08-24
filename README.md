@@ -4,6 +4,8 @@ An ERPNext-inspired operations workspace that brings Inventory, QuoteHelp, proje
 
 The application no longer uses iframes. The browser calls same-origin ERP APIs, and controlled server-side proxies connect to the existing Inventory and QuoteHelp services. Existing data, accounts and business rules remain in use.
 
+Employee access is protected by a unified ERP sign-in. The server issues a signed, HttpOnly session cookie and keeps salted password verifiers out of the browser bundle. Current employee account roles are Administrator, Project Manager and Sales; authenticated administrators inherit the protected Reimbursements and Payment Track administration permissions.
+
 ## Current modules
 
 ### Home and Agent
@@ -73,7 +75,7 @@ The application no longer uses iframes. The browser calls same-origin ERP APIs, 
 - Only the initial deposit requires a payment screenshot or PDF; every successful workflow action closes Project Details
 - Cards show the live remaining Amount Due, while Project Details retains the original proposal, every proof and the final-payment ledger
 
-The Sales, Specialist and Project Manager selector models the workflow in this local prototype; only Administrator payment confirmations currently require a protected password session. Do not expose customer or payment data outside a trusted local environment until company SSO supplies the authenticated user and server-enforced role. The production checklist below remains mandatory.
+Payment Track starts from the signed-in employee role. PM and Sales accounts cannot switch roles; Administrator accounts can cover Sales, PM and Specialist workflow steps until a dedicated Specialist account is added. The API verifies the signed-in role instead of trusting the role submitted by the browser.
 
 ### Reports
 
@@ -131,6 +133,7 @@ Copy `.env.example` to `.env.local`. These upstream addresses are server-only an
 INVENTORY_OPERATIONS_API_URL=https://inventory.e3energy.com.au/api/inventory
 QUOTEHELP_APP_URL=https://quote.e3energy.com.au
 ERP_INTERNAL_API_TOKEN=
+ERP_AUTH_SESSION_SECRET=
 DEEPSEEK_API_KEY=
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-v4-flash
@@ -142,7 +145,7 @@ GROUP_CHAT_DATA_DIR=
 - `/api/quotehelp/*` exposes only the login, session, settings, quotation and import paths used by the native module.
 - Both proxies limit body size, connection time and browser request origin.
 - Upstream cookies are placed in separate ERP namespaces with restricted paths. ERP, Clerk and other application cookies are never forwarded to external business services.
-- Browser writes must be verifiably same-origin. Trusted server writes require the `ERP_INTERNAL_API_TOKEN` bearer token.
+- Browser writes require both a valid employee session and a verifiably same-origin request. Trusted server writes require the `ERP_INTERNAL_API_TOKEN` bearer token.
 - QuoteHelp Excel uploads are limited to 25 MiB; Inventory JSON operations are limited to 512 KiB.
 - Agent and Agent Settings writes are same-origin protected and body-size limited. The API key is stored in a private `0700` directory using an atomic `0600` file and is returned only as a masked configured state.
 - The DeepSeek connection is restricted to the official HTTPS host. Model tools strictly validate their arguments and return bounded, sanitised, read-only records.
@@ -169,7 +172,7 @@ PAYMENT_TRACK_ENFORCE_UNIQUE_PROPOSAL=false
 SITE_VISIT_DATA_DIR=
 ```
 
-Local development includes the Admin demo password `admin`. Production requires both an admin password and a separate random session secret of at least 32 characters. Before cloud or multi-server deployment, replace local JSON/file storage with a managed database and private object storage, and connect employee access to the company identity provider.
+Local development includes the legacy Admin demo password `admin` for the module-specific fallback. Production employee login requires `ERP_AUTH_SESSION_SECRET` with at least 32 random characters. Before cloud or multi-server deployment, replace local JSON/file storage with a managed database and private object storage. Company SSO can replace the built-in employee directory later without changing the module APIs.
 
 Payment Track currently allows repeated Proposal Numbers so the same proposal can be uploaded more than once during testing. Set `PAYMENT_TRACK_ENFORCE_UNIQUE_PROPOSAL=true` when testing is complete to restore the duplicate check. Every duplicate still receives its own project ID, `PAY-...` reference and stored contract file.
 
@@ -177,6 +180,9 @@ Payment Track currently allows repeated Proposal Numbers so the same proposal ca
 
 | Route | Purpose |
 | --- | --- |
+| `POST /api/auth/login` | Validate an employee account and create a signed session |
+| `GET /api/auth/session` | Return the current employee identity and role |
+| `POST /api/auth/logout` | Clear the employee session |
 | `GET/POST /api/inventory/operations` | Controlled proxy for native Inventory and delivery operations |
 | `GET/POST/PUT/DELETE /api/quotehelp/*` | Controlled proxy for native QuoteHelp operations |
 | `GET /api/inventory` | Unified read-only inventory list |
@@ -215,7 +221,11 @@ See `mcp-server/README.md` for details.
 ## Project structure
 
 ```text
-src/components/erp-workspace.tsx                  ERPNext-style application shell
+src/components/erp-workspace.tsx                  Authenticated ERPNext-style application shell
+src/app/login/                                    Mobile-first employee sign-in
+src/app/api/auth/                                 Employee login, session and logout APIs
+src/lib/auth/                                     Account verifiers, roles and signed session handling
+src/middleware.ts                                 Cloudflare-compatible global page/API authentication boundary
 src/components/inventory-operations-workspace.tsx Native Inventory module
 src/components/quotehelp-workspace.tsx            Native quotation module
 src/components/project-delivery-board.tsx         Project delivery Kanban
@@ -239,11 +249,11 @@ mcp-server/                                        Optional read-only MCP Server
 
 ## Production security requirements
 
-The current version restores the existing workflows and adds same-origin proxy controls, but it does not yet include a unified ERP identity and role system. Before external production access:
+The current version includes a unified built-in employee identity and role system. Before broader external production access:
 
-1. Add company SSO or Clerk and define administrator, inventory, sales, PM and reimbursement roles.
-2. Enforce organisation and role checks on every write; same-origin checks and hidden buttons are not authorisation.
-3. Add CSRF tokens, rate limits, audit logs and operational alerts.
+1. Replace the built-in directory with company SSO or Clerk when central onboarding, offboarding and password recovery are required.
+2. Confirm detailed per-module permissions beyond the enforced Payment Track roles; hidden buttons are not authorisation.
+3. Add distributed login rate limits, audit logs and operational alerts.
 4. Confirm that the upstream Inventory and QuoteHelp cookie policies match the final HTTPS ERP domain.
 5. Preserve explicit confirmation and traceability for deletion, stock loss, delivery cancellation and delivery completion.
 6. Validate email delivery, Excel import and real stock deductions in a staging environment before switching the production domain.

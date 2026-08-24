@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
+import { getErpSession } from "@/lib/auth/session";
 import {
   createReimbursementClaimantToken,
   hashReimbursementClaimantToken,
@@ -155,7 +156,8 @@ export async function POST(request: NextRequest) {
       }
       seenFields.add(name);
     }
-    const claimantName = requiredText(form.get("claimantName"), 120);
+    const claimantName = getErpSession(request)?.user.displayName
+      || requiredText(form.get("claimantName"), 120);
     const expenseDate = requiredText(form.get("expenseDate"), 10);
     const note = optionalText(form.get("note"), 2_000);
     const amount = requiredText(form.get("amount"), 20);

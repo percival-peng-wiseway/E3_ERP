@@ -31,9 +31,10 @@ Add these under the Worker's **Settings → Variables and Secrets**. Mark every 
 
 | Name | Required for | Value |
 | --- | --- | --- |
-| `REIMBURSEMENT_ADMIN_PASSWORD` | Reimbursements and Payment Track administration | A strong unique password |
-| `REIMBURSEMENT_SESSION_SECRET` | Signed administrator sessions | At least 32 random characters |
-| `DEEPSEEK_API_KEY` | E3 Agent | Your DeepSeek API key |
+| `ERP_AUTH_SESSION_SECRET` | Employee login and signed sessions | At least 32 random characters; required |
+| `REIMBURSEMENT_ADMIN_PASSWORD` | Legacy standalone administration login | Optional when ERP administrator accounts are used |
+| `REIMBURSEMENT_SESSION_SECRET` | Legacy standalone administrator sessions | Optional when ERP administrator accounts are used |
+| `DEEPSEEK_API_KEY` | E3 Agent | Your DeepSeek API key; optional |
 | `ERP_INTERNAL_API_TOKEN` | Trusted non-browser API writes | A long random token; optional for browser-only use |
 
 Optional read-only dashboard/Agent data sources:
@@ -42,7 +43,9 @@ Optional read-only dashboard/Agent data sources:
 - `ERP_QUOTATION_API_URL`
 - `ERP_API_TOKEN`
 
-Do not put real secrets in `wrangler.jsonc`, `.env.example`, or `.dev.vars.example`.
+The eight employee accounts are built in as usernames, roles and salted password verifiers. Plain-text passwords are not stored in Git. Do not put real secrets in `wrangler.jsonc`, `.env.example`, or `.dev.vars.example`.
+
+Before exposing the login page publicly, add a Cloudflare WAF rate-limit rule for `POST /api/auth/login`. The application also applies bounded per-IP and per-account protection, but Worker instances do not share in-memory counters; the Cloudflare rule provides the deployment-wide limit.
 
 ## Local verification
 
@@ -77,6 +80,7 @@ After authenticating Wrangler locally:
 
 ```bash
 npx wrangler login
+npx wrangler secret put ERP_AUTH_SESSION_SECRET
 npm run deploy
 ```
 

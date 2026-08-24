@@ -9,7 +9,7 @@ import {
   readLimitedAgentJson,
   requestHasJsonContentType,
 } from "@/lib/agent/request";
-import { isAuthorizedMutationRequest } from "@/lib/server/proxy-security";
+import { isAuthorizedActorRequest } from "@/lib/server/proxy-security";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -50,8 +50,8 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
-  if (!isAuthorizedMutationRequest(request)) {
-    return error(403, "forbidden", "This settings request is not allowed.");
+  if (!isAuthorizedActorRequest(request, "admin")) {
+    return error(403, "forbidden", "Administrator access is required to change Agent settings.");
   }
   if (!requestHasJsonContentType(request)) {
     return error(415, "json_required", "Agent settings accept a JSON request body only.");
@@ -77,8 +77,8 @@ export async function PUT(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  if (!isAuthorizedMutationRequest(request)) {
-    return error(403, "forbidden", "This settings request is not allowed.");
+  if (!isAuthorizedActorRequest(request, "admin")) {
+    return error(403, "forbidden", "Administrator access is required to clear Agent settings.");
   }
   try {
     return json({ data: await clearAgentSettings() });

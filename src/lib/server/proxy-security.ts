@@ -1,3 +1,5 @@
+import { erpSessionCanActAs, getErpSession } from "@/lib/auth/session";
+
 type CookieNamespace = {
   prefix: string;
   path: string;
@@ -40,12 +42,21 @@ export function isSameOriginRequest(request: Request): boolean {
  */
 export function isAuthorizedMutationRequest(request: Request): boolean {
   if (request.headers.has("origin") || request.headers.has("sec-fetch-site")) {
-    return isSameOriginRequest(request);
+    return isSameOriginRequest(request) && Boolean(getErpSession(request));
   }
 
   const expected = process.env.ERP_INTERNAL_API_TOKEN;
   const authorization = request.headers.get("authorization");
   return Boolean(expected && authorization === `Bearer ${expected}`);
+}
+
+export function isAuthorizedActorRequest(request: Request, actorRole: string): boolean {
+  if (request.headers.has("origin") || request.headers.has("sec-fetch-site")) {
+    return isSameOriginRequest(request) && erpSessionCanActAs(request, actorRole);
+  }
+
+  const expected = process.env.ERP_INTERNAL_API_TOKEN;
+  return Boolean(expected && request.headers.get("authorization") === `Bearer ${expected}`);
 }
 
 function namespacedRequestCookie(request: Request, namespace: CookieNamespace): string | undefined {

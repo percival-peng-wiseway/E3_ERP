@@ -1,5 +1,6 @@
 import type { InventoryOperationAction } from "@/lib/inventory-operations/types";
 import {
+  isAuthorizedActorRequest,
   isAuthorizedMutationRequest,
   isSameOriginRequest,
   proxyRequestHeaders,
@@ -229,6 +230,14 @@ function validatePayload(action: InventoryOperationAction, payload: Record<strin
   }
 }
 
+function requiredRole(action: InventoryOperationAction): "admin" | "pm" | "sales" {
+  if (action === "sale") return "sales";
+  if (["schedule", "editTask", "cancelOrder", "cancelDelivery", "recallDelivery", "deliver"].includes(action)) {
+    return "pm";
+  }
+  return "admin";
+}
+
 export async function GET(request: Request): Promise<Response> {
   if (!isSameOriginRequest(request)) {
     return jsonError(403, "ORIGIN_FORBIDDEN", "Only same-origin requests are allowed. Trusted server calls may omit Origin when authenticated.");
@@ -282,6 +291,9 @@ export async function POST(request: Request): Promise<Response> {
   }
   if (!isRecord(parsed)) {
     return jsonError(400, "INVALID_PAYLOAD", "The inventory operation body must be a JSON object.");
+  }
+  if (!isAuthorizedActorRequest(request, requiredRole(action as InventoryOperationAction))) {
+    return jsonError(403, "ROLE_FORBIDDEN", "Your signed-in role cannot perform this inventory action.");
   }
   const validationError = validatePayload(action as InventoryOperationAction, parsed);
   if (validationError) {

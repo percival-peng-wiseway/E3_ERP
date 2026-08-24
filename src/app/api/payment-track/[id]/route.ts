@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { getErpSession } from "@/lib/auth/session";
 import { isPaymentTrackAdmin } from "@/lib/payment-track/auth";
 import {
   PaymentTrackRepositoryError,
@@ -21,7 +22,7 @@ import {
   type PaymentTrackAction,
   type PaymentTrackRole,
 } from "@/lib/payment-track/types";
-import { isAuthorizedMutationRequest } from "@/lib/server/proxy-security";
+import { isAuthorizedActorRequest, isAuthorizedMutationRequest } from "@/lib/server/proxy-security";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -57,9 +58,13 @@ export async function PATCH(
     const actorRole = typeof body.actorRole === "string" && PAYMENT_TRACK_ROLES.includes(body.actorRole as PaymentTrackRole)
       ? body.actorRole as PaymentTrackRole
       : null;
-    const actorName = optionalPaymentTrackText(body.actorName, 120);
+    const session = getErpSession(request);
+    const actorName = session?.user.displayName || optionalPaymentTrackText(body.actorName, 120);
     if (!action || !actorRole || actorName === null) {
       return paymentTrackError(400, "invalid_action", "The project action is invalid.");
+    }
+    if (!isAuthorizedActorRequest(request, actorRole)) {
+      return paymentTrackError(403, "role_forbidden", "Your signed-in role cannot perform this action.");
     }
 
     let notes: string | undefined;

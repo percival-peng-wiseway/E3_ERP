@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getErpSession } from "@/lib/auth/session";
 import {
   createGroupChatMessage,
   GROUP_CHAT_MAX_CONTENT_LENGTH,
@@ -124,7 +125,10 @@ export async function POST(request: Request) {
     if (!fields) {
       return errorResponse(400, "invalid_message", "Enter a display name and a message using only the supported fields.");
     }
-    return noStoreJson({ data: await createGroupChatMessage(fields.displayName, fields.content) }, { status: 201 });
+    const authenticatedName = getErpSession(request)?.user.displayName;
+    return noStoreJson({
+      data: await createGroupChatMessage(authenticatedName || fields.displayName, fields.content),
+    }, { status: 201 });
   } catch (error) {
     if (error instanceof RequestBodyTooLarge) {
       return errorResponse(413, "request_too_large", "The message request is too large.");

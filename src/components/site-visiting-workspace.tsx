@@ -669,17 +669,24 @@ function VisitCard({ visit, onOpen }: { visit: SiteVisit; onOpen: () => void }) 
         {today && visit.status !== "cancelled" && <span className={styles.todayBadge}>Today</span>}
       </div>
       <h2>{visit.projectName}</h2>
-      <p className={styles.address}><MapPin size={16} />{visit.address}</p>
+      <p className={styles.address} title={visit.address}>
+        <MapPin size={16} />
+        <span>{visit.address}</span>
+      </p>
       <div className={styles.cardMeta}>
         <span><CalendarDays size={15} />{formatDate(visit.scheduledDate)}</span>
         <span><Clock3 size={15} />{formatTime(visit.scheduledTime)}</span>
         {visit.assignee && <span><UserRound size={15} />{visit.assignee}</span>}
       </div>
-      <div className={styles.cardProgress}>
-        <span><ClipboardCheck size={15} />{checked}/{visit.checklist.length} site checks</span>
-        <span><Camera size={15} />{visit.photos.length} photos</span>
+      <div className={styles.cardFooter}>
+        <div className={styles.cardProgress}>
+          <span><ClipboardCheck size={15} />{checked}/{visit.checklist.length} site checks</span>
+          <span><Camera size={15} />{visit.photos.length} photos</span>
+        </div>
+        <button className={styles.openButton} onClick={onOpen} aria-label={`Open site visit for ${visit.projectName}`}>
+          Open visit <ChevronRight size={16} />
+        </button>
       </div>
-      <button className={styles.openButton} onClick={onOpen}>Open visit<ChevronRight size={17} /></button>
     </article>
   );
 }

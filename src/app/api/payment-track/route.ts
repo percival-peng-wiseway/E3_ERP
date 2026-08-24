@@ -24,7 +24,7 @@ import type {
   PaymentTrackItem,
   PaymentTrackSpecialist,
 } from "@/lib/payment-track/types";
-import { isAuthorizedMutationRequest } from "@/lib/server/proxy-security";
+import { isAuthorizedActorRequest, isAuthorizedMutationRequest } from "@/lib/server/proxy-security";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -158,6 +158,9 @@ export async function POST(request: NextRequest) {
   }
   try {
     const body = await readPaymentTrackJson(request, MAX_JSON_SIZE);
+    if (!isAuthorizedActorRequest(request, "sales")) {
+      return paymentTrackError(403, "role_forbidden", "Only Sales or an Administrator can create a payment project.");
+    }
     const input = createInput(body);
     if (!input) {
       return paymentTrackError(400, "invalid_project", "Complete the Proposal Number, Specialist, customer, item and balance information.");

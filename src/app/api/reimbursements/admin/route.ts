@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getErpSession } from "@/lib/auth/session";
 import {
   createReimbursementAdminToken,
   isReimbursementAdmin,
@@ -85,6 +86,10 @@ export function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   if (!isAuthorizedMutationRequest(request)) {
     return noStoreJson({ error: "This request is not allowed.", code: "forbidden" }, { status: 403 });
+  }
+  const employeeSession = getErpSession(request);
+  if (employeeSession && employeeSession.user.role !== "admin") {
+    return noStoreJson({ error: "Administrator access is required.", code: "admin_required" }, { status: 403 });
   }
   const configuration = reimbursementAdminConfiguration();
   if (!configuration.password) {

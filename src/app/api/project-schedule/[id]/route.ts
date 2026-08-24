@@ -14,7 +14,7 @@ import {
   readProjectScheduleJson,
 } from "@/lib/project-schedule/request";
 import { parseProjectSchedulePatch } from "@/lib/project-schedule/validation";
-import { isAuthorizedMutationRequest } from "@/lib/server/proxy-security";
+import { isAuthorizedActorRequest, isAuthorizedMutationRequest } from "@/lib/server/proxy-security";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -33,6 +33,9 @@ export async function PATCH(
 ) {
   if (!isAuthorizedMutationRequest(request)) {
     return projectScheduleError(403, "forbidden", "This request is not allowed.");
+  }
+  if (!isAuthorizedActorRequest(request, "pm")) {
+    return projectScheduleError(403, "role_forbidden", "Only Project Managers or Administrators can update schedule jobs.");
   }
   const id = await projectId(context);
   if (!id) return projectScheduleError(400, "invalid_id", "The schedule job ID is invalid.");
@@ -67,6 +70,9 @@ export async function DELETE(
 ) {
   if (!isAuthorizedMutationRequest(request)) {
     return projectScheduleError(403, "forbidden", "This request is not allowed.");
+  }
+  if (!isAuthorizedActorRequest(request, "admin")) {
+    return projectScheduleError(403, "role_forbidden", "Only Administrators can delete schedule jobs.");
   }
   const id = await projectId(context);
   if (!id) return projectScheduleError(400, "invalid_id", "The schedule job ID is invalid.");

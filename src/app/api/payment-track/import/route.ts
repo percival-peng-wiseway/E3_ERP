@@ -17,7 +17,7 @@ import {
   safePaymentTrackOriginalName,
   strictFormFields,
 } from "@/lib/payment-track/request";
-import { isAuthorizedMutationRequest } from "@/lib/server/proxy-security";
+import { isAuthorizedActorRequest, isAuthorizedMutationRequest } from "@/lib/server/proxy-security";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -38,6 +38,9 @@ export async function POST(request: NextRequest) {
     }
     if (form.get("actorRole") !== "sales") {
       return paymentTrackError(403, "role_forbidden", "Only Sales can import a proposal.");
+    }
+    if (!isAuthorizedActorRequest(request, "sales")) {
+      return paymentTrackError(403, "role_forbidden", "Only Sales or an Administrator can import a proposal.");
     }
     const agreement = form.get("agreement");
     if (!(agreement instanceof File) || agreement.size < 1 || agreement.size > MAX_AGREEMENT_SIZE) {

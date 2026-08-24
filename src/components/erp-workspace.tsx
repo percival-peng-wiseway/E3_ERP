@@ -15,6 +15,7 @@ import {
   HelpCircle,
   Home,
   LockKeyhole,
+  LogOut,
   MapPin,
   Menu,
   PanelLeftClose,
@@ -25,7 +26,8 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { ERP_ROLE_LABELS, type ErpUser } from "@/lib/auth/types";
 import { groupOrders, type Order } from "@/lib/inventory-operations/types";
 import { AgentSettingsDialog } from "./agent-settings-dialog";
 import { HomeCollaborationWorkspace } from "./home-collaboration-workspace";
@@ -75,11 +77,65 @@ const MODULE_LABELS: Record<ModuleId, string> = {
   finance: "Finance & Accounting",
 };
 
-export function ERPWorkspace() {
+const ERP_BROWSER_ACCOUNT_KEY = "e3-erp-browser-account:v1";
+const LEGACY_AGENT_CONVERSATION_KEY = "e3-agent-conversation:v1";
+
+export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
   const [activeModule, setActiveModule] = useState<ModuleId>("home");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [agentSettingsOpen, setAgentSettingsOpen] = useState(false);
   const [pendingPmReviewCount, setPendingPmReviewCount] = useState<number | null>(null);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
+
+  const userInitials = currentUser.displayName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toLocaleUpperCase("en-AU"))
+    .join("") || currentUser.username.slice(0, 2).toLocaleUpperCase("en-AU");
+
+  useEffect(() => {
+    try {
+      const username = currentUser.username.toLocaleLowerCase("en-AU");
+      const previousUsername = window.localStorage.getItem(ERP_BROWSER_ACCOUNT_KEY);
+      if (previousUsername !== username) {
+        window.localStorage.removeItem(LEGACY_AGENT_CONVERSATION_KEY);
+        window.localStorage.setItem(ERP_BROWSER_ACCOUNT_KEY, username);
+      }
+    } catch {
+      // Login and workspace navigation still work when browser storage is unavailable.
+    }
+  }, [currentUser.username]);
+
+  useEffect(() => {
+    if (!userMenuOpen) return;
+    const closeMenu = (event: MouseEvent) => {
+      if (!userMenuRef.current?.contains(event.target as Node)) setUserMenuOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setUserMenuOpen(false);
+    };
+    document.addEventListener("mousedown", closeMenu);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeMenu);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [userMenuOpen]);
+
+  const signOut = async () => {
+    setSigningOut(true);
+    try {
+      const response = await fetch("/api/auth/logout", { method: "POST" });
+      if (!response.ok) throw new Error("Unable to sign out.");
+      window.location.assign("/login");
+    } catch {
+      setSigningOut(false);
+      window.alert("Unable to sign out right now. Please try again.");
+    }
+  };
 
   useEffect(() => {
     let active = true;
@@ -144,7 +200,27 @@ export function ERPWorkspace() {
         <div className="desk-actions">
           <button aria-label="Help"><HelpCircle size={18} /></button>
           <button className="notification" aria-label="Notifications"><Bell size={18} /><i /></button>
-          <button className="user-menu"><span>AD</span><div><strong>System Administrator</strong><small>Administrator</small></div><ChevronDown size={14} /></button>
+          <div className="user-account" ref={userMenuRef}>
+            <button
+              className="user-menu"
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded={userMenuOpen}
+              onClick={() => setUserMenuOpen((open) => !open)}
+            >
+              <span>{userInitials}</span>
+              <div><strong>{currentUser.displayName}</strong><small>{ERP_ROLE_LABELS[currentUser.role]}</small></div>
+              <ChevronDown size={14} />
+            </button>
+            {userMenuOpen ? (
+              <div className="user-popover" role="menu">
+                <div><strong>{currentUser.displayName}</strong><small>@{currentUser.username} · {ERP_ROLE_LABELS[currentUser.role]}</small></div>
+                <button type="button" role="menuitem" disabled={signingOut} onClick={() => void signOut()}>
+                  <LogOut size={15} />{signingOut ? "Signing out…" : "Sign out"}
+                </button>
+              </div>
+            ) : null}
+          </div>
         </div>
       </header>
 
@@ -196,7 +272,9 @@ export function ERPWorkspace() {
         </nav>
         <div className="sidebar-footer">
           <button className={activeModule === "reports" ? "active" : ""} onClick={() => navigate("reports")}><FileBarChart size={16} /><span>Reports</span></button>
-          <button onClick={() => setAgentSettingsOpen(true)}><Settings size={16} /><span>Settings</span></button>
+          {currentUser.role === "admin" ? (
+            <button onClick={() => setAgentSettingsOpen(true)}><Settings size={16} /><span>Settings</span></button>
+          ) : null}
           <div><i /><span>Business services operational</span></div>
         </div>
       </aside>
@@ -211,7 +289,7 @@ export function ERPWorkspace() {
         <main className={`desk-main ${activeModule === "home" || activeModule === "projects" || activeModule === "site-visits" || activeModule === "payments" || activeModule === "reimbursements" ? "wide-workspace" : ""}`}>
           <div className="persistent-home-workspace" hidden={activeModule !== "home"}>
             <HomeCollaborationWorkspace
-              onOpenSettings={() => setAgentSettingsOpen(true)}
+              onOpenSettings={currentUser.role === "admin" ? () => setAgentSettingsOpen(true) : undefined}
               onNavigate={(module) => navigate(module)}
             />
           </div>
@@ -219,13 +297,15 @@ export function ERPWorkspace() {
           {activeModule === "quotations" && <QuoteHelpWorkspace />}
           {activeModule === "projects" && <ProjectDeliveryBoard />}
           {activeModule === "site-visits" && <SiteVisitingWorkspace />}
-          {activeModule === "payments" && <PaymentTrackWorkspace />}
+          {activeModule === "payments" && <PaymentTrackWorkspace authenticatedRole={currentUser.role} />}
           {activeModule === "reimbursements" && <ReimbursementWorkspace />}
           {activeModule === "reports" && <ReportsWorkspace />}
           {activeModule === "finance" && <ComingSoon />}
         </main>
       </div>
-      <AgentSettingsDialog open={agentSettingsOpen} onClose={() => setAgentSettingsOpen(false)} />
+      {currentUser.role === "admin" ? (
+        <AgentSettingsDialog open={agentSettingsOpen} onClose={() => setAgentSettingsOpen(false)} />
+      ) : null}
     </div>
   );
 }

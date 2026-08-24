@@ -1,4 +1,5 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { getErpSession } from "@/lib/auth/session";
 
 export const REIMBURSEMENT_ADMIN_COOKIE = "e3_reimbursement_admin";
 export const REIMBURSEMENT_CLAIMANT_COOKIE = "e3_reimbursement_claimant";
@@ -56,6 +57,8 @@ export function reimbursementCookieValue(request: Request, name: string) {
 }
 
 export function isReimbursementAdmin(request: Request) {
+  const employeeSession = getErpSession(request);
+  if (employeeSession) return employeeSession.user.role === "admin";
   const { secret } = reimbursementAdminConfiguration();
   const token = reimbursementCookieValue(request, REIMBURSEMENT_ADMIN_COOKIE);
   if (!secret || !token) return false;

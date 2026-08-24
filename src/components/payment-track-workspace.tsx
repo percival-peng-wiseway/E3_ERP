@@ -38,6 +38,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { ErpRole } from "@/lib/auth/types";
 import type {
   PaymentTrackAction,
   PaymentTrackAdminSession,
@@ -427,9 +428,9 @@ function confirmedPaymentRecords(project: PaymentTrackProject): ConfirmedPayment
   return records.sort((left, right) => left.confirmedAt.localeCompare(right.confirmedAt));
 }
 
-export function PaymentTrackWorkspace() {
+export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole: ErpRole }) {
   const [projects, setProjects] = useState<PaymentTrackProject[]>([]);
-  const [role, setRole] = useState<PaymentTrackRole>("sales");
+  const [role, setRole] = useState<PaymentTrackRole>(authenticatedRole);
   const [adminSession, setAdminSession] = useState<PaymentTrackAdminSession>(EMPTY_ADMIN_SESSION);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -633,6 +634,10 @@ export function PaymentTrackWorkspace() {
   };
 
   const selectRole = (nextRole: PaymentTrackRole) => {
+    if (authenticatedRole !== "admin" && nextRole !== authenticatedRole) {
+      setNotice(`Your ${ROLE_LABELS[authenticatedRole]} account cannot switch to ${ROLE_LABELS[nextRole]}.`);
+      return;
+    }
     if (nextRole === "admin" && !adminSession.admin) {
       setShowAdminLogin(true);
       return;
@@ -1384,14 +1389,17 @@ export function PaymentTrackWorkspace() {
             <select
               aria-label="Working role"
               value={role}
+              disabled={authenticatedRole !== "admin"}
               onChange={(event) => selectRole(event.target.value as PaymentTrackRole)}
             >
-              {(Object.keys(ROLE_LABELS) as PaymentTrackRole[]).map((option) => (
+              {(authenticatedRole === "admin"
+                ? Object.keys(ROLE_LABELS) as PaymentTrackRole[]
+                : [authenticatedRole] as PaymentTrackRole[]).map((option) => (
                 <option key={option} value={option}>{ROLE_LABELS[option]}</option>
               ))}
             </select>
           </label>
-          {adminSession.admin && role === "admin" ? (
+          {authenticatedRole !== "admin" && adminSession.admin && role === "admin" ? (
             <button className={styles.adminButton} type="button" disabled={busy} onClick={() => void logoutAdmin()}>
               <ShieldCheck size={16} /> Admin active <LogOut size={14} />
             </button>

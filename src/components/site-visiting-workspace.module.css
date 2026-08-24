@@ -187,16 +187,18 @@
 
 .visitGrid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 13px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 420px));
+  justify-content: start;
+  gap: 11px;
 }
 
 .visitCard {
   min-width: 0;
-  padding: 17px;
+  padding: 12px;
+  overflow: hidden;
   background: #fff;
   border: 1px solid var(--visit-border);
-  border-radius: 12px;
+  border-radius: 10px;
   box-shadow: 0 2px 8px rgba(28, 48, 61, .035);
   transition: border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
 }
@@ -210,14 +212,18 @@
 .status_cancelled { color: #777f85; background: #eceff1; }
 .todayBadge { color: #1f70a9; background: #e8f4fc; }
 
-.visitCard h2 { overflow: hidden; margin: 13px 0 7px; color: #263640; font-size: 18px; font-weight: 720; letter-spacing: -.015em; text-overflow: ellipsis; white-space: nowrap; }
-.address { display: flex; min-height: 41px; align-items: flex-start; margin: 0; gap: 7px; color: #667680; font-size: 13px; line-height: 1.45; }
+.visitCard h2 { overflow: hidden; margin: 8px 0 4px; color: #263640; font-size: 18px; font-weight: 720; letter-spacing: -.015em; text-overflow: ellipsis; white-space: nowrap; }
+.address { display: flex; min-height: 0; align-items: flex-start; margin: 0; gap: 6px; color: #667680; font-size: 13px; line-height: 1.4; }
 .address svg { flex: 0 0 auto; margin-top: 1px; color: #63859d; }
-.cardMeta { display: flex; flex-wrap: wrap; margin-top: 12px; gap: 7px 15px; color: #536670; font-size: 12px; }
-.cardMeta span, .cardProgress span { display: inline-flex; align-items: center; gap: 5px; }
+.address span { display: -webkit-box; min-width: 0; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.cardMeta { display: flex; flex-wrap: wrap; margin-top: 8px; gap: 5px 12px; color: #536670; font-size: 12px; }
+.cardMeta span, .cardProgress span { display: inline-flex; min-width: 0; align-items: center; gap: 5px; overflow-wrap: anywhere; }
 .cardMeta svg { color: #8797a1; }
-.cardProgress { display: flex; align-items: center; justify-content: space-between; margin: 15px -17px 0; padding: 11px 17px; gap: 10px; color: #70808a; background: #f8fafb; border-top: 1px solid #edf1f3; border-bottom: 1px solid #edf1f3; font-size: 12px; }
-.openButton { display: flex; width: 100%; min-height: 42px; align-items: center; justify-content: space-between; margin-top: 10px; padding: 0; color: #226fa9; background: transparent; border: 0; font-size: 13px; font-weight: 720; cursor: pointer; }
+.cardFooter { display: flex; min-width: 0; min-height: 39px; align-items: stretch; margin: 10px -12px -12px; padding-left: 12px; gap: 6px; background: #f8fafb; border-top: 1px solid #edf1f3; }
+.cardProgress { display: flex; min-width: 0; flex: 1; align-items: center; justify-content: flex-start; gap: 6px 12px; color: #70808a; font-size: 12px; }
+.openButton { display: inline-flex; min-width: 94px; min-height: 39px; flex: 0 0 auto; align-items: center; justify-content: center; padding: 0 10px; gap: 4px; color: #226fa9; background: transparent; border: 0; border-left: 1px solid #e6ecef; font-size: 13px; font-weight: 720; cursor: pointer; }
+.openButton:hover { background: #eef6fb; }
+.openButton:focus-visible { outline: 2px solid #77b2dc; outline-offset: -3px; }
 
 .loadingState,
 .emptyState {
@@ -384,6 +390,9 @@
   .filters { width: 100%; }
   .filters button { flex: 0 0 auto; min-height: 39px; }
   .visitGrid { grid-template-columns: 1fr; }
+  .visitCard { padding: 13px; }
+  .cardFooter { min-height: 44px; margin: 11px -13px -13px; padding-left: 13px; }
+  .openButton { min-height: 44px; padding-inline: 13px; }
   .overlay { align-items: stretch; padding: 0; background: #f5f7f8; }
   .sheet { width: 100%; max-height: 100dvh; border: 0; border-radius: 0; box-shadow: none; }
   .sheetHeader { min-height: 70px; padding: max(10px, env(safe-area-inset-top)) 14px 10px; }

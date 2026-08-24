@@ -16,7 +16,7 @@ import {
   parseProjectScheduleCreate,
   projectScheduleDate,
 } from "@/lib/project-schedule/validation";
-import { isAuthorizedMutationRequest } from "@/lib/server/proxy-security";
+import { isAuthorizedActorRequest, isAuthorizedMutationRequest } from "@/lib/server/proxy-security";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -48,6 +48,9 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   if (!isAuthorizedMutationRequest(request)) {
     return projectScheduleError(403, "forbidden", "This request is not allowed.");
+  }
+  if (!isAuthorizedActorRequest(request, "pm")) {
+    return projectScheduleError(403, "role_forbidden", "Only Project Managers or Administrators can create schedule jobs.");
   }
   if (!projectScheduleRequestIsJson(request)) {
     return projectScheduleError(415, "unsupported_media_type", "Send the schedule job as JSON.");
