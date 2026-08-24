@@ -149,7 +149,7 @@ GROUP_CHAT_DATA_DIR=
 - Upstream cookies are placed in separate ERP namespaces with restricted paths. ERP, Clerk and other application cookies are never forwarded to external business services.
 - Browser writes require both a valid employee session and a verifiably same-origin request. Trusted server writes require the `ERP_INTERNAL_API_TOKEN` bearer token.
 - QuoteHelp Excel uploads are limited to 25 MiB; Inventory JSON operations are limited to 512 KiB.
-- Agent and Agent Settings writes are same-origin protected and body-size limited. The API key is stored in a private `0700` directory using an atomic `0600` file and is returned only as a masked configured state.
+- Agent and Agent Settings writes are same-origin protected and body-size limited. Local development stores the optional API key in a private `0700` directory using an atomic `0600` file; Cloudflare production stores saved settings in server-side D1. The key is returned only as a masked configured state, and a Cloudflare Secret remains preferred for production credentials.
 - The model connection is restricted to approved HTTPS hosts. Model tools strictly validate their arguments and return bounded, sanitised, read-only records.
 
 The home summary and retained read-only Agent/MCP APIs can use separate unified data sources:
@@ -174,7 +174,7 @@ PAYMENT_TRACK_ENFORCE_UNIQUE_PROPOSAL=false
 SITE_VISIT_DATA_DIR=
 ```
 
-Local development includes the legacy Admin demo password `admin` for the module-specific fallback. Production employee login requires `ERP_AUTH_SESSION_SECRET` with at least 32 random characters. Before cloud or multi-server deployment, replace local JSON/file storage with a managed database and private object storage. Company SSO can replace the built-in employee directory later without changing the module APIs.
+Local development includes the legacy Admin demo password `admin` for the module-specific fallback. Production employee login requires `ERP_AUTH_SESSION_SECRET` with at least 32 random characters. Cloudflare production uses D1 for the app's structured records and private Workers KV for Payment Track files, Site Visiting photos and Reimbursement invoices; local development retains the `.data` fallback. Company SSO can replace the built-in employee directory later without changing the module APIs.
 
 Payment Track currently allows repeated Proposal Numbers so the same proposal can be uploaded more than once during testing. Set `PAYMENT_TRACK_ENFORCE_UNIQUE_PROPOSAL=true` when testing is complete to restore the duplicate check. Every duplicate still receives its own project ID, `PAY-...` reference and stored contract file.
 

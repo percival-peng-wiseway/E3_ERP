@@ -6,6 +6,7 @@ import {
 } from "@/lib/announcements/repository";
 import {
   announcementError,
+  AnnouncementInvalidJson,
   announcementJson,
   AnnouncementRequestTooLarge,
   declaredAnnouncementBodyTooLarge,
@@ -41,7 +42,7 @@ function mutationAuthorizationError(request: Request) {
 
 function repositoryError(error: unknown) {
   return error instanceof AnnouncementRepositoryError
-    ? announcementError(404, error.code, error.message)
+    ? announcementError(error.status, error.code, error.message)
     : null;
 }
 
@@ -79,7 +80,7 @@ export async function PATCH(
     if (error instanceof AnnouncementRequestTooLarge) {
       return announcementError(413, "request_too_large", "The announcement update is too large.");
     }
-    if (error instanceof SyntaxError || error instanceof TypeError) {
+    if (error instanceof AnnouncementInvalidJson) {
       return announcementError(400, "invalid_json", "The request body is invalid.");
     }
     return announcementError(500, "update_failed", "The public announcement could not be updated.");
@@ -114,4 +115,3 @@ export async function DELETE(
     return announcementError(500, "delete_failed", "The public announcement could not be deleted.");
   }
 }
-

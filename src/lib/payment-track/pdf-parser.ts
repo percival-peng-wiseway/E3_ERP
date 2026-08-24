@@ -1,21 +1,128 @@
-import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
-// PDF.js does not publish declarations for its worker bundle, but the exported
-// handler is the supported fake-worker entry point used by the Node build.
-// @ts-expect-error -- pdf.worker.mjs has no accompanying declaration file.
-import { WorkerMessageHandler } from "pdfjs-dist/legacy/build/pdf.worker.mjs";
 import type {
   PaymentTrackCustomer,
   PaymentTrackItem,
   PaymentTrackSpecialist,
 } from "./types";
 
-// Next/Turbopack relocates the server bundle, so PDF.js cannot resolve its
-// default relative `./pdf.worker.mjs` at runtime. Supplying the already-bundled
-// handler keeps PDF parsing self-contained and avoids filesystem path guessing.
-const pdfWorkerGlobal = globalThis as typeof globalThis & {
-  pdfjsWorker?: { WorkerMessageHandler: typeof WorkerMessageHandler };
+type MatrixSource = ArrayLike<number> | {
+  a?: number;
+  b?: number;
+  c?: number;
+  d?: number;
+  e?: number;
+  f?: number;
 };
-pdfWorkerGlobal.pdfjsWorker ??= { WorkerMessageHandler };
+
+// PDF.js references DOMMatrix while its server bundle is evaluated, even for
+// text-only extraction. Cloudflare Workers do not provide that browser API.
+// This small 2D implementation covers the matrix operations PDF.js uses and is
+// installed only immediately before PDF.js is loaded.
+class PdfDomMatrix {
+  a = 1;
+  b = 0;
+  c = 0;
+  d = 1;
+  e = 0;
+  f = 0;
+
+  constructor(source?: MatrixSource) {
+    if (!source) return;
+    if (typeof (source as ArrayLike<number>).length === "number") {
+      const values = Array.from(source as ArrayLike<number>);
+      if (values.length >= 6) [this.a, this.b, this.c, this.d, this.e, this.f] = values;
+      return;
+    }
+    const value = source as Exclude<MatrixSource, ArrayLike<number>>;
+    this.a = value.a ?? 1;
+    this.b = value.b ?? 0;
+    this.c = value.c ?? 0;
+    this.d = value.d ?? 1;
+    this.e = value.e ?? 0;
+    this.f = value.f ?? 0;
+  }
+
+  get is2D() { return true; }
+  get m11() { return this.a; }
+  get m12() { return this.b; }
+  get m21() { return this.c; }
+  get m22() { return this.d; }
+  get m41() { return this.e; }
+  get m42() { return this.f; }
+
+  private values(other: MatrixSource) {
+    const matrix = new PdfDomMatrix(other);
+    return [matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f] as const;
+  }
+
+  multiplySelf(other: MatrixSource) {
+    const [a, b, c, d, e, f] = this.values(other);
+    const current = [this.a, this.b, this.c, this.d, this.e, this.f] as const;
+    this.a = current[0] * a + current[2] * b;
+    this.b = current[1] * a + current[3] * b;
+    this.c = current[0] * c + current[2] * d;
+    this.d = current[1] * c + current[3] * d;
+    this.e = current[0] * e + current[2] * f + current[4];
+    this.f = current[1] * e + current[3] * f + current[5];
+    return this;
+  }
+
+  preMultiplySelf(other: MatrixSource) {
+    const matrix = new PdfDomMatrix(other).multiplySelf(this);
+    [this.a, this.b, this.c, this.d, this.e, this.f] = [
+      matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f,
+    ];
+    return this;
+  }
+
+  multiply(other: MatrixSource) { return new PdfDomMatrix(this).multiplySelf(other); }
+  translate(x = 0, y = 0) { return this.multiply([1, 0, 0, 1, x, y]); }
+  scale(x = 1, y = x) { return this.multiply([x, 0, 0, y, 0, 0]); }
+  translateSelf(x = 0, y = 0) { return this.multiplySelf([1, 0, 0, 1, x, y]); }
+  scaleSelf(x = 1, y = x) { return this.multiplySelf([x, 0, 0, y, 0, 0]); }
+
+  invertSelf() {
+    const determinant = this.a * this.d - this.b * this.c;
+    if (!determinant) {
+      this.a = this.b = this.c = this.d = this.e = this.f = Number.NaN;
+      return this;
+    }
+    const [a, b, c, d, e, f] = [this.a, this.b, this.c, this.d, this.e, this.f] as const;
+    this.a = d / determinant;
+    this.b = -b / determinant;
+    this.c = -c / determinant;
+    this.d = a / determinant;
+    this.e = (c * f - d * e) / determinant;
+    this.f = (b * e - a * f) / determinant;
+    return this;
+  }
+}
+
+let pdfRuntime: Promise<typeof import("pdfjs-dist/legacy/build/pdf.mjs")> | null = null;
+
+async function loadPdfRuntime() {
+  if (!globalThis.DOMMatrix) {
+    Object.defineProperty(globalThis, "DOMMatrix", {
+      configurable: true,
+      value: PdfDomMatrix,
+      writable: true,
+    });
+  }
+  pdfRuntime ??= Promise.all([
+    import("pdfjs-dist/legacy/build/pdf.mjs"),
+    // PDF.js does not publish declarations for its worker bundle.
+    // @ts-expect-error -- pdf.worker.mjs has no accompanying declaration file.
+    import("pdfjs-dist/legacy/build/pdf.worker.mjs"),
+  ]).then(([runtime, worker]) => {
+    // Next/Turbopack relocates the server bundle, so PDF.js cannot resolve its
+    // relative worker automatically. Register the bundled fake-worker handler.
+    const pdfWorkerGlobal = globalThis as typeof globalThis & {
+      pdfjsWorker?: { WorkerMessageHandler: unknown };
+    };
+    pdfWorkerGlobal.pdfjsWorker ??= { WorkerMessageHandler: worker.WorkerMessageHandler };
+    return runtime;
+  });
+  return pdfRuntime;
+}
 
 export type ParsedPaymentAgreement = {
   quoteNumber: string;
@@ -77,6 +184,7 @@ type ExtractedPdfText = {
 };
 
 async function extractPdfText(bytes: Uint8Array): Promise<ExtractedPdfText> {
+  const { getDocument } = await loadPdfRuntime();
   const loadingTask = getDocument({
     data: new Uint8Array(bytes),
     disableFontFace: true,

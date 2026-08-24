@@ -1,7 +1,12 @@
 import { getErpSession, isErpAdmin } from "@/lib/auth/session";
-import { createAnnouncement, listAnnouncements } from "@/lib/announcements/repository";
+import {
+  AnnouncementRepositoryError,
+  createAnnouncement,
+  listAnnouncements,
+} from "@/lib/announcements/repository";
 import {
   announcementError,
+  AnnouncementInvalidJson,
   announcementJson,
   AnnouncementRequestTooLarge,
   declaredAnnouncementBodyTooLarge,
@@ -68,10 +73,12 @@ export async function POST(request: Request) {
     if (error instanceof AnnouncementRequestTooLarge) {
       return announcementError(413, "request_too_large", "The announcement request is too large.");
     }
-    if (error instanceof SyntaxError || error instanceof TypeError) {
+    if (error instanceof AnnouncementInvalidJson) {
       return announcementError(400, "invalid_json", "The request body is invalid.");
+    }
+    if (error instanceof AnnouncementRepositoryError) {
+      return announcementError(error.status, error.code, error.message);
     }
     return announcementError(500, "save_failed", "The public announcement could not be saved.");
   }
 }
-

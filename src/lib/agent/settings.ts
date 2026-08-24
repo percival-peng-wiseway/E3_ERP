@@ -1,6 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import {
+  CloudflareDocumentConflictError,
+  CloudflareStorageConfigurationError,
+  erpCloudflareBindings,
+  readVersionedDocument,
+  writeVersionedDocument,
+} from "@/lib/server/cloudflare-storage";
 
 export const DEFAULT_AGENT_BASE_URL = "https://navigator-spongy-diagnosis.ngrok-free.dev/v1";
 export const DEFAULT_AGENT_MODEL = "qwen3.5:9b";
@@ -49,10 +56,26 @@ const dataRoot = path.resolve(
   process.env.AGENT_SETTINGS_DATA_DIR || path.join(process.cwd(), ".data", "agent"),
 );
 const settingsPath = path.join(/* turbopackIgnore: true */ dataRoot, "settings.json");
+const CLOUDFLARE_DOCUMENT_KEY = "agent/settings";
+const MAXIMUM_STORAGE_RETRIES = 5;
 let mutationQueue: Promise<void> = Promise.resolve();
 
 function withMutation<T>(work: () => Promise<T>): Promise<T> {
-  const result = mutationQueue.then(work, work);
+  const retryingWork = async () => {
+    for (let attempt = 0; attempt < MAXIMUM_STORAGE_RETRIES; attempt += 1) {
+      try {
+        return await work();
+      } catch (error) {
+        if (!(error instanceof CloudflareDocumentConflictError)) throw error;
+      }
+    }
+    throw new AgentSettingsError(
+      "Agent settings changed while this request was being saved. Try again.",
+      409,
+      "settings_conflict",
+    );
+  };
+  const result = mutationQueue.then(retryingWork, retryingWork);
   mutationQueue = result.then(() => undefined, () => undefined);
   return result;
 }
@@ -122,29 +145,75 @@ function normalizeStoredSettings(value: unknown): StoredAgentSettings | null {
   }
 }
 
-async function readStoredSettings(): Promise<StoredAgentSettings | null> {
+function normalizedStoredSettings(value: unknown) {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const legacy = value as { baseUrl?: unknown; model?: unknown };
+    if (legacy.baseUrl === "https://api.deepseek.com"
+      || (typeof legacy.model === "string" && legacy.model.startsWith("deepseek-"))) {
+      return null;
+    }
+  }
+  const settings = value === null ? null : normalizeStoredSettings(value);
+  if (value !== null && !settings) {
+    throw new AgentSettingsError("The saved Agent settings are invalid.", 500, "settings_corrupt");
+  }
+  return settings;
+}
+
+async function readStoredSettingsDocument(): Promise<{
+  settings: StoredAgentSettings | null;
+  version: number | null;
+}> {
+  const bindings = await erpCloudflareBindings();
+  if (bindings) {
+    if (!bindings.database) {
+      throw new CloudflareStorageConfigurationError("The ERP_DB binding is missing.");
+    }
+    const document = await readVersionedDocument<unknown>(bindings.database, CLOUDFLARE_DOCUMENT_KEY);
+    return {
+      settings: normalizedStoredSettings(document.value),
+      version: document.version,
+    };
+  }
+
   await ensureStorage();
   try {
     const raw = await readFile(/* turbopackIgnore: true */ settingsPath, "utf8");
     const parsed: unknown = JSON.parse(raw);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      const legacy = parsed as { baseUrl?: unknown; model?: unknown };
-      if (legacy.baseUrl === "https://api.deepseek.com"
-        || (typeof legacy.model === "string" && legacy.model.startsWith("deepseek-"))) {
-        return null;
-      }
-    }
-    const settings = normalizeStoredSettings(parsed);
-    if (!settings) throw new AgentSettingsError("The saved Agent settings are invalid.", 500, "settings_corrupt");
     await chmod(settingsPath, 0o600);
-    return settings;
+    return { settings: normalizedStoredSettings(parsed), version: null };
   } catch (error) {
-    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return null;
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      return { settings: null, version: null };
+    }
     throw error;
   }
 }
 
-async function writeStoredSettings(settings: StoredAgentSettings) {
+async function writeStoredSettings(
+  settings: StoredAgentSettings | null,
+  expectedVersion: number | null,
+) {
+  const bindings = await erpCloudflareBindings();
+  if (bindings) {
+    if (!bindings.database || expectedVersion === null) {
+      throw new CloudflareStorageConfigurationError("The ERP_DB binding is missing.");
+    }
+    await writeVersionedDocument(
+      bindings.database,
+      CLOUDFLARE_DOCUMENT_KEY,
+      settings,
+      expectedVersion,
+    );
+    return;
+  }
+
+  if (!settings) {
+    await unlink(settingsPath).catch((error: unknown) => {
+      if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) throw error;
+    });
+    return;
+  }
   await ensureStorage();
   const temporaryPath = path.join(/* turbopackIgnore: true */ dataRoot, `.settings-${randomUUID()}.tmp`);
   try {
@@ -190,10 +259,11 @@ function environmentSettings() {
 
 export async function resolveAgentSettings(): Promise<ResolvedAgentSettings> {
   await mutationQueue;
-  const [saved, environment] = await Promise.all([
-    readStoredSettings(),
+  const [document, environment] = await Promise.all([
+    readStoredSettingsDocument(),
     Promise.resolve(environmentSettings()),
   ]);
+  const saved = document.settings;
   const apiKey = saved?.apiKey || environment.apiKey;
   return {
     apiKey,
@@ -226,7 +296,8 @@ export function saveAgentSettings(input: {
   model: string;
 }): Promise<PublicAgentSettings> {
   return withMutation(async () => {
-    const current = await readStoredSettings();
+    const document = await readStoredSettingsDocument();
+    const current = document.settings;
     const suppliedKey = input.apiKey?.trim();
     const apiKey = suppliedKey ? normalizedApiKey(suppliedKey) : current?.apiKey;
     await writeStoredSettings({
@@ -234,7 +305,7 @@ export function saveAgentSettings(input: {
       baseUrl: normalizedBaseUrl(input.baseUrl),
       model: normalizedModel(input.model),
       updatedAt: new Date().toISOString(),
-    });
+    }, document.version);
     const environment = environmentSettings();
     const resolvedKey = apiKey || environment.apiKey;
     return {
@@ -249,9 +320,8 @@ export function saveAgentSettings(input: {
 
 export function clearAgentSettings(): Promise<PublicAgentSettings> {
   return withMutation(async () => {
-    await unlink(settingsPath).catch((error: unknown) => {
-      if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) throw error;
-    });
+    const document = await readStoredSettingsDocument();
+    await writeStoredSettings(null, document.version);
     const environment = environmentSettings();
     return {
       configured: true,

@@ -58,22 +58,35 @@ npm run preview
 
 `npm run preview` runs the OpenNext production bundle in the Workers runtime. Regular application development still uses `npm run dev`.
 
-## Current storage limitation
+## Production storage
 
 Inventory and QuoteHelp continue to save to their existing upstream services, so those two modules retain their data after deployment.
 
-The modules below currently use the local `.data` filesystem:
+Worker-hosted business modules use the resources declared in `wrangler.jsonc`:
 
-- Site Visiting records and photos
-- Payment Track records, contracts and proof files
-- Reimbursements records and invoices
-- Project Schedule
-- Reports
-- Group Chat
-- Public Announcements
-- Saved Agent settings
+- `ERP_DB` (D1) stores versioned Payment Track, Project Schedule, Site Visiting, Reimbursements, Reports, Group Chat, Public Announcements and saved Agent-settings documents. Compare-and-swap updates are retried so separate Worker isolates cannot silently overwrite each other.
+- `ERP_FILES` (private Workers KV) stores immutable Payment Track contracts/payment proofs, Site Visiting photos and Reimbursement invoices. API authorization and per-file access tokens still protect every download.
+- Local development continues to use the corresponding `.data` files, so Node-based development and focused repository tests do not need Cloudflare bindings.
 
-Cloudflare Workers only provides an ephemeral in-memory filesystem. These file-backed routes are **not production-functional on Workers yet**: reads can fail and writes cannot persist across requests or deployments. Before enabling them in the Cloudflare deployment, move structured records to D1 and uploaded files to R2. Keep API keys in Cloudflare Secrets rather than saved Agent settings.
+Apply D1 migrations before a first deployment:
+
+```bash
+npx wrangler d1 migrations apply e3-erp-prod --remote
+```
+
+To import existing local Payment Track, Project Schedule and Site Visiting data without placing customer records or files in Git, run this once after reviewing the destination Cloudflare account:
+
+```bash
+npm run cf:migrate-local-data -- --confirm-sensitive-upload
+```
+
+The import stops before uploading when any destination D1 document already exists. Referenced private files receive fresh immutable object keys before they are uploaded to `ERP_FILES`.
+
+The migration command intentionally covers Payment Track, Project Schedule and Site Visiting only. Reimbursement records/invoices and other local documents can contain additional private employee data and must not be uploaded without a separate review and explicit approval. New production records in those modules are persisted automatically.
+
+Prefer the `AGENT_API_KEY` Cloudflare Secret for long-lived Agent credentials. The settings UI can save a replacement server-side, but local Agent settings—including any existing key—are never copied by the migration script.
+
+Each structured module currently uses one bounded, versioned D1 document. The server rejects a document before it reaches D1's row-size limit; archive or split older records if a module approaches that guard. Private KV objects use random immutable keys. R2 is the preferred future backend if immediate cross-region read-after-write for large files becomes necessary.
 
 ## CLI deployment alternative
 

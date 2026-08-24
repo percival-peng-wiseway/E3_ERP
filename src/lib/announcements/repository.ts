@@ -1,6 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import {
+  CloudflareDocumentConflictError,
+  CloudflareStorageConfigurationError,
+  erpCloudflareBindings,
+  readVersionedDocument,
+  writeVersionedDocument,
+// Focused Node ESM tests require the explicit extension; Next's server bundler
+// supports the same import path.
+// @ts-expect-error -- the project intentionally does not enable emit-time extension imports.
+} from "../server/cloudflare-storage.ts";
 import type { Announcement, AnnouncementCreateInput, AnnouncementPatchInput } from "./types";
 import {
   ANNOUNCEMENT_MAX_CONTENT_LENGTH,
@@ -18,14 +28,18 @@ const dataRoot = path.resolve(
   process.env.ANNOUNCEMENTS_DATA_DIR || path.join(process.cwd(), ".data", "announcements"),
 );
 const recordsPath = path.join(/* turbopackIgnore: true */ dataRoot, "records.json");
+const CLOUDFLARE_DOCUMENT_KEY = "announcements/records";
+const MAXIMUM_STORAGE_RETRIES = 5;
 let mutationQueue: Promise<void> = Promise.resolve();
 
 export class AnnouncementRepositoryError extends Error {
-  readonly code: "not_found";
+  readonly status: number;
+  readonly code: "not_found" | "storage_conflict";
 
-  constructor(code: "not_found") {
-    super(code === "not_found" ? "The announcement does not exist." : code);
+  constructor(message: string, status: number, code: "not_found" | "storage_conflict") {
+    super(message);
     this.name = "AnnouncementRepositoryError";
+    this.status = status;
     this.code = code;
   }
 }
@@ -61,24 +75,58 @@ function isStoredAnnouncement(value: unknown): value is Announcement {
     && validAnnouncementCreator(candidate.createdBy);
 }
 
-async function readStoredAnnouncements(): Promise<Announcement[]> {
+function normalizedAnnouncements(parsed: unknown) {
+  if (!Array.isArray(parsed)
+    || !parsed.every(isStoredAnnouncement)
+    || new Set(parsed.map((announcement) => announcement.id)).size !== parsed.length) {
+    throw new Error("Announcement data has an invalid format.");
+  }
+  return parsed.slice(-ANNOUNCEMENT_MAX_RECORDS);
+}
+
+async function readStoredAnnouncementDocument(): Promise<{
+  announcements: Announcement[];
+  version: number | null;
+}> {
+  const bindings = await erpCloudflareBindings();
+  if (bindings) {
+    if (!bindings.database) {
+      throw new CloudflareStorageConfigurationError("The ERP_DB binding is missing.");
+    }
+    const document = await readVersionedDocument<unknown>(bindings.database, CLOUDFLARE_DOCUMENT_KEY);
+    return {
+      announcements: normalizedAnnouncements(document.value ?? []),
+      version: document.version,
+    };
+  }
+
   await ensureStorage();
   try {
     const raw = await readFile(/* turbopackIgnore: true */ recordsPath, "utf8");
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)
-      || !parsed.every(isStoredAnnouncement)
-      || new Set(parsed.map((announcement) => announcement.id)).size !== parsed.length) {
-      throw new Error("Announcement data has an invalid format.");
-    }
-    return parsed.slice(-ANNOUNCEMENT_MAX_RECORDS);
+    return { announcements: normalizedAnnouncements(JSON.parse(raw)), version: null };
   } catch (error) {
-    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return [];
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      return { announcements: [], version: null };
+    }
     throw error;
   }
 }
 
-async function writeStoredAnnouncements(announcements: Announcement[]) {
+async function writeStoredAnnouncements(announcements: Announcement[], expectedVersion: number | null) {
+  const bindings = await erpCloudflareBindings();
+  if (bindings) {
+    if (!bindings.database || expectedVersion === null) {
+      throw new CloudflareStorageConfigurationError("The ERP_DB binding is missing.");
+    }
+    await writeVersionedDocument(
+      bindings.database,
+      CLOUDFLARE_DOCUMENT_KEY,
+      announcements,
+      expectedVersion,
+    );
+    return;
+  }
+
   await ensureStorage();
   const temporaryPath = path.join(/* turbopackIgnore: true */ dataRoot, `.records-${randomUUID()}.tmp`);
   try {
@@ -95,13 +143,28 @@ async function writeStoredAnnouncements(announcements: Announcement[]) {
 }
 
 function withMutation<T>(work: () => Promise<T>): Promise<T> {
-  const result = mutationQueue.then(work, work);
+  const retryingWork = async () => {
+    for (let attempt = 0; attempt < MAXIMUM_STORAGE_RETRIES; attempt += 1) {
+      try {
+        return await work();
+      } catch (error) {
+        if (!(error instanceof CloudflareDocumentConflictError)) throw error;
+      }
+    }
+    throw new AnnouncementRepositoryError(
+      "Announcements changed while this request was being saved. Try again.",
+      409,
+      "storage_conflict",
+    );
+  };
+  const result = mutationQueue.then(retryingWork, retryingWork);
   mutationQueue = result.then(() => undefined, () => undefined);
   return result;
 }
 
-export function listAnnouncements(): Promise<Announcement[]> {
-  return mutationQueue.then(async () => (await readStoredAnnouncements()).reverse());
+export async function listAnnouncements(): Promise<Announcement[]> {
+  await mutationQueue;
+  return (await readStoredAnnouncementDocument()).announcements.reverse();
 }
 
 export function createAnnouncement(
@@ -109,7 +172,8 @@ export function createAnnouncement(
   createdBy: string,
 ): Promise<Announcement> {
   return withMutation(async () => {
-    const announcements = await readStoredAnnouncements();
+    const document = await readStoredAnnouncementDocument();
+    const announcements = document.announcements;
     const announcement: Announcement = {
       id: randomUUID(),
       title: input.title,
@@ -118,7 +182,10 @@ export function createAnnouncement(
       createdBy,
     };
     announcements.push(announcement);
-    await writeStoredAnnouncements(announcements.slice(-ANNOUNCEMENT_MAX_RECORDS));
+    await writeStoredAnnouncements(
+      announcements.slice(-ANNOUNCEMENT_MAX_RECORDS),
+      document.version,
+    );
     return announcement;
   });
 }
@@ -128,23 +195,29 @@ export function updateAnnouncement(
   patch: AnnouncementPatchInput,
 ): Promise<Announcement> {
   return withMutation(async () => {
-    const announcements = await readStoredAnnouncements();
+    const document = await readStoredAnnouncementDocument();
+    const announcements = document.announcements;
     const index = announcements.findIndex((announcement) => announcement.id === id);
-    if (index < 0) throw new AnnouncementRepositoryError("not_found");
+    if (index < 0) {
+      throw new AnnouncementRepositoryError("The announcement does not exist.", 404, "not_found");
+    }
     const updated: Announcement = { ...announcements[index], ...patch };
     announcements[index] = updated;
-    await writeStoredAnnouncements(announcements);
+    await writeStoredAnnouncements(announcements, document.version);
     return updated;
   });
 }
 
 export function deleteAnnouncement(id: string): Promise<string> {
   return withMutation(async () => {
-    const announcements = await readStoredAnnouncements();
+    const document = await readStoredAnnouncementDocument();
+    const announcements = document.announcements;
     const index = announcements.findIndex((announcement) => announcement.id === id);
-    if (index < 0) throw new AnnouncementRepositoryError("not_found");
+    if (index < 0) {
+      throw new AnnouncementRepositoryError("The announcement does not exist.", 404, "not_found");
+    }
     announcements.splice(index, 1);
-    await writeStoredAnnouncements(announcements);
+    await writeStoredAnnouncements(announcements, document.version);
     return id;
   });
 }

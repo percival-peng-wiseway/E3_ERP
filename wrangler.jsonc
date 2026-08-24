@@ -11,6 +11,20 @@
     "directory": ".open-next/assets",
     "binding": "ASSETS"
   },
+  "d1_databases": [
+    {
+      "binding": "ERP_DB",
+      "database_name": "e3-erp-prod",
+      "database_id": "fce8d663-dfe8-4957-9f12-1e7f4f8a5414",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "ERP_FILES",
+      "id": "b157693bb7ba480d97fd41894e26184a"
+    }
+  ],
   "observability": {
     "enabled": true
   },

@@ -215,6 +215,9 @@ export async function POST(request: NextRequest) {
     if (error instanceof RequestBodyTooLarge) {
       return errorResponse(413, "file_too_large", "The invoice must be 10 MB or smaller.");
     }
+    if (error instanceof ReimbursementRepositoryError) {
+      return errorResponse(error.status, error.code, error.message);
+    }
     if (error instanceof TypeError || error instanceof SyntaxError) {
       return errorResponse(400, "invalid_form", "The reimbursement form is invalid.");
     }

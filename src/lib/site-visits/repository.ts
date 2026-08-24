@@ -1,6 +1,13 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rmdir, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import {
+  CloudflareDocumentConflictError,
+  CloudflareStorageConfigurationError,
+  erpCloudflareBindings,
+  readVersionedDocument,
+  writeVersionedDocument,
+} from "@/lib/server/cloudflare-storage";
 import type {
   SiteVisit,
   SiteVisitCreateInput,
@@ -26,11 +33,11 @@ type StoredSiteVisit = Omit<SiteVisit, "photos"> & {
 };
 
 export interface SiteVisitPhotoFile {
-  path: string;
   originalName: string;
   contentType: SiteVisitPhotoType;
   size: number;
   accessToken: string;
+  read(): Promise<Uint8Array>;
 }
 
 export class SiteVisitRepositoryError extends Error {
@@ -57,6 +64,8 @@ const dataRoot = path.resolve(
 );
 const recordsPath = path.join(/* turbopackIgnore: true */ dataRoot, "records.json");
 const photosRoot = path.join(/* turbopackIgnore: true */ dataRoot, "photos");
+const CLOUDFLARE_DOCUMENT_KEY = "site-visits/records";
+const MAXIMUM_STORAGE_RETRIES = 5;
 const ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{32}$/;
 const STORED_PHOTO_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(?:jpg|png|webp)$/i;
@@ -65,7 +74,21 @@ const MAX_PHOTOS_PER_VISIT = 100;
 let mutationQueue: Promise<void> = Promise.resolve();
 
 function withMutation<T>(work: () => Promise<T>) {
-  const result = mutationQueue.then(work, work);
+  const retryingWork = async () => {
+    for (let attempt = 0; attempt < MAXIMUM_STORAGE_RETRIES; attempt += 1) {
+      try {
+        return await work();
+      } catch (error) {
+        if (!(error instanceof CloudflareDocumentConflictError)) throw error;
+      }
+    }
+    throw new SiteVisitRepositoryError(
+      "Site Visiting changed while this request was being saved. Try again.",
+      409,
+      "storage_conflict",
+    );
+  };
+  const result = mutationQueue.then(retryingWork, retryingWork);
   mutationQueue = result.then(() => undefined, () => undefined);
   return result;
 }
@@ -157,25 +180,52 @@ function normalizeStoredVisit(value: unknown): StoredSiteVisit {
   };
 }
 
-async function readStoredVisits(): Promise<StoredSiteVisit[]> {
+function normalizedStoredVisits(parsed: unknown) {
+  if (!Array.isArray(parsed)) {
+    throw new SiteVisitRepositoryError("Site Visiting data is invalid.", 500, "invalid_storage");
+  }
+  const visits = parsed.map(normalizeStoredVisit);
+  if (new Set(visits.map(({ id }) => id)).size !== visits.length) {
+    throw new SiteVisitRepositoryError("Stored site visit IDs are invalid.", 500, "invalid_storage");
+  }
+  return visits;
+}
+
+async function readStoredVisitDocument(): Promise<{ visits: StoredSiteVisit[]; version: number | null }> {
+  const bindings = await erpCloudflareBindings();
+  if (bindings) {
+    if (!bindings.database) {
+      throw new CloudflareStorageConfigurationError("The ERP_DB binding is missing.");
+    }
+    const document = await readVersionedDocument<unknown>(bindings.database, CLOUDFLARE_DOCUMENT_KEY);
+    return {
+      visits: normalizedStoredVisits(document.value ?? []),
+      version: document.version,
+    };
+  }
+
   await ensureStorage();
   try {
-    const parsed: unknown = JSON.parse(await readFile(recordsPath, "utf8"));
-    if (!Array.isArray(parsed)) {
-      throw new SiteVisitRepositoryError("Site Visiting data is invalid.", 500, "invalid_storage");
-    }
-    const visits = parsed.map(normalizeStoredVisit);
-    if (new Set(visits.map(({ id }) => id)).size !== visits.length) {
-      throw new SiteVisitRepositoryError("Stored site visit IDs are invalid.", 500, "invalid_storage");
-    }
-    return visits;
+    return {
+      visits: normalizedStoredVisits(JSON.parse(await readFile(recordsPath, "utf8"))),
+      version: null,
+    };
   } catch (error) {
-    if (isFileSystemError(error, "ENOENT")) return [];
+    if (isFileSystemError(error, "ENOENT")) return { visits: [], version: null };
     throw error;
   }
 }
 
-async function writeStoredVisits(visits: StoredSiteVisit[]) {
+async function writeStoredVisits(visits: StoredSiteVisit[], expectedVersion: number | null) {
+  const bindings = await erpCloudflareBindings();
+  if (bindings) {
+    if (!bindings.database || expectedVersion === null) {
+      throw new CloudflareStorageConfigurationError("The ERP_DB binding is missing.");
+    }
+    await writeVersionedDocument(bindings.database, CLOUDFLARE_DOCUMENT_KEY, visits, expectedVersion);
+    return;
+  }
+
   await ensureStorage();
   const temporaryPath = path.join(dataRoot, `.records-${randomUUID()}.tmp`);
   await writeFile(temporaryPath, `${JSON.stringify(visits, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
@@ -235,14 +285,62 @@ function storedPhotoPath(visitId: string, storedName: string) {
   return filePath;
 }
 
+function storedPhotoObjectKey(visitId: string, storedName: string) {
+  storedPhotoPath(visitId, storedName);
+  return `site-visits/photos/${visitId}/${storedName}`;
+}
+
+async function writeStoredPhoto(visitId: string, photo: StoredSiteVisitPhoto, bytes: Uint8Array) {
+  const bindings = await erpCloudflareBindings();
+  if (bindings) {
+    if (!bindings.files) {
+      throw new CloudflareStorageConfigurationError("The ERP_FILES binding is missing.");
+    }
+    await bindings.files.put(storedPhotoObjectKey(visitId, photo.storedName), bytes);
+    return;
+  }
+
+  const directory = visitPhotosDirectory(visitId);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  await writeFile(storedPhotoPath(visitId, photo.storedName), bytes, { flag: "wx", mode: 0o600 });
+}
+
+async function deleteStoredPhoto(visitId: string, photo: StoredSiteVisitPhoto) {
+  const bindings = await erpCloudflareBindings();
+  if (bindings) {
+    if (!bindings.files) {
+      throw new CloudflareStorageConfigurationError("The ERP_FILES binding is missing.");
+    }
+    await bindings.files.delete(storedPhotoObjectKey(visitId, photo.storedName));
+    return;
+  }
+  await unlink(storedPhotoPath(visitId, photo.storedName));
+}
+
+async function readStoredPhoto(visitId: string, photo: StoredSiteVisitPhoto) {
+  const bindings = await erpCloudflareBindings();
+  if (bindings) {
+    if (!bindings.files) {
+      throw new CloudflareStorageConfigurationError("The ERP_FILES binding is missing.");
+    }
+    const buffer = await bindings.files.get(storedPhotoObjectKey(visitId, photo.storedName), "arrayBuffer");
+    if (!buffer) {
+      throw new SiteVisitRepositoryError("The site visit photo is unavailable.", 404, "photo_not_found");
+    }
+    return new Uint8Array(buffer);
+  }
+  const source = await readFile(storedPhotoPath(visitId, photo.storedName));
+  return new Uint8Array(source.buffer, source.byteOffset, source.byteLength);
+}
+
 export async function listSiteVisits(): Promise<SiteVisit[]> {
-  const visits = await readStoredVisits();
+  const visits = (await readStoredVisitDocument()).visits;
   return visits.slice().sort(siteVisitSort).map(publicVisit);
 }
 
 export async function getSiteVisit(id: string): Promise<SiteVisit | null> {
   if (!ID_PATTERN.test(id)) return null;
-  const visits = await readStoredVisits();
+  const visits = (await readStoredVisitDocument()).visits;
   const visit = visits.find((candidate) => candidate.id === id);
   return visit ? publicVisit(visit) : null;
 }
@@ -251,7 +349,8 @@ export function createSiteVisit(input: SiteVisitCreateInput): Promise<SiteVisit>
   return withMutation(async () => {
     const normalized = parseSiteVisitCreate(input as unknown as Record<string, unknown>);
     if (!normalized) throw new SiteVisitRepositoryError("The site visit is invalid.", 400, "invalid_visit");
-    const visits = await readStoredVisits();
+    const storedDocument = await readStoredVisitDocument();
+    const visits = storedDocument.visits;
     const timestamp = new Date().toISOString();
     const visit: StoredSiteVisit = {
       id: randomUUID(),
@@ -263,7 +362,7 @@ export function createSiteVisit(input: SiteVisitCreateInput): Promise<SiteVisit>
       updatedAt: timestamp,
     };
     visits.push(visit);
-    await writeStoredVisits(visits);
+    await writeStoredVisits(visits, storedDocument.version);
     return publicVisit(visit);
   });
 }
@@ -271,7 +370,8 @@ export function createSiteVisit(input: SiteVisitCreateInput): Promise<SiteVisit>
 export function updateSiteVisit(id: string, patch: SiteVisitPatchInput): Promise<SiteVisit> {
   return withMutation(async () => {
     if (!ID_PATTERN.test(id)) throw new SiteVisitRepositoryError("The site visit ID is invalid.", 400, "invalid_id");
-    const visits = await readStoredVisits();
+    const storedDocument = await readStoredVisitDocument();
+    const visits = storedDocument.visits;
     const index = visits.findIndex((candidate) => candidate.id === id);
     if (index < 0) throw new SiteVisitRepositoryError("Site visit not found.", 404, "not_found");
     const current = visits[index];
@@ -282,7 +382,7 @@ export function updateSiteVisit(id: string, patch: SiteVisitPatchInput): Promise
       updatedAt: nextTimestamp(current.updatedAt),
     };
     visits[index] = normalizeStoredVisit(updated);
-    await writeStoredVisits(visits);
+    await writeStoredVisits(visits, storedDocument.version);
     return publicVisit(visits[index]);
   });
 }
@@ -290,15 +390,15 @@ export function updateSiteVisit(id: string, patch: SiteVisitPatchInput): Promise
 export function deleteSiteVisit(id: string): Promise<SiteVisit> {
   return withMutation(async () => {
     if (!ID_PATTERN.test(id)) throw new SiteVisitRepositoryError("The site visit ID is invalid.", 400, "invalid_id");
-    const visits = await readStoredVisits();
+    const storedDocument = await readStoredVisitDocument();
+    const visits = storedDocument.visits;
     const index = visits.findIndex((candidate) => candidate.id === id);
     if (index < 0) throw new SiteVisitRepositoryError("Site visit not found.", 404, "not_found");
     const [deleted] = visits.splice(index, 1);
-    await writeStoredVisits(visits);
+    await writeStoredVisits(visits, storedDocument.version);
     for (const photo of deleted.photos) {
-      await unlink(storedPhotoPath(id, photo.storedName)).catch(() => undefined);
+      await deleteStoredPhoto(id, photo).catch(() => undefined);
     }
-    await rmdir(visitPhotosDirectory(id)).catch(() => undefined);
     return publicVisit(deleted);
   });
 }
@@ -310,7 +410,8 @@ export function addSiteVisitPhotos(
   return withMutation(async () => {
     if (!ID_PATTERN.test(id)) throw new SiteVisitRepositoryError("The site visit ID is invalid.", 400, "invalid_id");
     if (!uploads.length) throw new SiteVisitRepositoryError("Choose at least one photo.", 400, "photos_required");
-    const visits = await readStoredVisits();
+    const storedDocument = await readStoredVisitDocument();
+    const visits = storedDocument.visits;
     const index = visits.findIndex((candidate) => candidate.id === id);
     if (index < 0) throw new SiteVisitRepositoryError("Site visit not found.", 404, "not_found");
     const visit = visits[index];
@@ -318,8 +419,6 @@ export function addSiteVisitPhotos(
       throw new SiteVisitRepositoryError("A site visit can store up to 100 photos.", 409, "photo_limit_reached");
     }
 
-    const directory = visitPhotosDirectory(id);
-    await mkdir(directory, { recursive: true, mode: 0o700 });
     const timestamp = nextTimestamp(visit.updatedAt);
     const storedPhotos: StoredSiteVisitPhoto[] = uploads.map((upload) => ({
       id: randomUUID(),
@@ -330,18 +429,17 @@ export function addSiteVisitPhotos(
       storedName: `${randomUUID()}.${MIME_EXTENSIONS[upload.contentType]}`,
       accessToken: randomBytes(24).toString("base64url"),
     }));
-    const writtenPaths: string[] = [];
+    const writtenPhotos: StoredSiteVisitPhoto[] = [];
     try {
       for (let index = 0; index < uploads.length; index += 1) {
-        const filePath = storedPhotoPath(id, storedPhotos[index].storedName);
-        await writeFile(filePath, uploads[index].bytes, { flag: "wx", mode: 0o600 });
-        writtenPaths.push(filePath);
+        await writeStoredPhoto(id, storedPhotos[index], uploads[index].bytes);
+        writtenPhotos.push(storedPhotos[index]);
       }
       visit.photos.push(...storedPhotos);
       visit.updatedAt = timestamp;
-      await writeStoredVisits(visits);
+      await writeStoredVisits(visits, storedDocument.version);
     } catch (error) {
-      await Promise.all(writtenPaths.map((filePath) => unlink(filePath).catch(() => undefined)));
+      await Promise.all(writtenPhotos.map((photo) => deleteStoredPhoto(id, photo).catch(() => undefined)));
       throw error;
     }
     return {
@@ -356,7 +454,8 @@ export function deleteSiteVisitPhoto(id: string, photoId: string): Promise<SiteV
     if (!ID_PATTERN.test(id) || !ID_PATTERN.test(photoId)) {
       throw new SiteVisitRepositoryError("The site visit photo ID is invalid.", 400, "invalid_id");
     }
-    const visits = await readStoredVisits();
+    const storedDocument = await readStoredVisitDocument();
+    const visits = storedDocument.visits;
     const visitIndex = visits.findIndex((candidate) => candidate.id === id);
     if (visitIndex < 0) throw new SiteVisitRepositoryError("Site visit not found.", 404, "not_found");
     const visit = visits[visitIndex];
@@ -364,23 +463,23 @@ export function deleteSiteVisitPhoto(id: string, photoId: string): Promise<SiteV
     if (photoIndex < 0) throw new SiteVisitRepositoryError("Site visit photo not found.", 404, "photo_not_found");
     const [deleted] = visit.photos.splice(photoIndex, 1);
     visit.updatedAt = nextTimestamp(visit.updatedAt);
-    await writeStoredVisits(visits);
-    await unlink(storedPhotoPath(id, deleted.storedName)).catch(() => undefined);
+    await writeStoredVisits(visits, storedDocument.version);
+    await deleteStoredPhoto(id, deleted).catch(() => undefined);
     return publicVisit(visit);
   });
 }
 
 export async function getSiteVisitPhotoFile(id: string, photoId: string): Promise<SiteVisitPhotoFile | null> {
   if (!ID_PATTERN.test(id) || !ID_PATTERN.test(photoId)) return null;
-  const visits = await readStoredVisits();
+  const visits = (await readStoredVisitDocument()).visits;
   const visit = visits.find((candidate) => candidate.id === id);
   const photo = visit?.photos.find((candidate) => candidate.id === photoId);
   if (!photo) return null;
   return {
-    path: storedPhotoPath(id, photo.storedName),
     originalName: photo.originalName,
     contentType: photo.contentType,
     size: photo.size,
     accessToken: photo.accessToken,
+    read: () => readStoredPhoto(id, photo),
   };
 }

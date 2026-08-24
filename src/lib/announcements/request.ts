@@ -9,6 +9,13 @@ export class AnnouncementRequestTooLarge extends Error {
   }
 }
 
+export class AnnouncementInvalidJson extends Error {
+  constructor() {
+    super("The announcement request body is invalid JSON.");
+    this.name = "AnnouncementInvalidJson";
+  }
+}
+
 export function announcementJson(body: unknown, init?: ResponseInit) {
   const response = NextResponse.json(body, init);
   response.headers.set("cache-control", "no-store");
@@ -58,10 +65,15 @@ export async function readAnnouncementBody(request: Request, maxBytes = ANNOUNCE
 
 export async function readAnnouncementJsonObject(request: Request): Promise<Record<string, unknown>> {
   const bytes = await readAnnouncementBody(request);
-  const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  const parsed: unknown = JSON.parse(text);
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new SyntaxError("Expected a JSON object.");
+  try {
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    const parsed: unknown = JSON.parse(text);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new AnnouncementInvalidJson();
+    }
+    return parsed as Record<string, unknown>;
+  } catch (error) {
+    if (error instanceof AnnouncementInvalidJson) throw error;
+    throw new AnnouncementInvalidJson();
   }
-  return parsed as Record<string, unknown>;
 }

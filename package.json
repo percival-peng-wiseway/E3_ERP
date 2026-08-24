@@ -12,8 +12,10 @@
     "typecheck": "tsc --noEmit",
     "cf:build": "opennextjs-cloudflare build",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "predeploy": "wrangler d1 migrations apply e3-erp-prod --remote",
     "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
     "upload": "opennextjs-cloudflare build && opennextjs-cloudflare upload",
+    "cf:migrate-local-data": "node scripts/migrate-cloudflare-data.mjs",
     "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
     "mcp:dev": "npm --prefix mcp-server run dev",
     "mcp:build": "npm --prefix mcp-server run build"

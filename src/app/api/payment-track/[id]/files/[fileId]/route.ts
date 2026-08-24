@@ -1,5 +1,4 @@
 import { timingSafeEqual } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import { NextRequest } from "next/server";
 import { isPaymentTrackAdmin } from "@/lib/payment-track/auth";
 import {
@@ -34,9 +33,9 @@ export async function GET(
       return paymentTrackError(403, "forbidden", "You do not have access to this file.");
     }
 
-    const source = await readFile(file.path);
-    const bytes = new Uint8Array(source.byteLength);
-    bytes.set(source);
+    const storedBytes = await file.read();
+    const bytes = new Uint8Array(storedBytes.byteLength);
+    bytes.set(storedBytes);
     const encodedName = encodeURIComponent(file.originalName).replaceAll("'", "%27");
     return new Response(bytes, {
       headers: {

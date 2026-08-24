@@ -1,6 +1,8 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+// @ts-expect-error -- focused Node ESM tests require the explicit extension.
+import * as cloudflareStorage from "../server/cloudflare-storage.ts";
 // The focused tests execute source TypeScript directly under Node ESM, which
 // requires the explicit extension; Next's server bundler supports this path.
 // @ts-expect-error -- the project intentionally does not enable TS emit-time extension imports.
@@ -22,6 +24,14 @@ import type {
   PaymentTrackSpecialist,
   PaymentTrackUploadContentType,
 } from "./types";
+
+const {
+  CloudflareDocumentConflictError,
+  CloudflareStorageConfigurationError,
+  erpCloudflareBindings,
+  readVersionedDocument,
+  writeVersionedDocument,
+} = cloudflareStorage;
 
 type StoredFile = Omit<PaymentTrackFile, "url"> & {
   storedName: string;
@@ -121,11 +131,11 @@ export type PaymentTrackTransitionInput = {
 };
 
 export type StoredPaymentTrackFile = {
-  path: string;
   originalName: string;
   contentType: PaymentTrackUploadContentType;
   size: number;
   accessToken: string;
+  read(): Promise<Uint8Array>;
 };
 
 export class PaymentTrackRepositoryError extends Error {
@@ -157,23 +167,68 @@ const dataRoot = path.resolve(
 const recordsPath = path.join(dataRoot, "records.json");
 const contractsPath = path.join(dataRoot, "contracts");
 const proofsPath = path.join(dataRoot, "proofs");
+const CLOUDFLARE_DOCUMENT_KEY = "payment-track/records";
+const MAXIMUM_STORAGE_RETRIES = 5;
 let mutationQueue: Promise<void> = Promise.resolve();
 const solarRebateAssessmentRetries = new Map<string, {
   fileFingerprint: string;
   retryAfter: number;
 }>();
 
-function resolvedStoredFilePath(file: StoredFile) {
+function storedFileObjectKey(file: StoredFile) {
   const expectedDirectory = file.kind === "contract" ? contractsPath : proofsPath;
   if (path.basename(file.storedName) !== file.storedName || !/^[0-9a-f-]{36}\.(?:pdf|jpg|png|webp)$/.test(file.storedName)) {
     throw new PaymentTrackRepositoryError("The stored file path is invalid.", 500, "invalid_file_path");
   }
+  return `payment-track/${file.kind === "contract" ? "contracts" : "proofs"}/${file.storedName}`;
+}
+
+function resolvedStoredFilePath(file: StoredFile) {
+  const expectedDirectory = file.kind === "contract" ? contractsPath : proofsPath;
+  storedFileObjectKey(file);
   const filePath = path.resolve(expectedDirectory, file.storedName);
   const relative = path.relative(expectedDirectory, filePath);
   if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
     throw new PaymentTrackRepositoryError("The stored file path is invalid.", 500, "invalid_file_path");
   }
   return filePath;
+}
+
+async function readStoredFileContent(file: StoredFile) {
+  const bindings = await erpCloudflareBindings();
+  if (bindings) {
+    if (!bindings.files) {
+      throw new CloudflareStorageConfigurationError("The ERP_FILES binding is missing.");
+    }
+    const buffer = await bindings.files.get(storedFileObjectKey(file), "arrayBuffer");
+    if (!buffer) {
+      throw new PaymentTrackRepositoryError("The stored file is unavailable.", 404, "file_not_found");
+    }
+    return {
+      bytes: new Uint8Array(buffer),
+      fingerprint: `${file.storedName}:${buffer.byteLength}`,
+    };
+  }
+
+  const filePath = resolvedStoredFilePath(file);
+  const fileStat = await stat(filePath);
+  const source = await readFile(filePath);
+  return {
+    bytes: new Uint8Array(source.buffer, source.byteOffset, source.byteLength),
+    fingerprint: `${fileStat.size}:${fileStat.mtimeMs}`,
+  };
+}
+
+async function deleteStoredFile(file: StoredFile) {
+  const bindings = await erpCloudflareBindings();
+  if (bindings) {
+    if (!bindings.files) {
+      throw new CloudflareStorageConfigurationError("The ERP_FILES binding is missing.");
+    }
+    await bindings.files.delete(storedFileObjectKey(file));
+    return;
+  }
+  await unlink(resolvedStoredFilePath(file));
 }
 
 async function ensureStorage() {
@@ -183,20 +238,41 @@ async function ensureStorage() {
   ]);
 }
 
-async function readStoredProjects(): Promise<StoredProject[]> {
+async function readStoredProjectDocument(): Promise<{ projects: StoredProject[]; version: number | null }> {
+  const bindings = await erpCloudflareBindings();
+  if (bindings) {
+    if (!bindings.database) {
+      throw new CloudflareStorageConfigurationError("The ERP_DB binding is missing.");
+    }
+    const document = await readVersionedDocument<unknown>(bindings.database, CLOUDFLARE_DOCUMENT_KEY);
+    const parsed = document.value ?? [];
+    if (!Array.isArray(parsed)) throw new Error("Payment Track data is not an array");
+    return { projects: parsed as StoredProject[], version: document.version };
+  }
+
   await ensureStorage();
   try {
-    const raw = await readFile(recordsPath, "utf8");
-    const parsed: unknown = JSON.parse(raw);
+    const parsed: unknown = JSON.parse(await readFile(recordsPath, "utf8"));
     if (!Array.isArray(parsed)) throw new Error("Payment Track data is not an array");
-    return parsed as StoredProject[];
+    return { projects: parsed as StoredProject[], version: null };
   } catch (error) {
-    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return [];
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      return { projects: [], version: null };
+    }
     throw error;
   }
 }
 
-async function writeStoredProjects(projects: StoredProject[]) {
+async function writeStoredProjects(projects: StoredProject[], expectedVersion: number | null) {
+  const bindings = await erpCloudflareBindings();
+  if (bindings) {
+    if (!bindings.database || expectedVersion === null) {
+      throw new CloudflareStorageConfigurationError("The ERP_DB binding is missing.");
+    }
+    await writeVersionedDocument(bindings.database, CLOUDFLARE_DOCUMENT_KEY, projects, expectedVersion);
+    return;
+  }
+
   await ensureStorage();
   const temporaryPath = path.join(dataRoot, `.records-${randomUUID()}.tmp`);
   await writeFile(temporaryPath, `${JSON.stringify(projects, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
@@ -204,7 +280,21 @@ async function writeStoredProjects(projects: StoredProject[]) {
 }
 
 function withMutation<T>(work: () => Promise<T>): Promise<T> {
-  const result = mutationQueue.then(work, work);
+  const retryingWork = async () => {
+    for (let attempt = 0; attempt < MAXIMUM_STORAGE_RETRIES; attempt += 1) {
+      try {
+        return await work();
+      } catch (error) {
+        if (!(error instanceof CloudflareDocumentConflictError)) throw error;
+      }
+    }
+    throw new PaymentTrackRepositoryError(
+      "Payment Track changed while this request was being saved. Try again.",
+      409,
+      "storage_conflict",
+    );
+  };
+  const result = mutationQueue.then(retryingWork, retryingWork);
   mutationQueue = result.then(() => undefined, () => undefined);
   return result;
 }
@@ -386,12 +476,12 @@ async function migrateLegacyProjectStages(projects: StoredProject[], fallbackTim
         project.solarRebateAssessmentVersion = SOLAR_REBATE_ASSESSMENT_VERSION;
         changed = true;
       } else {
-        let contractPath: string;
         let fileFingerprint: string;
+        let contractBytes: Uint8Array;
         try {
-          contractPath = resolvedStoredFilePath(project.contract);
-          const contractStat = await stat(contractPath);
-          fileFingerprint = `${contractStat.size}:${contractStat.mtimeMs}`;
+          const storedContract = await readStoredFileContent(project.contract);
+          contractBytes = storedContract.bytes;
+          fileFingerprint = storedContract.fingerprint;
         } catch {
           solarRebateAssessmentRetries.set(project.id, {
             fileFingerprint: `unavailable:${project.contract.storedName}`,
@@ -405,8 +495,7 @@ async function migrateLegacyProjectStages(projects: StoredProject[], fallbackTim
 
         let required: boolean | null;
         try {
-          const contractBytes = await readFile(contractPath);
-          required = await paymentAgreementRequiresSolarRebatePdf(new Uint8Array(contractBytes));
+          required = await paymentAgreementRequiresSolarRebatePdf(contractBytes);
         } catch {
           solarRebateAssessmentRetries.set(project.id, {
             fileFingerprint,
@@ -474,22 +563,30 @@ async function storedUpload(
 ) {
   const id = randomUUID();
   const storedName = `${randomUUID()}.${MIME_EXTENSIONS[upload.contentType]}`;
-  const directory = kind === "contract" ? contractsPath : proofsPath;
-  const filePath = path.join(/* turbopackIgnore: true */ directory, storedName);
-  await writeFile(filePath, upload.bytes, { flag: "wx", mode: 0o600 });
+  const file = {
+    id,
+    kind,
+    originalName: upload.originalName,
+    contentType: upload.contentType,
+    size: upload.size,
+    uploadedAt: timestamp,
+    uploadedByRole: role,
+    storedName,
+    accessToken: randomBytes(24).toString("base64url"),
+  } satisfies StoredFile;
+  const bindings = await erpCloudflareBindings();
+  if (bindings) {
+    if (!bindings.files) {
+      throw new CloudflareStorageConfigurationError("The ERP_FILES binding is missing.");
+    }
+    await bindings.files.put(storedFileObjectKey(file), upload.bytes);
+  } else {
+    const directory = kind === "contract" ? contractsPath : proofsPath;
+    const filePath = path.join(/* turbopackIgnore: true */ directory, storedName);
+    await writeFile(filePath, upload.bytes, { flag: "wx", mode: 0o600 });
+  }
   return {
-    filePath,
-    file: {
-      id,
-      kind,
-      originalName: upload.originalName,
-      contentType: upload.contentType,
-      size: upload.size,
-      uploadedAt: timestamp,
-      uploadedByRole: role,
-      storedName,
-      accessToken: randomBytes(24).toString("base64url"),
-    } satisfies StoredFile,
+    file,
   };
 }
 
@@ -564,9 +661,10 @@ function assertProposalNumberAvailable(projects: StoredProject[], quoteNumber: s
 
 export function listPaymentTrackProjects() {
   return withMutation(async () => {
-    const projects = await readStoredProjects();
+    const storedDocument = await readStoredProjectDocument();
+    const projects = storedDocument.projects;
     if (await migrateLegacyProjectStages(projects, new Date().toISOString())) {
-      await writeStoredProjects(projects);
+      await writeStoredProjects(projects, storedDocument.version);
     }
     return projects
       .slice()
@@ -577,14 +675,15 @@ export function listPaymentTrackProjects() {
 
 export function createManualPaymentTrackProject(input: CreatePaymentTrackInput) {
   return withMutation(async () => {
-    const projects = await readStoredProjects();
+    const storedDocument = await readStoredProjectDocument();
+    const projects = storedDocument.projects;
     await migrateLegacyProjectStages(projects, new Date().toISOString());
     assertProposalNumberAvailable(projects, input.quoteNumber);
     const timestamp = new Date().toISOString();
     const project = buildProject(projects, input, timestamp, null);
     project.history.push(historyEntry("created_manually", timestamp, "sales"));
     projects.push(project);
-    await writeStoredProjects(projects);
+    await writeStoredProjects(projects, storedDocument.version);
     return publicProject(project);
   });
 }
@@ -594,7 +693,8 @@ export function createImportedPaymentTrackProject(
   upload: PaymentTrackUpload,
 ) {
   return withMutation(async () => {
-    const projects = await readStoredProjects();
+    const storedDocument = await readStoredProjectDocument();
+    const projects = storedDocument.projects;
     await migrateLegacyProjectStages(projects, new Date().toISOString());
     assertProposalNumberAvailable(projects, input.quoteNumber);
     const timestamp = new Date().toISOString();
@@ -603,12 +703,12 @@ export function createImportedPaymentTrackProject(
     project.history.push(historyEntry("contract_imported", timestamp, "sales", undefined, upload.originalName));
     try {
       projects.push(project);
-      await writeStoredProjects(projects);
-      return publicProject(project);
+      await writeStoredProjects(projects, storedDocument.version);
     } catch (error) {
-      await unlink(stored.filePath).catch(() => undefined);
+      await deleteStoredFile(stored.file).catch(() => undefined);
       throw error;
     }
+    return publicProject(project);
   });
 }
 
@@ -619,7 +719,8 @@ export function uploadPaymentTrackProof(
   upload: PaymentTrackUpload,
 ) {
   return withMutation(async () => {
-    const projects = await readStoredProjects();
+    const storedDocument = await readStoredProjectDocument();
+    const projects = storedDocument.projects;
     await migrateLegacyProjectStages(projects, new Date().toISOString());
     const index = projects.findIndex((candidate) => candidate.id === id);
     if (index < 0) throw new PaymentTrackRepositoryError("Payment project not found.", 404, "not_found");
@@ -631,7 +732,6 @@ export function uploadPaymentTrackProof(
     }
 
     const previous = project.deposit.proof;
-    const previousPath = previous ? resolvedStoredFilePath(previous) : null;
     const timestamp = new Date().toISOString();
     const stored = await storedUpload("deposit_proof", role, upload, timestamp);
     project.deposit.proof = stored.file;
@@ -640,13 +740,13 @@ export function uploadPaymentTrackProof(
 
     try {
       projects[index] = project;
-      await writeStoredProjects(projects);
-      if (previousPath) await unlink(previousPath).catch(() => undefined);
-      return publicProject(project);
+      await writeStoredProjects(projects, storedDocument.version);
     } catch (error) {
-      await unlink(stored.filePath).catch(() => undefined);
+      await deleteStoredFile(stored.file).catch(() => undefined);
       throw error;
     }
+    if (previous) await deleteStoredFile(previous).catch(() => undefined);
+    return publicProject(project);
   });
 }
 
@@ -750,7 +850,8 @@ export function transitionPaymentTrackProject(
   input: PaymentTrackTransitionInput,
 ) {
   return withMutation(async () => {
-    const projects = await readStoredProjects();
+    const storedDocument = await readStoredProjectDocument();
+    const projects = storedDocument.projects;
     await migrateLegacyProjectStages(projects, new Date().toISOString());
     const index = projects.findIndex((candidate) => candidate.id === id);
     if (index < 0) throw new PaymentTrackRepositoryError("Payment project not found.", 404, "not_found");
@@ -987,14 +1088,14 @@ export function transitionPaymentTrackProject(
 
     project.updatedAt = timestamp;
     projects[index] = project;
-    await writeStoredProjects(projects);
+    await writeStoredProjects(projects, storedDocument.version);
     return publicProject(project);
   });
 }
 
 export async function getPaymentTrackFile(projectId: string, fileId: string): Promise<StoredPaymentTrackFile | null> {
   await mutationQueue;
-  const projects = await readStoredProjects();
+  const projects = (await readStoredProjectDocument()).projects;
   const project = projects.find((candidate) => candidate.id === projectId);
   if (!project) return null;
   const finalProofs = (project.finalPayments || []).map((payment) => payment.proof);
@@ -1002,12 +1103,11 @@ export async function getPaymentTrackFile(projectId: string, fileId: string): Pr
     .filter(Boolean) as StoredFile[];
   const file = candidates.find((candidate) => candidate.id === fileId);
   if (!file) return null;
-  const filePath = resolvedStoredFilePath(file);
   return {
-    path: filePath,
     originalName: file.originalName,
     contentType: file.contentType,
     size: file.size,
     accessToken: file.accessToken,
+    read: async () => (await readStoredFileContent(file)).bytes,
   };
 }

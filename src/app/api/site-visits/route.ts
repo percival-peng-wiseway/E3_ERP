@@ -26,14 +26,10 @@ export async function GET(request: NextRequest) {
   try {
     return siteVisitJson({ data: { visits: await listSiteVisits() } });
   } catch (error) {
-    console.error("Site visit storage unavailable; returning an empty initial list", error instanceof Error ? error.message : error);
-    return siteVisitJson({
-      data: { visits: [] },
-      meta: {
-        degraded: true,
-        warning: "Site visit storage is not connected. Starting with an empty list.",
-      },
-    });
+    if (error instanceof SiteVisitRepositoryError) {
+      return siteVisitError(error.status, error.code, error.message);
+    }
+    return siteVisitError(500, "storage_unavailable", "Site Visiting is temporarily unavailable.");
   }
 }
 

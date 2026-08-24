@@ -1,6 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import {
+  CloudflareDocumentConflictError,
+  CloudflareStorageConfigurationError,
+  erpCloudflareBindings,
+  readVersionedDocument,
+  writeVersionedDocument,
+} from "@/lib/server/cloudflare-storage";
 
 export type ReportContent = {
   content: string;
@@ -19,6 +26,8 @@ const dataRoot = path.resolve(
   process.env.REPORTS_DATA_DIR || path.join(process.cwd(), ".data", "reports"),
 );
 const contentPath = path.join(/* turbopackIgnore: true */ dataRoot, "content.json");
+const CLOUDFLARE_DOCUMENT_KEY = "reports/content";
+const MAXIMUM_STORAGE_RETRIES = 5;
 
 let mutationQueue: Promise<void> = Promise.resolve();
 
@@ -52,22 +61,46 @@ function normalizeReportContent(value: unknown): ReportContent | null {
   };
 }
 
-async function readStoredContent(): Promise<ReportContent> {
+async function readStoredContentDocument(): Promise<{
+  content: ReportContent;
+  version: number | null;
+}> {
+  const bindings = await erpCloudflareBindings();
+  if (bindings) {
+    if (!bindings.database) {
+      throw new CloudflareStorageConfigurationError("The ERP_DB binding is missing.");
+    }
+    const document = await readVersionedDocument<unknown>(bindings.database, CLOUDFLARE_DOCUMENT_KEY);
+    if (document.value === null) return { content: { ...EMPTY_REPORT }, version: document.version };
+    const normalized = normalizeReportContent(document.value);
+    if (!normalized) throw new Error("Reports data has an invalid format.");
+    return { content: normalized, version: document.version };
+  }
+
   try {
     const raw = await readFile(/* turbopackIgnore: true */ contentPath, "utf8");
     const parsed: unknown = JSON.parse(raw);
     const normalized = normalizeReportContent(parsed);
     if (!normalized) throw new Error("Reports data has an invalid format.");
-    return normalized;
+    return { content: normalized, version: null };
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
-      return { ...EMPTY_REPORT };
+      return { content: { ...EMPTY_REPORT }, version: null };
     }
     throw error;
   }
 }
 
-async function writeStoredContent(value: ReportContent) {
+async function writeStoredContent(value: ReportContent, expectedVersion: number | null) {
+  const bindings = await erpCloudflareBindings();
+  if (bindings) {
+    if (!bindings.database || expectedVersion === null) {
+      throw new CloudflareStorageConfigurationError("The ERP_DB binding is missing.");
+    }
+    await writeVersionedDocument(bindings.database, CLOUDFLARE_DOCUMENT_KEY, value, expectedVersion);
+    return;
+  }
+
   await ensureStorage();
   const temporaryPath = path.join(/* turbopackIgnore: true */ dataRoot, `.content-${randomUUID()}.tmp`);
   try {
@@ -83,18 +116,31 @@ async function writeStoredContent(value: ReportContent) {
 }
 
 function withMutation<T>(work: () => Promise<T>): Promise<T> {
-  const result = mutationQueue.then(work, work);
+  const retryingWork = async () => {
+    for (let attempt = 0; attempt < MAXIMUM_STORAGE_RETRIES; attempt += 1) {
+      try {
+        return await work();
+      } catch (error) {
+        if (!(error instanceof CloudflareDocumentConflictError)) throw error;
+      }
+    }
+    const current = (await readStoredContentDocument()).content;
+    throw new ReportRevisionConflictError(current);
+  };
+  const result = mutationQueue.then(retryingWork, retryingWork);
   mutationQueue = result.then(() => undefined, () => undefined);
   return result;
 }
 
-export function getReportContent(): Promise<ReportContent> {
-  return mutationQueue.then(() => readStoredContent());
+export async function getReportContent(): Promise<ReportContent> {
+  await mutationQueue;
+  return (await readStoredContentDocument()).content;
 }
 
 export function saveReportContent(content: string, expectedRevision: number): Promise<ReportContent> {
   return withMutation(async () => {
-    const current = await readStoredContent();
+    const document = await readStoredContentDocument();
+    const current = document.content;
     if (current.revision !== expectedRevision) {
       throw new ReportRevisionConflictError(current);
     }
@@ -103,7 +149,7 @@ export function saveReportContent(content: string, expectedRevision: number): Pr
       updatedAt: new Date().toISOString(),
       revision: current.revision + 1,
     };
-    await writeStoredContent(value);
+    await writeStoredContent(value, document.version);
     return value;
   });
 }

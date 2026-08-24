@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+// @ts-expect-error -- focused Node ESM tests require the explicit extension.
+import * as cloudflareStorage from "../server/cloudflare-storage.ts";
 // Focused tests execute source TypeScript directly under Node ESM.
 // @ts-expect-error -- explicit extension is required by that runtime.
 import * as projectScheduleValidation from "./validation.ts";
@@ -10,6 +12,14 @@ import type {
   ProjectSchedulePatchInput,
   ProjectScheduleStatus,
 } from "./types";
+
+const {
+  CloudflareDocumentConflictError,
+  CloudflareStorageConfigurationError,
+  erpCloudflareBindings,
+  readVersionedDocument,
+  writeVersionedDocument,
+} = cloudflareStorage;
 
 const {
   parseProjectScheduleCreate,
@@ -36,13 +46,29 @@ const dataRoot = path.resolve(
   process.env.PROJECT_SCHEDULE_DATA_DIR || path.join(process.cwd(), ".data", "project-schedule"),
 );
 const recordsPath = path.join(/* turbopackIgnore: true */ dataRoot, "records.json");
+const CLOUDFLARE_DOCUMENT_KEY = "project-schedule/records";
+const MAXIMUM_STORAGE_RETRIES = 5;
 let mutationQueue: Promise<void> = Promise.resolve();
 const ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const UNSAFE_CONTROLS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
 const MAXIMUM_RANGE_DAYS = 400;
 
 function withMutation<T>(work: () => Promise<T>) {
-  const result = mutationQueue.then(work, work);
+  const retryingWork = async () => {
+    for (let attempt = 0; attempt < MAXIMUM_STORAGE_RETRIES; attempt += 1) {
+      try {
+        return await work();
+      } catch (error) {
+        if (!(error instanceof CloudflareDocumentConflictError)) throw error;
+      }
+    }
+    throw new ProjectScheduleRepositoryError(
+      "Project Schedule changed while this request was being saved. Try again.",
+      409,
+      "storage_conflict",
+    );
+  };
+  const result = mutationQueue.then(retryingWork, retryingWork);
   mutationQueue = result.then(() => undefined, () => undefined);
   return result;
 }
@@ -104,29 +130,51 @@ function normalizeStoredJob(value: unknown, fallbackTimestamp: string, seenIds: 
   return { job, changed };
 }
 
+function normalizedJobs(parsed: unknown, version: number | null) {
+  if (!Array.isArray(parsed)) {
+    throw new ProjectScheduleRepositoryError("Project Schedule data is invalid.", 500, "invalid_storage");
+  }
+  const fallbackTimestamp = new Date().toISOString();
+  const seenIds = new Set<string>();
+  const normalized = parsed.map((value) => normalizeStoredJob(value, fallbackTimestamp, seenIds));
+  return {
+    jobs: normalized.map(({ job }) => job),
+    changed: normalized.some(({ changed }) => changed),
+    version,
+  };
+}
+
 async function readJobs() {
+  const bindings = await erpCloudflareBindings();
+  if (bindings) {
+    if (!bindings.database) {
+      throw new CloudflareStorageConfigurationError("The ERP_DB binding is missing.");
+    }
+    const document = await readVersionedDocument<unknown>(bindings.database, CLOUDFLARE_DOCUMENT_KEY);
+    return normalizedJobs(document.value ?? [], document.version);
+  }
+
   await ensureStorage();
   try {
-    const parsed: unknown = JSON.parse(await readFile(recordsPath, "utf8"));
-    if (!Array.isArray(parsed)) {
-      throw new ProjectScheduleRepositoryError("Project Schedule data is invalid.", 500, "invalid_storage");
-    }
-    const fallbackTimestamp = new Date().toISOString();
-    const seenIds = new Set<string>();
-    const normalized = parsed.map((value) => normalizeStoredJob(value, fallbackTimestamp, seenIds));
-    return {
-      jobs: normalized.map(({ job }) => job),
-      changed: normalized.some(({ changed }) => changed),
-    };
+    return normalizedJobs(JSON.parse(await readFile(recordsPath, "utf8")), null);
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
-      return { jobs: [] as ProjectScheduleJob[], changed: false };
+      return { jobs: [] as ProjectScheduleJob[], changed: false, version: null };
     }
     throw error;
   }
 }
 
-async function writeJobs(jobs: ProjectScheduleJob[]) {
+async function writeJobs(jobs: ProjectScheduleJob[], expectedVersion: number | null) {
+  const bindings = await erpCloudflareBindings();
+  if (bindings) {
+    if (!bindings.database || expectedVersion === null) {
+      throw new CloudflareStorageConfigurationError("The ERP_DB binding is missing.");
+    }
+    await writeVersionedDocument(bindings.database, CLOUDFLARE_DOCUMENT_KEY, jobs, expectedVersion);
+    return;
+  }
+
   await ensureStorage();
   const temporaryPath = path.join(dataRoot, `.records-${randomUUID()}.tmp`);
   let replaced = false;
@@ -158,7 +206,7 @@ export function listProjectScheduleJobs(from: string, to: string) {
       throw new ProjectScheduleRepositoryError("Choose a valid schedule date range.", 400, "invalid_date_range");
     }
     const stored = await readJobs();
-    if (stored.changed) await writeJobs(stored.jobs);
+    if (stored.changed) await writeJobs(stored.jobs, stored.version);
     return stored.jobs
       .filter((job) => job.scheduledDate >= from && job.scheduledDate <= to)
       .sort(scheduleSort);
@@ -181,7 +229,7 @@ export function createProjectScheduleJob(input: ProjectScheduleCreateInput) {
       updatedAt: timestamp,
     };
     stored.jobs.push(job);
-    await writeJobs(stored.jobs);
+    await writeJobs(stored.jobs, stored.version);
     return job;
   });
 }
@@ -205,7 +253,7 @@ export function updateProjectScheduleJob(id: string, input: ProjectSchedulePatch
       throw new ProjectScheduleRepositoryError("End time must be later than start time.", 400, "invalid_time_range");
     }
     stored.jobs[index] = updated;
-    await writeJobs(stored.jobs);
+    await writeJobs(stored.jobs, stored.version);
     return updated;
   });
 }
@@ -216,7 +264,7 @@ export function deleteProjectScheduleJob(id: string) {
     const index = stored.jobs.findIndex((job) => job.id === id);
     if (index < 0) throw new ProjectScheduleRepositoryError("Schedule job not found.", 404, "not_found");
     const [deleted] = stored.jobs.splice(index, 1);
-    await writeJobs(stored.jobs);
+    await writeJobs(stored.jobs, stored.version);
     return deleted;
   });
 }

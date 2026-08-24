@@ -1,5 +1,4 @@
 import { timingSafeEqual } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import { NextRequest } from "next/server";
 import {
   deleteSiteVisitPhoto,
@@ -47,9 +46,9 @@ export async function GET(
       return siteVisitError(403, "forbidden", "You do not have access to this photo.");
     }
 
-    const source = await readFile(/* turbopackIgnore: true */ photo.path);
-    const bytes = new Uint8Array(source.byteLength);
-    bytes.set(source);
+    const storedBytes = await photo.read();
+    const bytes = new Uint8Array(storedBytes.byteLength);
+    bytes.set(storedBytes);
     const encodedName = encodeURIComponent(photo.originalName).replaceAll("'", "%27");
     return new Response(bytes, {
       headers: {
