@@ -121,9 +121,15 @@ async function createCompletion(options: {
     headers,
     body,
     cache: "no-store",
-    redirect: "error",
+    // Cloudflare Workers supports follow/manual but rejects redirect="error"
+    // before the request is sent. Manual mode preserves the same SSRF safety
+    // property when redirects are explicitly rejected below.
+    redirect: "manual",
     signal: AbortSignal.timeout(35_000),
   });
+  if (response.status >= 300 && response.status < 400) {
+    throw new Error("The model API attempted an unexpected redirect.");
+  }
   const payload = await limitedPayload(response);
   if (!response.ok) {
     const detail = typeof payload.error?.message === "string" ? payload.error.message.slice(0, 300) : "";
