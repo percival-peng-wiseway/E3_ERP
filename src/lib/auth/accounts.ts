@@ -1,7 +1,7 @@
 import "server-only";
 
 import { findErpUser, normalizeErpUsername } from "@/lib/auth/directory";
-import { verifyPbkdf2Password } from "@/lib/auth/password-crypto";
+import { verifyScryptPassword } from "@/lib/auth/password-crypto";
 import type { ErpRole, ErpUser } from "@/lib/auth/types";
 
 type PasswordVerifier = {
@@ -14,35 +14,35 @@ type PasswordVerifier = {
 const PASSWORD_VERIFIERS: Readonly<Record<string, PasswordVerifier>> = {
   jerry: {
     salt: "u6ZRfR-mSgxr4jE8rIgG0g",
-    passwordHash: "Cr2h7I37kM5xA2AEZWpB9YcCXUh6CDIoyzeFopTsKtE",
+    passwordHash: "8KL4JTzjMs3H7-ohzSINJmVTsv9GUmPNRw3d-he2SQE",
   },
   jiaqi: {
     salt: "UABndEoYw_a6x478-F1kGQ",
-    passwordHash: "4l9RAwlqlhylNqDAztLNy1UCM2O_QYH12yO6vrOHOx8",
+    passwordHash: "IgkoGnIV8cwon2Ku7pSwisUb-puG7XDnuLXYkX0olzU",
   },
   wendy: {
     salt: "r3bn02cgBdgnQArpYHCjQg",
-    passwordHash: "DA5onw2ukI-53ojGaNXQ6233txXROoko4lqMjSDEfj4",
+    passwordHash: "YtvgZDTBA1FOVgqfEIfyoaX9nerWc7AeRYJ05Uas4iA",
   },
   kevin: {
     salt: "b2NnVZYS4nobKNj9rgJaQA",
-    passwordHash: "mOR7Iyx0uj9BaRYxLbCErN0LZX3UmVpWkcXUkgNgnA0",
+    passwordHash: "AkenQ3xSpuCoMawcfBrqICSei7p2RMvBgzdtBR8tVDo",
   },
   daniel: {
     salt: "s88y0DC3Ogk_EA0zkDyf5A",
-    passwordHash: "I1SzcuiJ30Vdu12NIizK0O2ZRicLEHfnrK_BTXwi9RA",
+    passwordHash: "FZ4-TRKvHQW_KXYlh9s3bM9vDzPybhVjPfdEJfp2bS8",
   },
   sam: {
     salt: "ojR3tLtbnBHl8PQotDZL5w",
-    passwordHash: "Aybikpgn__69DEOex7PXODFNebD9I710WBLyfJRDOlU",
+    passwordHash: "jAOEkSMaVhHwTntp0rsc7NsvYWDZYaS8pV9mpq2d7D0",
   },
   ruihan: {
     salt: "eElq7KgqFzN-JESkw1DDDg",
-    passwordHash: "hVOEYsSD4OfcaMpzWlGja3L8r84KcxM7sWpvI4-ED9o",
+    passwordHash: "6qmZxA_8iJRb6m6W5Y2CxrvsrBhHtY2VPePqH3fqvaY",
   },
   hogan: {
     salt: "p_ZBcrZWF0yiciHRoyW4rQ",
-    passwordHash: "TjC83PC7MoXfiGwW4JzAhWGnMCtjFJqQkgR4-FKGEOU",
+    passwordHash: "srIqjv2ofGOlUZ1UkDPwpTw2fIz4DSFUESTVzCM2oL0",
   },
 } as const;
 
@@ -52,7 +52,7 @@ export async function verifyErpCredentials(username: string, password: string): 
   const normalizedUsername = normalizeErpUsername(username);
   const user = findErpUser(normalizedUsername);
   const verifier = PASSWORD_VERIFIERS[normalizedUsername] || DUMMY_VERIFIER;
-  const passwordMatches = await verifyPbkdf2Password(password, verifier.salt, verifier.passwordHash);
+  const passwordMatches = await verifyScryptPassword(password, verifier.salt, verifier.passwordHash);
   return user && passwordMatches ? user : null;
 }
 

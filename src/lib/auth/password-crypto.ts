@@ -1,22 +1,19 @@
-import { timingSafeEqual } from "node:crypto";
+import { scrypt, timingSafeEqual } from "node:crypto";
 
-const PASSWORD_ITERATIONS = 120_000;
 const PASSWORD_BYTES = 32;
+const SCRYPT_OPTIONS = { N: 16_384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 } as const;
 
-export async function verifyPbkdf2Password(password: string, salt: string, expectedHash: string) {
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(password),
-    "PBKDF2",
-    false,
-    ["deriveBits"],
-  );
-  const candidate = Buffer.from(await crypto.subtle.deriveBits({
-    name: "PBKDF2",
-    hash: "SHA-256",
-    salt: Buffer.from(salt, "base64url"),
-    iterations: PASSWORD_ITERATIONS,
-  }, key, PASSWORD_BYTES * 8));
+function deriveScryptHash(password: string, salt: string) {
+  return new Promise<Buffer>((resolve, reject) => {
+    scrypt(password, Buffer.from(salt, "base64url"), PASSWORD_BYTES, SCRYPT_OPTIONS, (error, value) => {
+      if (error) reject(error);
+      else resolve(value);
+    });
+  });
+}
+
+export async function verifyScryptPassword(password: string, salt: string, expectedHash: string) {
+  const candidate = await deriveScryptHash(password, salt);
   const expected = Buffer.from(expectedHash, "base64url");
   return candidate.length === expected.length && timingSafeEqual(candidate, expected);
 }
