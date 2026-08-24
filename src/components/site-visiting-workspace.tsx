@@ -834,28 +834,57 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
               {showOnSiteDetails ? (
                 <>
                 <section className={`${styles.panel} ${styles.checklistPanel}`}>
-                  <div className={styles.panelTitle}><span><ClipboardCheck size={18} /></span><div><h3>Site checks</h3><p>{detail.checklist.filter((item) => item.answer !== "not_checked").length} of {detail.checklist.length} checked</p></div></div>
-                  <div className={styles.checklist}>
-                    {detail.checklist.map((item) => (
-                      <article className={styles.checkItem} key={item.id}>
-                        <div><h4>{item.label}</h4><small>Select what you found on site</small></div>
-                        <div className={styles.answerGrid}>
-                          {ANSWER_OPTIONS.map((option) => (
-                            <button
-                              type="button"
-                              key={option.value}
-                              className={`${styles.answerButton} ${item.answer === option.value ? styles[`answer_${option.value}`] : ""}`}
-                              disabled={!visitEditable || busy}
-                              onClick={() => updateCheck(item.id, { answer: option.value })}
-                            >
-                              {item.answer === option.value && <Check size={15} />}{option.label}
-                            </button>
+                  <div className={styles.panelTitle}><span><ClipboardCheck size={18} /></span><div><h3 id="site-visit-checks-title">Site checks</h3><p>{detail.checklist.filter((item) => item.answer !== "not_checked").length} of {detail.checklist.length} checked</p></div></div>
+                  {detail.status === "completed" ? (
+                    <div
+                      className={styles.completedChecksTableRegion}
+                      role="region"
+                      aria-labelledby="site-visit-checks-title"
+                      tabIndex={0}
+                    >
+                      <table className={styles.completedChecksTable}>
+                        <caption className={styles.srOnly}>Completed site checks for {detail.projectName}</caption>
+                        <thead>
+                          <tr><th scope="col">Project</th><th scope="col">Situation</th><th scope="col">Notes</th></tr>
+                        </thead>
+                        <tbody>
+                          {detail.checklist.map((item) => (
+                            <tr key={item.id}>
+                              <td className={styles.completedCheckProject}>{item.label}</td>
+                              <td>
+                                <span className={`${styles.completedCheckSituation} ${styles[`answer_${item.answer}`]}`}>
+                                  {ANSWER_OPTIONS.find((option) => option.value === item.answer)?.label ?? "Not checked"}
+                                </span>
+                              </td>
+                              <td className={styles.completedCheckNotes}>{item.notes.trim() || "—"}</td>
+                            </tr>
                           ))}
-                        </div>
-                        <label><span>Check notes</span><textarea value={item.notes} maxLength={2000} rows={2} readOnly={!visitEditable} placeholder={CHECK_NOTE_PLACEHOLDERS[item.id] || "Add measurements, damage or follow-up details"} onChange={(event) => updateCheck(item.id, { notes: event.target.value })} /></label>
-                      </article>
-                    ))}
-                  </div>
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className={styles.checklist}>
+                      {detail.checklist.map((item) => (
+                        <article className={styles.checkItem} key={item.id}>
+                          <div><h4>{item.label}</h4><small>Select what you found on site</small></div>
+                          <div className={styles.answerGrid}>
+                            {ANSWER_OPTIONS.map((option) => (
+                              <button
+                                type="button"
+                                key={option.value}
+                                className={`${styles.answerButton} ${item.answer === option.value ? styles[`answer_${option.value}`] : ""}`}
+                                disabled={!visitEditable || busy}
+                                onClick={() => updateCheck(item.id, { answer: option.value })}
+                              >
+                                {item.answer === option.value && <Check size={15} />}{option.label}
+                              </button>
+                            ))}
+                          </div>
+                          <label><span>Check notes</span><textarea value={item.notes} maxLength={2000} rows={2} readOnly={!visitEditable} placeholder={CHECK_NOTE_PLACEHOLDERS[item.id] || "Add measurements, damage or follow-up details"} onChange={(event) => updateCheck(item.id, { notes: event.target.value })} /></label>
+                        </article>
+                      ))}
+                    </div>
+                  )}
                 </section>
 
                 <section className={styles.panel}>

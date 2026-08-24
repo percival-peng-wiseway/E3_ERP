@@ -445,6 +445,21 @@
 .answer_no { color: #176d55; background: #e9f7f1; border-color: #bfe2d5; }
 .answer_unknown { color: #745d27; background: #fff7df; border-color: #ead89b; }
 
+.completedChecksTableRegion { width: 100%; overflow-x: auto; border: 1px solid #e1e7ea; border-radius: 9px; overscroll-behavior-x: contain; }
+.completedChecksTableRegion:focus-visible { outline: 3px solid rgba(48, 143, 210, .22); outline-offset: 2px; }
+.completedChecksTable { width: 100%; min-width: 620px; table-layout: fixed; border-collapse: collapse; }
+.completedChecksTable th,
+.completedChecksTable td { padding: 12px 14px; border-bottom: 1px solid #e8edef; text-align: left; vertical-align: top; }
+.completedChecksTable th { color: #687984; background: #f5f8f9; font-size: 11px; font-weight: 780; letter-spacing: .045em; text-transform: uppercase; }
+.completedChecksTable th:nth-child(1) { width: 34%; }
+.completedChecksTable th:nth-child(2) { width: 20%; }
+.completedChecksTable th:nth-child(3) { width: 46%; }
+.completedChecksTable tbody tr:last-child td { border-bottom: 0; }
+.completedCheckProject { color: #334650; font-size: 13px; font-weight: 690; overflow-wrap: anywhere; }
+.completedCheckSituation { display: inline-flex; min-height: 28px; align-items: center; justify-content: center; padding: 4px 9px; border: 1px solid; border-radius: 999px; font-size: 11px; font-weight: 730; white-space: nowrap; }
+.completedCheckNotes { color: #52646f; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
+.srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; margin: -1px; padding: 0; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
 .photoActions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 14px; gap: 9px; }
 .cameraButton,
 .uploadButton { display: flex; min-height: 68px; align-items: center; padding: 10px 14px; gap: 11px; border-radius: 9px; cursor: pointer; text-align: left; }
@@ -538,6 +553,9 @@
   .workflowProgress:not(.compactWorkflow) li:not(:last-child)::after { top: 11px; right: -24%; width: 48%; }
   .answerGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .answerButton { min-height: 44px; }
+  .completedChecksTable { min-width: 540px; }
+  .completedChecksTable th,
+  .completedChecksTable td { padding: 10px 11px; }
   .photoActions { grid-template-columns: 1fr; }
   .cameraButton,
   .uploadButton { min-height: 64px; }
