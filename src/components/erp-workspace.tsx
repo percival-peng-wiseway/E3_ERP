@@ -37,6 +37,10 @@ import {
   type PaymentTrackListResponse,
   type PaymentTrackUpdatedEventDetail,
 } from "@/lib/payment-track/types";
+import {
+  countOngoingSiteVisits,
+  type SiteVisitListResponse,
+} from "@/lib/site-visits/types";
 import { AgentSettingsDialog } from "./agent-settings-dialog";
 import { FilesWorkspace } from "./files-workspace";
 import { HomeCollaborationWorkspace } from "./home-collaboration-workspace";
@@ -97,6 +101,7 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
   const [agentSettingsOpen, setAgentSettingsOpen] = useState(false);
   const [pendingPmReviewCount, setPendingPmReviewCount] = useState<number | null>(null);
   const [activeProjectTrackCount, setActiveProjectTrackCount] = useState<number | null>(null);
+  const [activeSiteVisitCount, setActiveSiteVisitCount] = useState<number | null>(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
@@ -184,6 +189,44 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
       latestRequest += 1;
       window.clearInterval(refreshTimer);
       window.removeEventListener("erp:inventory-updated", refresh);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    let latestRequest = 0;
+
+    async function loadActiveSiteVisitCount() {
+      const requestId = ++latestRequest;
+      try {
+        const response = await fetch("/api/site-visits", { cache: "no-store" });
+        if (!response.ok) return;
+        const body = await readJsonResponse<SiteVisitListResponse>(response);
+        if (!active || requestId !== latestRequest || !Array.isArray(body.data?.visits)) return;
+        setActiveSiteVisitCount(countOngoingSiteVisits(body.data.visits));
+      } catch {
+        // Retain the last confirmed count while Site Visiting is unavailable.
+      }
+    }
+
+    const refresh = () => void loadActiveSiteVisitCount();
+    const refreshWhenVisible = () => {
+      if (!document.hidden) refresh();
+    };
+
+    refresh();
+    window.addEventListener("erp:site-visits-updated", refresh);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    const refreshTimer = window.setInterval(refreshWhenVisible, 60_000);
+
+    return () => {
+      active = false;
+      latestRequest += 1;
+      window.clearInterval(refreshTimer);
+      window.removeEventListener("erp:site-visits-updated", refresh);
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
@@ -306,6 +349,9 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
                 const activeProjectTrackLabel = activeProjectTrackCount === null
                   ? "Active Project Track count is loading"
                   : `${activeProjectTrackCount} active ${activeProjectTrackCount === 1 ? "project" : "projects"}`;
+                const activeSiteVisitLabel = activeSiteVisitCount === null
+                  ? "Active Site Visiting count is loading"
+                  : `${activeSiteVisitCount} active site ${activeSiteVisitCount === 1 ? "visit" : "visits"}`;
                 return (
                   <button
                     key={item.id}
@@ -315,7 +361,9 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
                       ? "Not available yet"
                       : item.id === "projects"
                         ? pendingReviewLabel
-                        : item.id === "payments" ? activeProjectTrackLabel : undefined}
+                        : item.id === "payments"
+                          ? activeProjectTrackLabel
+                          : item.id === "site-visits" ? activeSiteVisitLabel : undefined}
                   >
                     <Icon size={17} strokeWidth={1.8} />
                     <span className="nav-item-label">{item.label}</span>
@@ -335,6 +383,15 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
                         aria-live="polite"
                       >
                         {activeProjectTrackCount > 99 ? "99+" : activeProjectTrackCount}
+                      </span>
+                    )}
+                    {item.id === "site-visits" && activeSiteVisitCount !== null && (
+                      <span
+                        className="nav-count-badge"
+                        aria-label={activeSiteVisitLabel}
+                        aria-live="polite"
+                      >
+                        {activeSiteVisitCount > 99 ? "99+" : activeSiteVisitCount}
                       </span>
                     )}
                     {!item.enabled && <LockKeyhole size={12} />}

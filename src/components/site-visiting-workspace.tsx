@@ -443,6 +443,7 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
       setDetail(cloneVisit(visit));
       setScheduleDraft(visitScheduleDraft(visit, suggestedSchedule));
       setDetailDirtyKind(null);
+      window.dispatchEvent(new CustomEvent("erp:site-visits-updated", { detail: { source: "site-visiting" } }));
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : "Unable to create the site visit.");
     } finally {
@@ -460,6 +461,7 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
     if (!response.ok || !body?.data?.visit) {
       throw new Error(apiError(body, "Unable to save the site visit."));
     }
+    window.dispatchEvent(new CustomEvent("erp:site-visits-updated", { detail: { source: "site-visiting" } }));
     return body.data.visit;
   }
 
@@ -562,6 +564,7 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
       setDetail(null);
       setDetailDirtyKind(null);
       setNotice("Site visit deleted.");
+      window.dispatchEvent(new CustomEvent("erp:site-visits-updated", { detail: { source: "site-visiting" } }));
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : "Unable to delete the site visit.");
     } finally {

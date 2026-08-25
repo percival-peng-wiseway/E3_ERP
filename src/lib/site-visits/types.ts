@@ -79,6 +79,22 @@ export interface SiteVisit {
   updatedAt: string;
 }
 
+export function isSiteVisitOngoing(visit: Pick<SiteVisit, "status">) {
+  return visit.status !== "completed" && visit.status !== "cancelled";
+}
+
+export function countOngoingSiteVisits(
+  visits: ReadonlyArray<Pick<SiteVisit, "status">>,
+) {
+  return visits.filter(isSiteVisitOngoing).length;
+}
+
+export interface SiteVisitListResponse {
+  data: {
+    visits: SiteVisit[];
+  };
+}
+
 export type SiteVisitCreateInput = Pick<
   SiteVisit,
   "projectName" | "address" | "contact" | "reason" | "requestedDate" | "requestedTime"
