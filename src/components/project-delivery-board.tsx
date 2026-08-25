@@ -80,6 +80,13 @@ type ProjectScheduleJob = {
   updatedAt: string;
 };
 
+type ProjectScheduleSourceOverride = {
+  entryId: string;
+  state: "cancelled" | "deleted";
+  updatedAt: string;
+  updatedBy: string;
+};
+
 type ScheduleFilter = "all" | "material_delivery" | "installing" | "inventory" | "custom";
 type PaymentScheduleKind = "delivery" | "installation";
 type InventoryEditorState = {
@@ -112,14 +119,19 @@ type CustomEditorState = {
   notes: string;
 };
 
-type CalendarEntry =
+type CalendarEntry = (
   | { id: string; source: "inventory"; date: string; time: string | null; title: string; location: string; assignee: string; detail: string; completed: boolean; group: DeliveryGroup }
   | { id: string; source: "material_delivery" | "installing"; date: string; time: string | null; title: string; location: string; assignee: string; detail: string; completed: boolean; project: ScheduledPaymentProject }
-  | { id: string; source: "custom"; date: string; time: string | null; title: string; location: string; assignee: string; detail: string; completed: boolean; job: ProjectScheduleJob };
+  | { id: string; source: "custom"; date: string; time: string | null; title: string; location: string; assignee: string; detail: string; completed: boolean; job: ProjectScheduleJob }
+) & { overrideKey: string | null; cancelled: boolean };
 
-type UnscheduledEntry =
+type UnscheduledEntry = (
   | { id: string; source: "inventory"; title: string; location: string; detail: string; group: DeliveryGroup }
-  | { id: string; source: "material_delivery" | "installing"; title: string; location: string; detail: string; project: ScheduledPaymentProject };
+  | { id: string; source: "material_delivery" | "installing"; title: string; location: string; detail: string; project: ScheduledPaymentProject }
+) & { overrideKey: string; cancelled: boolean };
+
+type OverrideableEntry = Pick<CalendarEntry, "overrideKey" | "cancelled" | "source" | "title">;
+type SourceOverrideAction = "cancel" | "restore" | "delete";
 
 const MELBOURNE_TIME_ZONE = "Australia/Melbourne";
 const EMPTY_OPERATIONS: OperationsState = { orders: [], deliveryHistory: [] };
@@ -134,6 +146,15 @@ const FILTERS: Array<{ id: ScheduleFilter; label: string }> = [
 function apiMessage(value: unknown, fallback: string) {
   if (typeof value !== "string" || !value.trim()) return fallback;
   return /\p{Script=Han}/u.test(value) ? fallback : value;
+}
+
+function isSourceOverride(value: unknown): value is ProjectScheduleSourceOverride {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const candidate = value as Partial<ProjectScheduleSourceOverride>;
+  return typeof candidate.entryId === "string"
+    && (candidate.state === "cancelled" || candidate.state === "deleted")
+    && typeof candidate.updatedAt === "string"
+    && typeof candidate.updatedBy === "string";
 }
 
 function isoFromParts(year: number, month: number, day: number) {
@@ -274,6 +295,8 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
   const [operations, setOperations] = useState<OperationsState>(EMPTY_OPERATIONS);
   const [projects, setProjects] = useState<ScheduledPaymentProject[]>([]);
   const [customJobs, setCustomJobs] = useState<ProjectScheduleJob[]>([]);
+  const [sourceOverrides, setSourceOverrides] = useState<ProjectScheduleSourceOverride[]>([]);
+  const [sourceOverridesReady, setSourceOverridesReady] = useState(false);
   const [filter, setFilter] = useState<ScheduleFilter>("all");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -301,7 +324,7 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
     const requests = await Promise.allSettled([
       fetch("/api/inventory/operations", { cache: "no-store" }).then(async (response) => ({ response, body: await readJsonResponse<OperationsState & { error?: string }>(response) })),
       fetch("/api/payment-track", { cache: "no-store" }).then(async (response) => ({ response, body: await readJsonResponse<PaymentTrackListResponse & { error?: string }>(response) })),
-      fetch(`/api/project-schedule?from=${encodeURIComponent(addIsoDays(weekStart, -90))}&to=${encodeURIComponent(addIsoDays(weekStart, 96))}`, { cache: "no-store" }).then(async (response) => ({ response, body: await readJsonResponse<{ data?: { jobs?: ProjectScheduleJob[] }; error?: string }>(response) })),
+      fetch(`/api/project-schedule?from=${encodeURIComponent(addIsoDays(weekStart, -90))}&to=${encodeURIComponent(addIsoDays(weekStart, 96))}`, { cache: "no-store" }).then(async (response) => ({ response, body: await readJsonResponse<{ data?: { jobs?: ProjectScheduleJob[]; overrides?: unknown[] }; error?: string }>(response) })),
     ]);
     if (requestId !== loadRequestRef.current) return;
     const warnings: string[] = [];
@@ -324,12 +347,21 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
       setProjects([]);
       warnings.push("Project Track could not be refreshed.");
     }
-    if (customResult.status === "fulfilled" && customResult.value.response.ok) {
+    const scheduleData = customResult.status === "fulfilled" ? customResult.value.body.data : undefined;
+    const validScheduleData = customResult.status === "fulfilled"
+      && customResult.value.response.ok
+      && Array.isArray(scheduleData?.jobs)
+      && Array.isArray(scheduleData.overrides)
+      && scheduleData.overrides.every(isSourceOverride);
+    if (validScheduleData) {
       successfulSources += 1;
-      setCustomJobs(Array.isArray(customResult.value.body.data?.jobs) ? customResult.value.body.data.jobs : []);
+      setCustomJobs(scheduleData?.jobs as ProjectScheduleJob[]);
+      setSourceOverrides(scheduleData?.overrides as ProjectScheduleSourceOverride[]);
+      setSourceOverridesReady(true);
     } else {
       setCustomJobs([]);
-      warnings.push("Custom schedule jobs could not be refreshed.");
+      setSourceOverridesReady(false);
+      warnings.push("Weekly Schedule jobs and source-card controls could not be refreshed.");
     }
     setSourceWarnings(warnings);
     setError(successfulSources === 0 ? "Unable to load the weekly schedule." : "");
@@ -420,26 +452,42 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
     return groupOrders(withinWeek).slice(0, 50);
   }, [operations.deliveryHistory, weekEnd, weekStart]);
 
+  const sourceOverrideState = useMemo(
+    () => new Map(sourceOverrides.map((override) => [override.entryId, override.state] as const)),
+    [sourceOverrides],
+  );
+
   const allDatedEntries = useMemo<CalendarEntry[]>(() => {
-    const inventoryEntries: CalendarEntry[] = [...scheduledInventoryGroups, ...completedInventoryGroups]
+    const inventoryEntries: CalendarEntry[] = sourceOverridesReady ? [...scheduledInventoryGroups, ...completedInventoryGroups]
       .filter((group) => Boolean(group.primary.planned_date || melbourneDateFromTimestamp(group.primary.delivered_at)))
-      .map((group) => ({
-        id: `inventory:${group.key}:${group.primary.status}`,
-        source: "inventory",
-        date: (group.primary.planned_date || melbourneDateFromTimestamp(group.primary.delivered_at)) as string,
-        time: group.primary.delivery_time,
-        title: group.primary.customer,
-        location: group.primary.address || "Address required",
-        assignee: group.primary.driver || "Driver not assigned",
-        detail: `${group.orders.length} ${group.orders.length === 1 ? "item" : "items"}`,
-        completed: group.primary.status === "delivered",
-        group,
-      }));
+      .flatMap((group) => {
+        const overrideKey = `inventory:${group.key}`;
+        const overrideState = sourceOverrideState.get(overrideKey);
+        if (overrideState === "deleted") return [];
+        return [{
+          id: `inventory:${group.key}:${group.primary.status}`,
+          source: "inventory" as const,
+          date: (group.primary.planned_date || melbourneDateFromTimestamp(group.primary.delivered_at)) as string,
+          time: group.primary.delivery_time,
+          title: group.primary.customer,
+          location: group.primary.address || "Address required",
+          assignee: group.primary.driver || "Driver not assigned",
+          detail: `${group.orders.length} ${group.orders.length === 1 ? "item" : "items"}`,
+          completed: group.primary.status === "delivered",
+          group,
+          overrideKey,
+          cancelled: overrideState === "cancelled",
+        }];
+      }) : [];
     const paymentEntries: CalendarEntry[] = [];
-    for (const project of projects) {
+    for (const project of sourceOverridesReady ? projects : []) {
       const deliveryDate = project.deliveryScheduledFor || melbourneDateFromTimestamp(project.deliveredAt);
       const isActiveDelivery = project.stage === "material_delivery" && !project.deliveredAt;
-      if (deliveryDate && (project.deliveredAt || (isActiveDelivery && hasCompletePaymentSchedule(project, "delivery")))) {
+      const deliveryOverrideKey = `payment-delivery:${project.id.toLowerCase()}`;
+      const deliveryOverrideState = sourceOverrideState.get(deliveryOverrideKey);
+      if (deliveryOverrideState !== "deleted"
+        && deliveryDate
+        && (project.deliveredAt || (isActiveDelivery && hasCompletePaymentSchedule(project, "delivery")))) {
         paymentEntries.push({
           id: `payment-delivery:${project.id}`,
           source: "material_delivery",
@@ -451,11 +499,17 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
           detail: paymentItemsSummary(project),
           completed: Boolean(project.deliveredAt),
           project,
+          overrideKey: deliveryOverrideKey,
+          cancelled: deliveryOverrideState === "cancelled",
         });
       }
       const installationDate = project.installationScheduledFor || melbourneDateFromTimestamp(project.installedAt);
       const isActiveInstallation = project.stage === "installing" && !project.installedAt;
-      if (installationDate && (project.installedAt || (isActiveInstallation && hasCompletePaymentSchedule(project, "installation")))) {
+      const installationOverrideKey = `payment-installation:${project.id.toLowerCase()}`;
+      const installationOverrideState = sourceOverrideState.get(installationOverrideKey);
+      if (installationOverrideState !== "deleted"
+        && installationDate
+        && (project.installedAt || (isActiveInstallation && hasCompletePaymentSchedule(project, "installation")))) {
         paymentEntries.push({
           id: `payment-installation:${project.id}`,
           source: "installing",
@@ -467,6 +521,8 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
           detail: paymentItemsSummary(project),
           completed: Boolean(project.installedAt),
           project,
+          overrideKey: installationOverrideKey,
+          cancelled: installationOverrideState === "cancelled",
         });
       }
     }
@@ -481,46 +537,59 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
       detail: job.endTime ? `${timeLabel(job.startTime)} – ${timeLabel(job.endTime)}` : timeLabel(job.startTime),
       completed: job.status === "completed",
       job,
+      overrideKey: null,
+      cancelled: false,
     }));
     return [...inventoryEntries, ...paymentEntries, ...customEntries]
       .sort((left, right) => `${left.date}:${left.time || "99:99"}:${left.title}`.localeCompare(`${right.date}:${right.time || "99:99"}:${right.title}`));
-  }, [completedInventoryGroups, customJobs, projects, scheduledInventoryGroups]);
+  }, [completedInventoryGroups, customJobs, projects, scheduledInventoryGroups, sourceOverrideState, sourceOverridesReady]);
 
   const calendarEntries = useMemo(
     () => allDatedEntries.filter((entry) => entry.date >= weekStart && entry.date <= weekEnd),
     [allDatedEntries, weekEnd, weekStart],
   );
   const overdueEntries = useMemo(
-    () => allDatedEntries.filter((entry) => !entry.completed && entry.date < weekStart),
+    () => allDatedEntries.filter((entry) => !entry.completed && !entry.cancelled && entry.date < weekStart),
     [allDatedEntries, weekStart],
   );
   const futureCount = useMemo(
-    () => allDatedEntries.filter((entry) => !entry.completed && entry.date > weekEnd).length,
+    () => allDatedEntries.filter((entry) => !entry.completed && !entry.cancelled && entry.date > weekEnd).length,
     [allDatedEntries, weekEnd],
   );
 
   const unscheduledEntries = useMemo<UnscheduledEntry[]>(() => {
-    const inventory: UnscheduledEntry[] = unscheduledInventoryGroups.map((group) => ({
-      id: `pending-inventory:${group.key}`,
-      source: "inventory",
-      title: group.primary.customer,
-      location: group.primary.address || "Address required",
-      detail: group.primary.status === "pending"
-        ? `${group.orders.length} ${group.orders.length === 1 ? "item" : "items"} · From ${group.primary.sales_rep}`
-        : `${group.orders.length} ${group.orders.length === 1 ? "item" : "items"} · Schedule date missing`,
-      group,
-    }));
+    const inventory: UnscheduledEntry[] = sourceOverridesReady ? unscheduledInventoryGroups.flatMap((group) => {
+      const overrideKey = `inventory:${group.key}`;
+      const overrideState = sourceOverrideState.get(overrideKey);
+      if (overrideState === "deleted") return [];
+      return [{
+        id: `pending-inventory:${group.key}`,
+        source: "inventory" as const,
+        title: group.primary.customer,
+        location: group.primary.address || "Address required",
+        detail: group.primary.status === "pending"
+          ? `${group.orders.length} ${group.orders.length === 1 ? "item" : "items"} · From ${group.primary.sales_rep}`
+          : `${group.orders.length} ${group.orders.length === 1 ? "item" : "items"} · Schedule date missing`,
+        group,
+        overrideKey,
+        cancelled: overrideState === "cancelled",
+      }];
+    }) : [];
     const payment: UnscheduledEntry[] = [];
-    for (const project of projects) {
+    for (const project of sourceOverridesReady ? projects : []) {
       if (project.stage === "material_delivery" && !project.deliveredAt && !hasCompletePaymentSchedule(project, "delivery")) {
-        payment.push({ id: `pending-payment-delivery:${project.id}`, source: "material_delivery", title: customerName(project), location: customerAddress(project) || "Address required", detail: `${paymentItemsSummary(project)} · Schedule material delivery`, project });
+        const overrideKey = `payment-delivery:${project.id.toLowerCase()}`;
+        const overrideState = sourceOverrideState.get(overrideKey);
+        if (overrideState !== "deleted") payment.push({ id: `pending-payment-delivery:${project.id}`, source: "material_delivery", title: customerName(project), location: customerAddress(project) || "Address required", detail: `${paymentItemsSummary(project)} · Schedule material delivery`, project, overrideKey, cancelled: overrideState === "cancelled" });
       }
       if (project.stage === "installing" && !project.installedAt && !hasCompletePaymentSchedule(project, "installation")) {
-        payment.push({ id: `pending-payment-installation:${project.id}`, source: "installing", title: customerName(project), location: customerAddress(project) || "Address required", detail: `${paymentItemsSummary(project)} · Schedule installation`, project });
+        const overrideKey = `payment-installation:${project.id.toLowerCase()}`;
+        const overrideState = sourceOverrideState.get(overrideKey);
+        if (overrideState !== "deleted") payment.push({ id: `pending-payment-installation:${project.id}`, source: "installing", title: customerName(project), location: customerAddress(project) || "Address required", detail: `${paymentItemsSummary(project)} · Schedule installation`, project, overrideKey, cancelled: overrideState === "cancelled" });
       }
     }
     return [...inventory, ...payment];
-  }, [projects, unscheduledInventoryGroups]);
+  }, [projects, sourceOverrideState, sourceOverridesReady, unscheduledInventoryGroups]);
 
   const visibleEntries = useMemo(() => calendarEntries.filter((entry) => isScheduleFilterMatch(entry.source, filter)), [calendarEntries, filter]);
   const visibleOverdue = useMemo(() => overdueEntries.filter((entry) => isScheduleFilterMatch(entry.source, filter)), [filter, overdueEntries]);
@@ -796,11 +865,72 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
     return "Custom";
   };
 
+  async function updateSourceOverride(entry: OverrideableEntry, action: SourceOverrideAction) {
+    if (authenticatedRole !== "admin" || !entry.overrideKey || busy) return;
+    if (action !== "restore") {
+      const prompt = action === "cancel"
+        ? `Cancel “${entry.title}” in Weekly Schedule?`
+        : `Delete “${entry.title}” from Weekly Schedule?`;
+      const effect = action === "cancel"
+        ? "This only marks the Weekly Schedule card as cancelled."
+        : "This only removes the card from Weekly Schedule.";
+      if (!window.confirm(`${prompt}\n\n${effect} It will not delete or change Inventory, Project Track, payments, or attachments.`)) return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/project-schedule/entries/${encodeURIComponent(entry.overrideKey)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      const body = await readJsonResponse<{ error?: string }>(response);
+      if (!response.ok) throw new Error(apiMessage(body.error, "Unable to update this Weekly Schedule card."));
+      const message = action === "cancel"
+        ? `${sourceLabel(entry.source)} cancelled in Weekly Schedule.`
+        : action === "restore"
+          ? `${sourceLabel(entry.source)} restored in Weekly Schedule.`
+          : `${sourceLabel(entry.source)} removed from Weekly Schedule.`;
+      await refreshAll(message);
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : "Unable to update this Weekly Schedule card.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const renderSourceOverrideActions = (entry: OverrideableEntry) => authenticatedRole === "admin" && entry.overrideKey ? (
+    <>
+      <button
+        type="button"
+        className={entry.cancelled ? styles.scheduleRestoreButton : styles.scheduleCancelButton}
+        onClick={() => void updateSourceOverride(entry, entry.cancelled ? "restore" : "cancel")}
+        disabled={busy}
+        aria-label={`${entry.cancelled ? "Restore" : "Cancel"} ${entry.title} in Weekly Schedule`}
+      >
+        {entry.cancelled ? <RotateCcw size={13} /> : <X size={13} />}{entry.cancelled ? "Restore" : "Cancel"}
+      </button>
+      <button
+        type="button"
+        className={styles.scheduleDeleteButton}
+        onClick={() => void updateSourceOverride(entry, "delete")}
+        disabled={busy}
+        aria-label={`Delete ${entry.title} from Weekly Schedule`}
+      >
+        <Trash2 size={13} />Delete
+      </button>
+    </>
+  ) : null;
+
   const renderCalendarEntry = (entry: CalendarEntry) => (
-    <article key={entry.id} className={`${styles.scheduleCard} ${styles[entry.source]} ${entry.completed ? styles.completedCard : ""}`}>
+    <article key={entry.id} className={`${styles.scheduleCard} ${styles[entry.source]} ${entry.completed && !entry.cancelled ? styles.completedCard : ""} ${entry.cancelled ? styles.cancelledCard : ""}`}>
       <div className={styles.cardTopline}>
         <span className={styles.sourceBadge}>{sourceLabel(entry.source)}</span>
-        {entry.completed ? <span className={styles.completedBadge}><Check size={12} /> Complete</span> : null}
+        {entry.cancelled
+          ? <span className={styles.cancelledBadge}><X size={12} /> Cancelled</span>
+          : entry.completed
+            ? <span className={styles.completedBadge}><Check size={12} /> Complete</span>
+            : null}
       </div>
       <h3>{entry.title}</h3>
       <p><MapPin size={13} />{entry.location}</p>
@@ -810,19 +940,20 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
       </div>
       <small>{entry.detail}</small>
       <div className={styles.cardButtons}>
-        {canManageSchedule && entry.source === "inventory" && !entry.completed ? (
+        {canManageSchedule && entry.source === "inventory" && !entry.completed && !entry.cancelled ? (
           <>
             <button type="button" onClick={() => openInventoryEditor(entry.group)} disabled={busy}><Pencil size={13} /> Edit</button>
             <button type="button" className={styles.primaryInline} onClick={() => void inventoryAction(entry.group, "deliver")} disabled={busy}><CheckCircle2 size={13} /> Delivered</button>
           </>
         ) : null}
-        {canManageSchedule && (entry.source === "material_delivery" || entry.source === "installing") && !entry.completed ? (
+        {canManageSchedule && (entry.source === "material_delivery" || entry.source === "installing") && !entry.completed && !entry.cancelled ? (
           <>
             <button type="button" onClick={() => openPaymentEditor(entry.project, entry.source === "installing" ? "installation" : "delivery")} disabled={busy}><Pencil size={13} /> Reschedule</button>
             <button type="button" className={styles.primaryInline} onClick={() => void completePaymentEntry(entry)} disabled={busy}><CheckCircle2 size={13} /> {entry.source === "installing" ? "Installed" : "Delivered"}</button>
           </>
         ) : null}
         {canManageSchedule && entry.source === "custom" ? <button type="button" onClick={() => openCustomEditor(entry.job)} disabled={busy}><Pencil size={13} /> Details</button> : null}
+        {entry.source !== "custom" ? renderSourceOverrideActions(entry) : null}
       </div>
     </article>
   );
@@ -893,23 +1024,31 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
         </header>
         <div className={styles.trayList}>
           {visibleUnscheduled.map((entry) => (
-            <article key={entry.id} className={`${styles.unscheduledCard} ${styles[entry.source]}`}>
+            <article key={entry.id} className={`${styles.unscheduledCard} ${styles[entry.source]} ${entry.cancelled ? styles.cancelledCard : ""}`}>
               <div>
-                <span className={styles.sourceBadge}>{sourceLabel(entry.source)}</span>
+                <div className={styles.cardTopline}>
+                  <span className={styles.sourceBadge}>{sourceLabel(entry.source)}</span>
+                  {entry.cancelled ? <span className={styles.cancelledBadge}><X size={12} /> Cancelled</span> : null}
+                </div>
                 <h3>{entry.title}</h3>
                 <p><MapPin size={13} />{entry.location}</p>
                 <small>{entry.detail}</small>
               </div>
-              {canManageSchedule ? (
-                <button
-                  type="button"
-                  onClick={() => entry.source === "inventory"
-                    ? openInventoryEditor(entry.group)
-                    : openPaymentEditor(entry.project, entry.source === "installing" ? "installation" : "delivery")}
-                  disabled={busy}
-                >
-                  <CalendarDays size={14} /> Schedule
-                </button>
+              {(canManageSchedule && !entry.cancelled) || authenticatedRole === "admin" ? (
+                <div className={styles.unscheduledActions}>
+                  {canManageSchedule && !entry.cancelled ? (
+                    <button
+                      type="button"
+                      onClick={() => entry.source === "inventory"
+                        ? openInventoryEditor(entry.group)
+                        : openPaymentEditor(entry.project, entry.source === "installing" ? "installation" : "delivery")}
+                      disabled={busy}
+                    >
+                      <CalendarDays size={14} /> Schedule
+                    </button>
+                  ) : null}
+                  {renderSourceOverrideActions(entry)}
+                </div>
               ) : null}
             </article>
           ))}

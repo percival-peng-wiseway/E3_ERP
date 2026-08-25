@@ -12,7 +12,9 @@ const repositoryModule = "./repository.ts";
 const {
   createProjectScheduleJob,
   deleteProjectScheduleJob,
+  applyProjectScheduleSourceOverride,
   listProjectScheduleJobs,
+  listProjectScheduleSourceOverrides,
   ProjectScheduleRepositoryError,
   updateProjectScheduleJob,
 } = await import(repositoryModule) as typeof import("./repository");
@@ -150,5 +152,113 @@ test("invalid list ranges are rejected", async () => {
       error instanceof ProjectScheduleRepositoryError
       && error.code === "invalid_date_range"
     ),
+  );
+});
+
+test("source overrides cancel, delete, and restore without mutating source records", async () => {
+  const inventoryEntryId = "inventory:orders:17,21";
+  const paymentEntryId = `payment-delivery:${randomUUID()}`;
+
+  const cancelled = await applyProjectScheduleSourceOverride(inventoryEntryId, "cancel", "Jiaqi");
+  assert.deepEqual(cancelled && {
+    entryId: cancelled.entryId,
+    state: cancelled.state,
+    updatedBy: cancelled.updatedBy,
+  }, { entryId: inventoryEntryId, state: "cancelled", updatedBy: "Jiaqi" });
+
+  const deleted = await applyProjectScheduleSourceOverride(paymentEntryId, "delete", "Jerry");
+  assert.equal(deleted?.state, "deleted");
+  assert.deepEqual(
+    (await listProjectScheduleSourceOverrides()).map(({ entryId, state }) => ({ entryId, state })),
+    [
+      { entryId: inventoryEntryId, state: "cancelled" },
+      { entryId: paymentEntryId, state: "deleted" },
+    ].sort((left, right) => left.entryId.localeCompare(right.entryId)),
+  );
+
+  assert.equal(await applyProjectScheduleSourceOverride(inventoryEntryId, "restore", "Jiaqi"), null);
+  assert.deepEqual(await listProjectScheduleSourceOverrides(), [deleted]);
+  await assert.rejects(
+    applyProjectScheduleSourceOverride(paymentEntryId, "restore", "Jerry"),
+    (error: unknown) => error instanceof ProjectScheduleRepositoryError && error.code === "deleted_entry",
+  );
+  await assert.rejects(
+    applyProjectScheduleSourceOverride(paymentEntryId, "cancel", "Jerry"),
+    (error: unknown) => error instanceof ProjectScheduleRepositoryError && error.code === "deleted_entry",
+  );
+});
+
+test("concurrent source overrides are serialized without losing entries", async () => {
+  const entryIds = Array.from({ length: 12 }, () => `payment-installation:${randomUUID()}`);
+  await Promise.all(entryIds.map((entryId) => (
+    applyProjectScheduleSourceOverride(entryId, "cancel", "Jerry")
+  )));
+  const storedIds = new Set((await listProjectScheduleSourceOverrides()).map(({ entryId }) => entryId));
+  assert.ok(entryIds.every((entryId) => storedIds.has(entryId)));
+});
+
+test("source override count limit rejects new entries but permits an existing override update", async () => {
+  const sourceOverridesFile = path.join(testDataDirectory, "source-overrides.json");
+  const timestamp = new Date().toISOString();
+  const atLimit = Array.from({ length: 2_000 }, () => ({
+    entryId: `payment-delivery:${randomUUID()}`,
+    state: "cancelled" as const,
+    updatedAt: timestamp,
+    updatedBy: "Jerry",
+  }));
+  await writeFile(sourceOverridesFile, `${JSON.stringify(atLimit)}\n`, "utf8");
+  await assert.rejects(
+    applyProjectScheduleSourceOverride(`payment-delivery:${randomUUID()}`, "cancel", "Jerry"),
+    (error: unknown) => error instanceof ProjectScheduleRepositoryError && error.code === "override_limit_reached",
+  );
+  const updated = await applyProjectScheduleSourceOverride(atLimit[0].entryId, "delete", "Jiaqi");
+  assert.equal(updated?.state, "deleted");
+  assert.equal((await listProjectScheduleSourceOverrides()).length, 2_000);
+  await writeFile(sourceOverridesFile, "[]\n", "utf8");
+});
+
+test("source override storage and canonical entry IDs are strictly validated", async () => {
+  for (const invalidEntryId of [
+    "inventory:orders:02",
+    "inventory:orders:2,1",
+    "inventory:orders:2,2",
+    `payment-delivery:${randomUUID().toUpperCase()}`,
+    `payment-installing:${randomUUID()}`,
+  ]) {
+    await assert.rejects(
+      applyProjectScheduleSourceOverride(invalidEntryId, "cancel", "Jerry"),
+      (error: unknown) => error instanceof ProjectScheduleRepositoryError && error.code === "invalid_entry_id",
+    );
+  }
+
+  const strictEntryId = `payment-installation:${randomUUID()}`;
+  await applyProjectScheduleSourceOverride(strictEntryId, "delete", "Jerry");
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await assert.rejects(
+      applyProjectScheduleSourceOverride(strictEntryId, "delete", "Bad\u0000 actor"),
+      (error: unknown) => error instanceof ProjectScheduleRepositoryError && error.code === "invalid_actor",
+    );
+  }
+
+  const sourceOverridesFile = path.join(testDataDirectory, "source-overrides.json");
+  const valid = (await listProjectScheduleSourceOverrides()).filter(({ entryId }) => entryId === strictEntryId);
+  await writeFile(sourceOverridesFile, `${JSON.stringify([{
+    ...valid[0],
+    updatedBy: "Bad\u0000 actor",
+  }], null, 2)}\n`, "utf8");
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await assert.rejects(
+      listProjectScheduleSourceOverrides(),
+      (error: unknown) => error instanceof ProjectScheduleRepositoryError && error.code === "invalid_storage",
+    );
+  }
+
+  await writeFile(sourceOverridesFile, `${JSON.stringify([{
+    ...valid[0],
+    unexpected: true,
+  }], null, 2)}\n`, "utf8");
+  await assert.rejects(
+    listProjectScheduleSourceOverrides(),
+    (error: unknown) => error instanceof ProjectScheduleRepositoryError && error.code === "invalid_storage",
   );
 });

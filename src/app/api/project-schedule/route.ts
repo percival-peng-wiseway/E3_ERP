@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import {
   createProjectScheduleJob,
   listProjectScheduleJobs,
+  listProjectScheduleSourceOverrides,
   ProjectScheduleRepositoryError,
 } from "@/lib/project-schedule/repository";
 import {
@@ -36,7 +37,11 @@ export async function GET(request: NextRequest) {
     return projectScheduleError(400, "invalid_date_range", "Choose a valid schedule date range.");
   }
   try {
-    return projectScheduleJson({ data: { jobs: await listProjectScheduleJobs(from, to) } });
+    const [jobs, overrides] = await Promise.all([
+      listProjectScheduleJobs(from, to),
+      listProjectScheduleSourceOverrides(),
+    ]);
+    return projectScheduleJson({ data: { jobs, overrides } });
   } catch (error) {
     if (error instanceof ProjectScheduleRepositoryError) {
       return projectScheduleError(error.status, error.code, error.message);

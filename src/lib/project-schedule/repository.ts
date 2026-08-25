@@ -6,10 +6,14 @@ import * as cloudflareStorage from "../server/cloudflare-storage.ts";
 // Focused tests execute source TypeScript directly under Node ESM.
 // @ts-expect-error -- explicit extension is required by that runtime.
 import * as projectScheduleValidation from "./validation.ts";
+// @ts-expect-error -- focused Node ESM tests require the explicit extension.
+import * as projectScheduleTypes from "./types.ts";
 import type {
   ProjectScheduleCreateInput,
   ProjectScheduleJob,
   ProjectSchedulePatchInput,
+  ProjectScheduleSourceOverride,
+  ProjectScheduleSourceOverrideAction,
   ProjectScheduleStatus,
 } from "./types";
 
@@ -29,6 +33,12 @@ const {
   projectScheduleTimesAreOrdered,
 } = projectScheduleValidation;
 
+const {
+  isProjectScheduleSourceEntryId,
+  PROJECT_SCHEDULE_SOURCE_OVERRIDE_ACTIONS,
+  PROJECT_SCHEDULE_SOURCE_OVERRIDE_STATES,
+} = projectScheduleTypes;
+
 export class ProjectScheduleRepositoryError extends Error {
   readonly status: number;
   readonly code: string;
@@ -46,12 +56,19 @@ const dataRoot = path.resolve(
   process.env.PROJECT_SCHEDULE_DATA_DIR || path.join(process.cwd(), ".data", "project-schedule"),
 );
 const recordsPath = path.join(/* turbopackIgnore: true */ dataRoot, "records.json");
+const sourceOverridesPath = path.join(/* turbopackIgnore: true */ dataRoot, "source-overrides.json");
 const CLOUDFLARE_DOCUMENT_KEY = "project-schedule/records";
+const SOURCE_OVERRIDES_CLOUDFLARE_DOCUMENT_KEY = "project-schedule/source-overrides";
 const MAXIMUM_STORAGE_RETRIES = 5;
 let mutationQueue: Promise<void> = Promise.resolve();
+let sourceOverrideMutationQueue: Promise<void> = Promise.resolve();
 const ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const UNSAFE_CONTROLS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
+const HAS_UNSAFE_ACTOR_CONTROLS = /[\u0000-\u001F\u007F]/;
 const MAXIMUM_RANGE_DAYS = 400;
+const MAXIMUM_SOURCE_OVERRIDES = 2_000;
+const MAXIMUM_OVERRIDE_ACTOR_LENGTH = 120;
+const MAXIMUM_SOURCE_OVERRIDE_BYTES = 1_800_000;
 
 function withMutation<T>(work: () => Promise<T>) {
   const retryingWork = async () => {
@@ -70,6 +87,26 @@ function withMutation<T>(work: () => Promise<T>) {
   };
   const result = mutationQueue.then(retryingWork, retryingWork);
   mutationQueue = result.then(() => undefined, () => undefined);
+  return result;
+}
+
+function withSourceOverrideMutation<T>(work: () => Promise<T>) {
+  const retryingWork = async () => {
+    for (let attempt = 0; attempt < MAXIMUM_STORAGE_RETRIES; attempt += 1) {
+      try {
+        return await work();
+      } catch (error) {
+        if (!(error instanceof CloudflareDocumentConflictError)) throw error;
+      }
+    }
+    throw new ProjectScheduleRepositoryError(
+      "Weekly Schedule overrides changed while this request was being saved. Try again.",
+      409,
+      "storage_conflict",
+    );
+  };
+  const result = sourceOverrideMutationQueue.then(retryingWork, retryingWork);
+  sourceOverrideMutationQueue = result.then(() => undefined, () => undefined);
   return result;
 }
 
@@ -144,6 +181,49 @@ function normalizedJobs(parsed: unknown, version: number | null) {
   };
 }
 
+function invalidSourceOverrideStorage(message = "Weekly Schedule source override data is invalid."): never {
+  throw new ProjectScheduleRepositoryError(message, 500, "invalid_storage");
+}
+
+function strictStoredActor(value: unknown) {
+  if (typeof value !== "string"
+    || !value.length
+    || value !== value.trim()
+    || value.length > MAXIMUM_OVERRIDE_ACTOR_LENGTH
+    || HAS_UNSAFE_ACTOR_CONTROLS.test(value)) return null;
+  return value;
+}
+
+function normalizedSourceOverrides(parsed: unknown, version: number | null) {
+  if (!Array.isArray(parsed) || parsed.length > MAXIMUM_SOURCE_OVERRIDES) invalidSourceOverrideStorage();
+  const seenEntryIds = new Set<string>();
+  const overrides = parsed.map((value): ProjectScheduleSourceOverride => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) invalidSourceOverrideStorage();
+    const source = value as Record<string, unknown>;
+    const fields = Object.keys(source).sort();
+    if (fields.length !== 4
+      || fields[0] !== "entryId"
+      || fields[1] !== "state"
+      || fields[2] !== "updatedAt"
+      || fields[3] !== "updatedBy"
+      || !isProjectScheduleSourceEntryId(source.entryId)
+      || seenEntryIds.has(source.entryId)
+      || typeof source.state !== "string"
+      || !PROJECT_SCHEDULE_SOURCE_OVERRIDE_STATES.includes(source.state as ProjectScheduleSourceOverride["state"])
+      || !exactTimestamp(source.updatedAt)) invalidSourceOverrideStorage();
+    const updatedBy = strictStoredActor(source.updatedBy);
+    if (!updatedBy) invalidSourceOverrideStorage();
+    seenEntryIds.add(source.entryId);
+    return {
+      entryId: source.entryId,
+      state: source.state as ProjectScheduleSourceOverride["state"],
+      updatedAt: source.updatedAt,
+      updatedBy,
+    };
+  });
+  return { overrides, version };
+}
+
 async function readJobs() {
   const bindings = await erpCloudflareBindings();
   if (bindings) {
@@ -165,6 +245,37 @@ async function readJobs() {
   }
 }
 
+async function readSourceOverrides() {
+  const bindings = await erpCloudflareBindings();
+  if (bindings) {
+    if (!bindings.database) {
+      throw new CloudflareStorageConfigurationError("The ERP_DB binding is missing.");
+    }
+    try {
+      const document = await readVersionedDocument<unknown>(
+        bindings.database,
+        SOURCE_OVERRIDES_CLOUDFLARE_DOCUMENT_KEY,
+      );
+      const value = document.version === 0 && document.value === null ? [] : document.value;
+      return normalizedSourceOverrides(value, document.version);
+    } catch (error) {
+      if (error instanceof SyntaxError) invalidSourceOverrideStorage();
+      throw error;
+    }
+  }
+
+  await ensureStorage();
+  try {
+    return normalizedSourceOverrides(JSON.parse(await readFile(sourceOverridesPath, "utf8")), null);
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      return { overrides: [] as ProjectScheduleSourceOverride[], version: null };
+    }
+    if (error instanceof SyntaxError) invalidSourceOverrideStorage();
+    throw error;
+  }
+}
+
 async function writeJobs(jobs: ProjectScheduleJob[], expectedVersion: number | null) {
   const bindings = await erpCloudflareBindings();
   if (bindings) {
@@ -181,6 +292,40 @@ async function writeJobs(jobs: ProjectScheduleJob[], expectedVersion: number | n
   try {
     await writeFile(temporaryPath, `${JSON.stringify(jobs, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
     await rename(temporaryPath, recordsPath);
+    replaced = true;
+  } finally {
+    if (!replaced) await unlink(temporaryPath).catch(() => undefined);
+  }
+}
+
+async function writeSourceOverrides(overrides: ProjectScheduleSourceOverride[], expectedVersion: number | null) {
+  if (new TextEncoder().encode(JSON.stringify(overrides)).byteLength > MAXIMUM_SOURCE_OVERRIDE_BYTES) {
+    throw new ProjectScheduleRepositoryError(
+      "Weekly Schedule has reached the source override storage limit.",
+      409,
+      "override_limit_reached",
+    );
+  }
+  const bindings = await erpCloudflareBindings();
+  if (bindings) {
+    if (!bindings.database || expectedVersion === null) {
+      throw new CloudflareStorageConfigurationError("The ERP_DB binding is missing.");
+    }
+    await writeVersionedDocument(
+      bindings.database,
+      SOURCE_OVERRIDES_CLOUDFLARE_DOCUMENT_KEY,
+      overrides,
+      expectedVersion,
+    );
+    return;
+  }
+
+  await ensureStorage();
+  const temporaryPath = path.join(dataRoot, `.source-overrides-${randomUUID()}.tmp`);
+  let replaced = false;
+  try {
+    await writeFile(temporaryPath, `${JSON.stringify(overrides, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    await rename(temporaryPath, sourceOverridesPath);
     replaced = true;
   } finally {
     if (!replaced) await unlink(temporaryPath).catch(() => undefined);
@@ -210,6 +355,69 @@ export function listProjectScheduleJobs(from: string, to: string) {
     return stored.jobs
       .filter((job) => job.scheduledDate >= from && job.scheduledDate <= to)
       .sort(scheduleSort);
+  });
+}
+
+export async function listProjectScheduleSourceOverrides() {
+  const stored = await readSourceOverrides();
+  return [...stored.overrides].sort((left, right) => left.entryId.localeCompare(right.entryId));
+}
+
+export function applyProjectScheduleSourceOverride(
+  entryId: string,
+  action: ProjectScheduleSourceOverrideAction,
+  updatedBy: string,
+) {
+  return withSourceOverrideMutation(async () => {
+    if (!isProjectScheduleSourceEntryId(entryId)) {
+      throw new ProjectScheduleRepositoryError("The Weekly Schedule source entry ID is invalid.", 400, "invalid_entry_id");
+    }
+    if (!PROJECT_SCHEDULE_SOURCE_OVERRIDE_ACTIONS.includes(action)) {
+      throw new ProjectScheduleRepositoryError("The Weekly Schedule override action is invalid.", 400, "invalid_action");
+    }
+    const actor = strictStoredActor(updatedBy);
+    if (!actor) {
+      throw new ProjectScheduleRepositoryError("The Weekly Schedule override actor is invalid.", 400, "invalid_actor");
+    }
+
+    const stored = await readSourceOverrides();
+    const index = stored.overrides.findIndex((override) => override.entryId === entryId);
+    const current = index < 0 ? null : stored.overrides[index];
+
+    if (action === "restore") {
+      if (!current) {
+        throw new ProjectScheduleRepositoryError("Weekly Schedule source override not found.", 404, "not_found");
+      }
+      if (current.state === "deleted") {
+        throw new ProjectScheduleRepositoryError("A deleted Weekly Schedule source entry cannot be restored.", 409, "deleted_entry");
+      }
+      stored.overrides.splice(index, 1);
+      await writeSourceOverrides(stored.overrides, stored.version);
+      return null;
+    }
+
+    if (action === "cancel" && current?.state === "deleted") {
+      throw new ProjectScheduleRepositoryError("A deleted Weekly Schedule source entry cannot be cancelled.", 409, "deleted_entry");
+    }
+    if (!current && stored.overrides.length >= MAXIMUM_SOURCE_OVERRIDES) {
+      throw new ProjectScheduleRepositoryError(
+        "Weekly Schedule has reached the source override limit.",
+        409,
+        "override_limit_reached",
+      );
+    }
+
+    const override: ProjectScheduleSourceOverride = {
+      entryId,
+      state: action === "delete" ? "deleted" : "cancelled",
+      updatedAt: current ? nextTimestamp(current.updatedAt) : new Date().toISOString(),
+      updatedBy: actor,
+    };
+    if (index < 0) stored.overrides.push(override);
+    else stored.overrides[index] = override;
+    stored.overrides.sort((left, right) => left.entryId.localeCompare(right.entryId));
+    await writeSourceOverrides(stored.overrides, stored.version);
+    return override;
   });
 }
 
