@@ -66,8 +66,8 @@ Inventory and QuoteHelp continue to save to their existing upstream services, so
 
 Worker-hosted business modules use the resources declared in `wrangler.jsonc`:
 
-- `ERP_DB` (D1) stores versioned Project Track, Project Schedule, Site Visiting, Reimbursements, Reports, Group Chat, Public Announcements and saved Agent-settings documents. Compare-and-swap updates are retried so separate Worker isolates cannot silently overwrite each other.
-- `ERP_FILES` (private Workers KV) stores immutable Project Track contracts/payment proofs, Site Visiting photos and Reimbursement invoices. API authorization and per-file access tokens still protect every download.
+- `ERP_DB` (D1) stores normalized Files directory metadata plus versioned Project Track, Project Schedule, Site Visiting, Reimbursements, Reports, Group Chat, Public Announcements and saved Agent-settings documents. Files item mutations use row versions, while document updates use compare-and-swap retries, so separate Worker isolates cannot silently overwrite one another.
+- `ERP_FILES` (private Workers KV) stores Files blobs plus immutable Project Track contracts/payment proofs, Site Visiting photos and Reimbursement invoices. Files downloads require an ERP session; workflow attachments retain their per-file access controls.
 - Local development continues to use the corresponding `.data` files, so Node-based development and focused repository tests do not need Cloudflare bindings.
 
 Apply D1 migrations manually when needed with the same reusable command used by the deployment hooks:
@@ -90,7 +90,7 @@ The migration command intentionally covers Project Track, Project Schedule and S
 
 Prefer the `AGENT_API_KEY` Cloudflare Secret for long-lived Agent credentials. The settings UI can save a replacement server-side, but local Agent settings—including any existing key—are never copied by the migration script.
 
-Each structured module currently uses one bounded, versioned D1 document. The server rejects a document before it reaches D1's row-size limit; archive or split older records if a module approaches that guard. Private KV objects use random immutable keys. Because a new KV key can take time to reach another Cloudflare location, Site Visiting marks a temporarily unavailable photo as syncing and retries it automatically. R2 is the preferred future backend if immediate cross-region read-after-write for large files becomes necessary.
+Most structured modules currently use one bounded, versioned D1 document. Files instead uses normalized D1 rows with a 5,000-item guard, 1 GiB workspace quota, 250 MiB per-owner quota and a 20 MiB per-file limit. Private KV objects use random immutable keys. Because a new KV key can take time to reach another Cloudflare location, file reads return a retryable syncing response while the object propagates. R2 remains the preferred future backend for larger files and immediate cross-region read-after-write once it is enabled for the Cloudflare account.
 
 ## CLI deployment alternative
 

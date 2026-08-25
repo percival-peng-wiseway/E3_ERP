@@ -12,6 +12,7 @@ import {
   CreditCard,
   FileBarChart,
   FileText,
+  FolderOpen,
   HelpCircle,
   Home,
   LockKeyhole,
@@ -31,6 +32,7 @@ import { ERP_ROLE_LABELS, type ErpUser } from "@/lib/auth/types";
 import { readJsonResponse } from "@/lib/client/http";
 import { groupOrders, type Order } from "@/lib/inventory-operations/types";
 import { AgentSettingsDialog } from "./agent-settings-dialog";
+import { FilesWorkspace } from "./files-workspace";
 import { HomeCollaborationWorkspace } from "./home-collaboration-workspace";
 import { InventoryOperationsWorkspace } from "./inventory-operations-workspace";
 import { ProjectDeliveryBoard } from "./project-delivery-board";
@@ -40,7 +42,7 @@ import { ReportsWorkspace } from "./reports-workspace";
 import { PaymentTrackWorkspace } from "./payment-track-workspace";
 import { SiteVisitingWorkspace } from "./site-visiting-workspace";
 
-type ModuleId = "home" | "inventory" | "quotations" | "projects" | "site-visits" | "payments" | "reimbursements" | "reports" | "finance";
+type ModuleId = "home" | "files" | "inventory" | "quotations" | "projects" | "site-visits" | "payments" | "reimbursements" | "reports" | "finance";
 
 const NAVIGATION: Array<{
   group: string;
@@ -50,6 +52,7 @@ const NAVIGATION: Array<{
     group: "Workspace",
     items: [
       { id: "home", label: "Home", icon: Home, enabled: true },
+      { id: "files", label: "Files", icon: FolderOpen, enabled: true },
       { id: "payments", label: "Project Track", icon: CreditCard, enabled: true },
       { id: "inventory", label: "Inventory", icon: Warehouse, enabled: true },
       { id: "quotations", label: "Quotations", icon: FileText, enabled: true },
@@ -68,6 +71,7 @@ const NAVIGATION: Array<{
 
 const MODULE_LABELS: Record<ModuleId, string> = {
   home: "Home",
+  files: "Files",
   inventory: "Inventory",
   quotations: "Quotations",
   projects: "Weekly Schedule",
@@ -287,7 +291,7 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
           <div className="page-breadcrumb"><span>E3 Energy</span><ChevronRight size={12} /><strong>{MODULE_LABELS[activeModule]}</strong></div>
           <div className="page-bar-actions"><button><Activity size={15} />Activity</button><button><PanelLeftClose size={15} />Sidebar</button></div>
         </div>
-        <main className={`desk-main ${activeModule === "home" || activeModule === "projects" || activeModule === "site-visits" || activeModule === "payments" || activeModule === "reimbursements" ? "wide-workspace" : ""}`}>
+        <main className={`desk-main ${activeModule === "home" || activeModule === "files" || activeModule === "projects" || activeModule === "site-visits" || activeModule === "payments" || activeModule === "reimbursements" ? "wide-workspace" : ""}`}>
           <div className="persistent-home-workspace" hidden={activeModule !== "home"}>
             <HomeCollaborationWorkspace
               currentUser={currentUser}
@@ -295,6 +299,7 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
               onNavigate={(module) => navigate(module)}
             />
           </div>
+          {activeModule === "files" && <FilesWorkspace currentUser={currentUser} />}
           {activeModule === "inventory" && <InventoryOperationsWorkspace currentUser={currentUser} />}
           {activeModule === "quotations" && <QuoteHelpWorkspace />}
           {activeModule === "projects" && <ProjectDeliveryBoard authenticatedRole={currentUser.role} />}

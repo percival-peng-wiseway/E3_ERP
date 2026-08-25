@@ -11,6 +11,11 @@ type D1RunResult = {
 type D1PreparedStatement = {
   bind(...values: unknown[]): D1PreparedStatement;
   first<T = Record<string, unknown>>(): Promise<T | null>;
+  all<T = Record<string, unknown>>(): Promise<{
+    success: boolean;
+    results?: T[];
+    error?: string;
+  }>;
   run(): Promise<D1RunResult>;
 };
 
