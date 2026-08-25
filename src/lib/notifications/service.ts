@@ -1,23 +1,22 @@
 import { createHash } from "node:crypto";
-import { listPaymentTrackProjects } from "@/lib/payment-track/repository";
-import type { PaymentTrackProject } from "@/lib/payment-track/types";
-import { listReimbursements } from "@/lib/reimbursements/repository";
-import type { ReimbursementClaim } from "@/lib/reimbursements/types";
-import {
-  amountAction,
-  aud,
-  planningDescription,
-  projectCustomerAddress,
-  projectCustomerName,
-} from "./presentation";
-import { paymentTrackResponsibilities } from "./responsibilities";
-import {
-  NOTIFICATION_ROLES,
-  type NotificationCounts,
-  type NotificationPriority,
-  type NotificationRoleFilter,
-  type NotificationsResponse,
-  type WorkspaceNotification,
+// @ts-expect-error -- focused Node ESM tests require the explicit extension.
+import { listPaymentTrackProjects } from "../payment-track/repository.ts";
+import type { PaymentTrackProject } from "../payment-track/types";
+// @ts-expect-error -- focused Node ESM tests require the explicit extension.
+import { listReimbursements } from "../reimbursements/repository.ts";
+import type { ReimbursementClaim } from "../reimbursements/types";
+// @ts-expect-error -- focused Node ESM tests require the explicit extension.
+import { amountAction, aud, planningDescription, projectCustomerAddress, projectCustomerName } from "./presentation.ts";
+// @ts-expect-error -- focused Node ESM tests require the explicit extension.
+import { paymentTrackResponsibilities } from "./responsibilities.ts";
+// @ts-expect-error -- focused Node ESM tests require the explicit extension.
+import { NOTIFICATION_ROLES } from "./types.ts";
+import type {
+  NotificationCounts,
+  NotificationPriority,
+  NotificationRoleFilter,
+  NotificationsResponse,
+  WorkspaceNotification,
 } from "./types";
 
 const DEFAULT_INVENTORY_OPERATIONS_URL = "https://inventory.e3energy.com.au/api/inventory";
@@ -29,12 +28,14 @@ const DAY_MS = 24 * 60 * 60 * 1_000;
 
 type UnknownRecord = Record<string, unknown>;
 
-type OperationalOrder = {
+export type OperationalOrder = {
   id: number;
   group: string;
   entityId: string;
   customer: string;
   address: string;
+  createdAt: string | null;
+  ownerName: string;
   status: "pending" | "scheduled" | "delivered" | "cancelled";
   plannedDate: string | null;
   deliveryTime: string | null;
@@ -77,6 +78,16 @@ function safeEntityId(value: unknown) {
   return cleanText(value, 200);
 }
 
+export function normalizeNotificationDateTime(value: unknown): string | null {
+  const candidate = cleanText(value, 60);
+  if (!candidate) return null;
+  const normalized = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?$/.test(candidate)
+    ? `${candidate.replace(" ", "T")}Z`
+    : candidate;
+  const timestamp = Date.parse(normalized);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
+}
+
 function notificationId(module: string, entityId: string, action: string) {
   return `${module}:${encodeURIComponent(entityId)}:${action}`.slice(0, 420);
 }
@@ -88,8 +99,20 @@ function opaqueLegacyOrderId(value: string) {
 function notification(
   item: Omit<WorkspaceNotification, "id"> & { id?: string },
 ): WorkspaceNotification {
-  const { id, entityId: rawEntityId, ...fields } = item;
+  const {
+    id,
+    entityId: rawEntityId,
+    badgeLabel: rawBadgeLabel,
+    projectCreatedAt: rawProjectCreatedAt,
+    ownerName: rawOwnerName,
+    ...fields
+  } = item;
   const entityId = rawEntityId ? safeEntityId(rawEntityId) : "";
+  const badgeLabel = cleanText(rawBadgeLabel, 80);
+  const projectCreatedAt = normalizeNotificationDateTime(rawProjectCreatedAt);
+  const ownerName = rawOwnerName === undefined
+    ? ""
+    : cleanText(rawOwnerName, 160) || "Not assigned";
   return {
     ...fields,
     id: id || notificationId(item.module, entityId || "general", item.actionLabel),
@@ -97,6 +120,9 @@ function notification(
     description: cleanText(item.description, 360),
     actionLabel: cleanText(item.actionLabel, 60),
     ...(entityId ? { entityId } : {}),
+    ...(badgeLabel ? { badgeLabel } : {}),
+    ...(projectCreatedAt ? { projectCreatedAt } : {}),
+    ...(ownerName ? { ownerName } : {}),
   };
 }
 
@@ -117,6 +143,17 @@ function consistentOperationalValue(
   return values.length === 1 ? values[0] : fallback;
 }
 
+function earliestOperationalCreatedAt(orders: OperationalOrder[]) {
+  let earliest: { timestamp: number; value: string } | null = null;
+  for (const order of orders) {
+    if (!order.createdAt) continue;
+    const timestamp = Date.parse(order.createdAt);
+    if (!Number.isFinite(timestamp)) continue;
+    if (!earliest || timestamp < earliest.timestamp) earliest = { timestamp, value: order.createdAt };
+  }
+  return earliest?.value;
+}
+
 function melbourneTodayUtc(now: Date) {
   const parts = new Intl.DateTimeFormat("en-AU", {
     timeZone: "Australia/Melbourne",
@@ -131,8 +168,17 @@ function melbourneTodayUtc(now: Date) {
 function daysUntilDate(value: string | null, now: Date): number | null {
   const match = value?.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (!match) return null;
-  const target = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
-  return Number.isFinite(target) ? Math.round((target - melbourneTodayUtc(now)) / DAY_MS) : null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const target = Date.UTC(year, month - 1, day);
+  const targetDate = new Date(target);
+  if (
+    targetDate.getUTCFullYear() !== year
+    || targetDate.getUTCMonth() !== month - 1
+    || targetDate.getUTCDate() !== day
+  ) return null;
+  return Math.round((target - melbourneTodayUtc(now)) / DAY_MS);
 }
 
 async function limitedJson(response: Response, limit: number): Promise<unknown> {
@@ -218,6 +264,8 @@ async function loadOperationalSnapshot(): Promise<OperationalSnapshot> {
       entityId,
       customer,
       address,
+      createdAt: normalizeNotificationDateTime(value.created_at),
+      ownerName: cleanText(value.sales_rep, 160),
       status,
       plannedDate,
       deliveryTime,
@@ -233,7 +281,7 @@ async function loadOperationalSnapshot(): Promise<OperationalSnapshot> {
   return { orders };
 }
 
-function paymentNotifications(projects: PaymentTrackProject[], now: Date) {
+export function buildPaymentTrackNotifications(projects: PaymentTrackProject[], now: Date) {
   const items: WorkspaceNotification[] = [];
   for (const project of projects.slice(0, MAX_SOURCE_RECORDS)) {
     const customerName = projectCustomerName(project);
@@ -262,15 +310,20 @@ function paymentNotifications(projects: PaymentTrackProject[], now: Date) {
       } else if (task.action === "manage_delivery") {
         const scheduledFor = project.deliveryScheduledFor;
         const daysUntil = daysUntilDate(scheduledFor, now);
-        const hasSchedule = scheduledFor !== null && daysUntil !== null;
+        const hasSchedule = daysUntil !== null
+          && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(cleanText(project.deliveryScheduledTime, 5))
+          && Boolean(cleanText(project.deliveryAssignee, 80));
         let priority: NotificationPriority = "high";
-        if (scheduledFor && daysUntil !== null) {
+        if (hasSchedule && daysUntil !== null) {
           if (daysUntil < -30 || daysUntil > 7) continue;
           priority = daysUntil <= 0 ? "urgent" : daysUntil <= 3 ? "high" : "normal";
         }
         items.push(notification({
           role: task.role,
           priority,
+          ...(!hasSchedule ? { badgeLabel: "Delivery plan needed" } : {}),
+          projectCreatedAt: project.createdAt,
+          ownerName: project.specialist.name,
           title: customerName,
           description: planningDescription(customerAddress, "Delivery planning"),
           module: "payments",
@@ -401,7 +454,7 @@ function reimbursementNotifications(claims: ReimbursementClaim[]) {
   });
 }
 
-function projectNotifications(orders: OperationalOrder[], now: Date) {
+export function buildOperationalProjectNotifications(orders: OperationalOrder[], now: Date) {
   const groups = new Map<string, OperationalOrder[]>();
   for (const order of orders) {
     const current = groups.get(order.group);
@@ -426,10 +479,19 @@ function projectNotifications(orders: OperationalOrder[], now: Date) {
       (order) => order.address,
       "Address required",
     );
+    const projectCreatedAt = earliestOperationalCreatedAt(groupedOrders);
+    const ownerName = consistentOperationalValue(
+      groupedOrders,
+      (order) => order.ownerName,
+      "Not assigned",
+    );
     if (primary.status === "pending") {
       items.push(notification({
         role: "pm",
         priority: "high",
+        badgeLabel: "Delivery plan needed",
+        projectCreatedAt,
+        ownerName,
         title: customerName,
         description: planningDescription(address, "Delivery planning"),
         module: "projects",
@@ -448,6 +510,9 @@ function projectNotifications(orders: OperationalOrder[], now: Date) {
     items.push(notification({
       role: "pm",
       priority,
+      ...(!scheduleComplete ? { badgeLabel: "Delivery plan needed" } : {}),
+      projectCreatedAt,
+      ownerName,
       title: customerName,
       description: planningDescription(address, "Delivery planning"),
       module: "projects",
@@ -488,10 +553,10 @@ export async function buildWorkspaceNotifications(
     ? listReimbursements({ includeAll: true }).then(reimbursementNotifications)
     : Promise.resolve<WorkspaceNotification[]>([]);
   const deliveryOperationsTask = role === "all" || role === "pm"
-    ? loadOperationalSnapshot().then((snapshot) => projectNotifications(snapshot.orders, now))
+    ? loadOperationalSnapshot().then((snapshot) => buildOperationalProjectNotifications(snapshot.orders, now))
     : Promise.resolve<WorkspaceNotification[]>([]);
   const [payments, reimbursements, operations] = await Promise.allSettled([
-    listPaymentTrackProjects().then((projects) => paymentNotifications(projects, now)),
+    listPaymentTrackProjects().then((projects) => buildPaymentTrackNotifications(projects, now)),
     reimbursementTask,
     deliveryOperationsTask,
   ]);

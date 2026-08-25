@@ -14,6 +14,9 @@ export type WorkspaceNotification = {
   id: string;
   role: NotificationRole;
   priority: NotificationPriority;
+  badgeLabel?: string;
+  projectCreatedAt?: string;
+  ownerName?: string;
   title: string;
   description: string;
   module: NotificationModule;

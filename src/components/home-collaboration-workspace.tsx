@@ -42,6 +42,9 @@ type WorkspaceNotification = {
   id: string;
   role: NotificationOwnerRole;
   priority: NotificationPriority;
+  badgeLabel?: string;
+  projectCreatedAt?: string;
+  ownerName?: string;
   title: string;
   description: string;
   module: NotificationModule;
@@ -226,6 +229,20 @@ function formatAnnouncementDate(value: string) {
   }).format(date);
 }
 
+function formatProjectCreatedAt(value?: string) {
+  if (!value) return "date unavailable";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "date unavailable";
+  return new Intl.DateTimeFormat("en-AU", {
+    timeZone: "Australia/Melbourne",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
 function normalizeAnnouncement(value: unknown): Announcement | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const item = value as Record<string, unknown>;
@@ -301,6 +318,15 @@ function normalizeNotification(value: unknown): WorkspaceNotification | null {
     id: item.id.slice(0, 240),
     role: item.role as NotificationOwnerRole,
     priority: item.priority as NotificationPriority,
+    ...(typeof item.badgeLabel === "string" && item.badgeLabel.trim()
+      ? { badgeLabel: item.badgeLabel.trim().slice(0, 80) }
+      : {}),
+    ...(typeof item.projectCreatedAt === "string" && !Number.isNaN(Date.parse(item.projectCreatedAt))
+      ? { projectCreatedAt: item.projectCreatedAt }
+      : {}),
+    ...(typeof item.ownerName === "string" && item.ownerName.trim()
+      ? { ownerName: item.ownerName.trim().slice(0, 160) }
+      : {}),
     title: item.title.trim().slice(0, 180),
     description: item.description.trim().slice(0, 800),
     module: item.module as NotificationModule,
@@ -852,7 +878,22 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
                           disabled={!onNavigate}
                         >
                           <span className={styles.notificationCardTopline}>
-                            <span className={styles.priorityBadge}>{NOTIFICATION_PRIORITY_LABELS[notification.priority]}</span>
+                            <span className={styles.priorityBadge}>
+                              {notification.badgeLabel || NOTIFICATION_PRIORITY_LABELS[notification.priority]}
+                            </span>
+                            {(notification.projectCreatedAt || notification.ownerName) && (
+                              <span className={styles.notificationMetadata}>
+                                {notification.projectCreatedAt ? (
+                                  <time dateTime={notification.projectCreatedAt}>
+                                    Created {formatProjectCreatedAt(notification.projectCreatedAt)}
+                                  </time>
+                                ) : (
+                                  <span>Created date unavailable</span>
+                                )}
+                                <span className={styles.notificationMetadataDivider} aria-hidden="true">·</span>
+                                <span>Responsible: {notification.ownerName || "Unassigned"}</span>
+                              </span>
+                            )}
                           </span>
                           <strong className={styles.notificationTitle}>{notification.title}</strong>
                           <span className={styles.notificationDescription}>{notification.description}</span>

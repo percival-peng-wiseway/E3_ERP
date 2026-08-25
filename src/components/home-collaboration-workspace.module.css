@@ -862,21 +862,31 @@
 }
 
 .announcementList {
-  display: grid;
+  display: block;
   margin: 0;
   padding: 0;
-  gap: 8px;
+  overflow: hidden;
   list-style: none;
-}
-
-.announcementCard {
-  padding: 10px 11px;
-  color: #34414a;
   background: #fff;
   border: 1px solid #dce3e7;
   border-left: 4px solid #3d9a79;
   border-radius: 8px;
   box-shadow: 0 1px 3px rgba(31, 48, 61, .035);
+}
+
+.announcementCard {
+  min-width: 0;
+  padding: 11px 12px;
+  color: #34414a;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid #e7ecef;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.announcementCard:last-child {
+  border-bottom: 0;
 }
 
 .announcementCard > strong {
@@ -1070,6 +1080,22 @@
   align-items: center;
   margin-bottom: 7px;
   gap: 6px;
+  flex-wrap: wrap;
+}
+
+.notificationMetadata {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  color: #5f6d76;
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.notificationMetadataDivider {
+  color: #a4adb3;
 }
 
 .priorityBadge,
@@ -1174,6 +1200,7 @@
   .agentMessage { max-width: 97%; }
   .notificationFilters { padding-right: 10px; padding-left: 10px; }
   .notificationCard { padding-right: 10px; padding-left: 10px; }
+  .notificationMetadata { width: 100%; }
 }
 
 @media (prefers-reduced-motion: reduce) {
