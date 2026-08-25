@@ -2,7 +2,6 @@
 
 import {
   AlertCircle,
-  ArrowUpRight,
   BellRing,
   Bot,
   LoaderCircle,
@@ -851,17 +850,12 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
                           className={`${styles.notificationCard} ${priorityClass}`}
                           onClick={() => onNavigate?.(notification.module, notification.entityId)}
                           disabled={!onNavigate}
-                          aria-label={`${notification.title}. Next step: ${notification.actionLabel}`}
                         >
                           <span className={styles.notificationCardTopline}>
                             <span className={styles.priorityBadge}>{NOTIFICATION_PRIORITY_LABELS[notification.priority]}</span>
                           </span>
                           <strong className={styles.notificationTitle}>{notification.title}</strong>
                           <span className={styles.notificationDescription}>{notification.description}</span>
-                          <span className={styles.notificationAction}>
-                            <span><small>Next step</small><strong>{notification.actionLabel}</strong></span>
-                            <ArrowUpRight size={17} />
-                          </span>
                         </button>
                       </li>
                     );

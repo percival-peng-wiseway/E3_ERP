@@ -3,6 +3,13 @@ import { listPaymentTrackProjects } from "@/lib/payment-track/repository";
 import type { PaymentTrackProject } from "@/lib/payment-track/types";
 import { listReimbursements } from "@/lib/reimbursements/repository";
 import type { ReimbursementClaim } from "@/lib/reimbursements/types";
+import {
+  amountAction,
+  aud,
+  planningDescription,
+  projectCustomerAddress,
+  projectCustomerName,
+} from "./presentation";
 import { paymentTrackResponsibilities } from "./responsibilities";
 import {
   NOTIFICATION_ROLES,
@@ -26,6 +33,8 @@ type OperationalOrder = {
   id: number;
   group: string;
   entityId: string;
+  customer: string;
+  address: string;
   status: "pending" | "scheduled" | "delivered" | "cancelled";
   plannedDate: string | null;
   deliveryTime: string | null;
@@ -40,6 +49,13 @@ const priorityOrder: Record<NotificationPriority, number> = {
   urgent: 0,
   high: 1,
   normal: 2,
+};
+
+const operationalStatusOrder: Record<OperationalOrder["status"], number> = {
+  pending: 0,
+  scheduled: 1,
+  delivered: 2,
+  cancelled: 3,
 };
 
 function isRecord(value: unknown): value is UnknownRecord {
@@ -84,12 +100,21 @@ function notification(
   };
 }
 
-function aud(cents: number) {
-  return new Intl.NumberFormat("en-AU", {
-    style: "currency",
-    currency: "AUD",
-    minimumFractionDigits: 2,
-  }).format(cents / 100);
+function operationalOrderCompleteness(order: OperationalOrder) {
+  return Number(Boolean(order.customer))
+    + Number(Boolean(order.address))
+    + Number(Boolean(order.plannedDate))
+    + Number(Boolean(order.deliveryTime))
+    + Number(order.scheduleComplete) * 2;
+}
+
+function consistentOperationalValue(
+  orders: OperationalOrder[],
+  select: (order: OperationalOrder) => string,
+  fallback: string,
+) {
+  const values = [...new Set(orders.map(select).filter(Boolean))];
+  return values.length === 1 ? values[0] : fallback;
 }
 
 function melbourneTodayUtc(now: Date) {
@@ -185,10 +210,14 @@ async function loadOperationalSnapshot(): Promise<OperationalSnapshot> {
       : opaqueLegacyOrderId(group);
     const plannedDate = cleanText(value.planned_date, 10) || null;
     const deliveryTime = cleanText(value.delivery_time, 5) || null;
+    const customer = cleanText(value.customer, 200);
+    const address = cleanText(value.address, 500);
     return [{
       id: numericId as number,
       group,
       entityId,
+      customer,
+      address,
       status,
       plannedDate,
       deliveryTime,
@@ -196,7 +225,7 @@ async function loadOperationalSnapshot(): Promise<OperationalSnapshot> {
         plannedDate
         && deliveryTime
         && cleanText(value.driver, 160)
-        && cleanText(value.address, 500)
+        && address
       ),
     }];
   });
@@ -207,14 +236,15 @@ async function loadOperationalSnapshot(): Promise<OperationalSnapshot> {
 function paymentNotifications(projects: PaymentTrackProject[], now: Date) {
   const items: WorkspaceNotification[] = [];
   for (const project of projects.slice(0, MAX_SOURCE_RECORDS)) {
-    const reference = cleanText(project.reference, 100) || "Project";
+    const customerName = projectCustomerName(project);
+    const customerAddress = projectCustomerAddress(project);
     for (const task of paymentTrackResponsibilities(project)) {
       if (task.action === "upload_deposit_proof") {
         items.push(notification({
           role: task.role,
           priority: "high",
-          title: "Deposit proof required",
-          description: `${reference} cannot progress until deposit proof is uploaded.`,
+          title: customerName,
+          description: amountAction(project.expectedDepositCents, "expected deposit", "Upload deposit proof"),
           module: "payments",
           entityId: project.id,
           actionLabel: "Upload proof",
@@ -223,8 +253,8 @@ function paymentNotifications(projects: PaymentTrackProject[], now: Date) {
         items.push(notification({
           role: task.role,
           priority: "high",
-          title: "Deposit confirmation required",
-          description: `${reference} has deposit evidence ready for Administrator confirmation.`,
+          title: customerName,
+          description: amountAction(project.expectedDepositCents, "expected deposit", "Confirm deposit"),
           module: "payments",
           entityId: project.id,
           actionLabel: "Confirm deposit",
@@ -233,20 +263,16 @@ function paymentNotifications(projects: PaymentTrackProject[], now: Date) {
         const scheduledFor = project.deliveryScheduledFor;
         const daysUntil = daysUntilDate(scheduledFor, now);
         const hasSchedule = scheduledFor !== null && daysUntil !== null;
-        let title = "Arrange material delivery";
-        let description = `${reference} is ready for PM delivery scheduling.`;
         let priority: NotificationPriority = "high";
         if (scheduledFor && daysUntil !== null) {
           if (daysUntil < -30 || daysUntil > 7) continue;
-          title = daysUntil < 0 ? "Material delivery is overdue" : daysUntil === 0 ? "Material delivery is due today" : "Upcoming material delivery";
-          description = `${reference} is scheduled for ${scheduledFor}.`;
           priority = daysUntil <= 0 ? "urgent" : daysUntil <= 3 ? "high" : "normal";
         }
         items.push(notification({
           role: task.role,
           priority,
-          title,
-          description,
+          title: customerName,
+          description: planningDescription(customerAddress, "Delivery planning"),
           module: "payments",
           entityId: project.id,
           actionLabel: hasSchedule ? "View delivery schedule" : "Arrange delivery",
@@ -255,8 +281,8 @@ function paymentNotifications(projects: PaymentTrackProject[], now: Date) {
         items.push(notification({
           role: task.role,
           priority: "high",
-          title: "Record the delivery collection",
-          description: `${reference} was delivered and is waiting for Sales to record the received collection.`,
+          title: customerName,
+          description: amountAction(project.outstandingCents, "outstanding", "Record collection"),
           module: "payments",
           entityId: project.id,
           actionLabel: "Record collection",
@@ -265,8 +291,8 @@ function paymentNotifications(projects: PaymentTrackProject[], now: Date) {
         items.push(notification({
           role: task.role,
           priority: "high",
-          title: "Delivery collection needs confirmation",
-          description: `${reference} has a collection payment awaiting Administrator confirmation.`,
+          title: customerName,
+          description: amountAction(project.outstandingCents, "outstanding", "Confirm collection"),
           module: "payments",
           entityId: project.id,
           actionLabel: "Confirm collection",
@@ -275,22 +301,16 @@ function paymentNotifications(projects: PaymentTrackProject[], now: Date) {
         const scheduledFor = project.installationScheduledFor;
         const daysUntil = daysUntilDate(scheduledFor, now);
         const hasSchedule = scheduledFor !== null && daysUntil !== null;
-        let title = "Arrange installation";
-        let description = `${reference} is ready for PM installation scheduling.`;
         let priority: NotificationPriority = "high";
         if (scheduledFor && daysUntil !== null) {
           if (daysUntil < -30 || daysUntil > 7) continue;
-          title = daysUntil < 0
-            ? "Installation is overdue"
-            : daysUntil === 0 ? "Installation is due today" : "Upcoming installation";
-          description = `${reference} is scheduled for installation on ${scheduledFor}.`;
           priority = daysUntil <= 0 ? "urgent" : daysUntil <= 3 ? "high" : "normal";
         }
         items.push(notification({
           role: task.role,
           priority,
-          title,
-          description,
+          title: customerName,
+          description: planningDescription(customerAddress, "Installation planning"),
           module: "projects",
           entityId: project.id,
           actionLabel: hasSchedule ? "View installation schedule" : "Arrange installation",
@@ -299,8 +319,8 @@ function paymentNotifications(projects: PaymentTrackProject[], now: Date) {
         items.push(notification({
           role: task.role,
           priority: "high",
-          title: "Solar STC confirmation required",
-          description: `${reference} is waiting for Solar STC receipt confirmation.`,
+          title: customerName,
+          description: "Confirm Solar STC",
           module: "payments",
           entityId: project.id,
           actionLabel: "Confirm Solar STC",
@@ -309,8 +329,8 @@ function paymentNotifications(projects: PaymentTrackProject[], now: Date) {
         items.push(notification({
           role: task.role,
           priority: "high",
-          title: "Battery STC confirmation required",
-          description: `${reference} is waiting for Battery STC receipt confirmation.`,
+          title: customerName,
+          description: "Confirm Battery STC",
           module: "payments",
           entityId: project.id,
           actionLabel: "Confirm Battery STC",
@@ -319,8 +339,8 @@ function paymentNotifications(projects: PaymentTrackProject[], now: Date) {
         items.push(notification({
           role: task.role,
           priority: "high",
-          title: "Solar Rebate confirmation required",
-          description: `${reference} is waiting for Solar Rebate receipt confirmation.`,
+          title: customerName,
+          description: "Confirm Solar Rebate",
           module: "payments",
           entityId: project.id,
           actionLabel: "Confirm Solar Rebate",
@@ -329,8 +349,8 @@ function paymentNotifications(projects: PaymentTrackProject[], now: Date) {
         items.push(notification({
           role: task.role,
           priority: "high",
-          title: project.stage === "done" ? "Completed project still has a balance" : "Payment follow-up required",
-          description: `${reference} has ${aud(project.outstandingCents)} remaining to collect.`,
+          title: customerName,
+          description: amountAction(project.outstandingCents, "outstanding", "Record received payment"),
           module: "payments",
           entityId: project.id,
           actionLabel: "Record received payment",
@@ -340,8 +360,8 @@ function paymentNotifications(projects: PaymentTrackProject[], now: Date) {
           id: notificationId("payments", project.id, `confirm-final-payment:${task.paymentId}`),
           role: task.role,
           priority: "high",
-          title: "Payment confirmation required",
-          description: `${reference} has a received payment awaiting confirmation. ${aud(project.outstandingCents)} remains outstanding.`,
+          title: customerName,
+          description: amountAction(project.outstandingCents, "outstanding", "Confirm payment"),
           module: "payments",
           entityId: project.id,
           actionLabel: "Confirm payment",
@@ -390,15 +410,28 @@ function projectNotifications(orders: OperationalOrder[], now: Date) {
   }
 
   const items: WorkspaceNotification[] = [];
-  for (const [group, groupedOrders] of groups) {
-    const primary = groupedOrders[0];
-    const orderLabel = `Order #${String(primary.id).padStart(4, "0")}`;
+  for (const groupedOrders of groups.values()) {
+    const primary = [...groupedOrders].sort((left, right) => (
+      operationalStatusOrder[left.status] - operationalStatusOrder[right.status]
+      || operationalOrderCompleteness(right) - operationalOrderCompleteness(left)
+      || left.id - right.id
+    ))[0];
+    const customerName = consistentOperationalValue(
+      groupedOrders,
+      (order) => order.customer,
+      "Customer name required",
+    );
+    const address = consistentOperationalValue(
+      groupedOrders,
+      (order) => order.address,
+      "Address required",
+    );
     if (primary.status === "pending") {
       items.push(notification({
         role: "pm",
         priority: "high",
-        title: "Arrange delivery for new order",
-        description: `${orderLabel} has ${groupedOrders.length} item line${groupedOrders.length === 1 ? "" : "s"} ready for delivery planning.`,
+        title: customerName,
+        description: planningDescription(address, "Delivery planning"),
         module: "projects",
         entityId: primary.entityId,
         actionLabel: "Arrange delivery",
@@ -412,22 +445,11 @@ function projectNotifications(orders: OperationalOrder[], now: Date) {
     const priority: NotificationPriority = !scheduleComplete
       ? "high"
       : daysUntil !== null && daysUntil <= 0 ? "urgent" : daysUntil !== null && daysUntil <= 3 ? "high" : "normal";
-    const title = !scheduleComplete
-      ? "Complete the delivery schedule"
-      : daysUntil !== null && daysUntil < 0
-        ? "Project delivery is overdue"
-        : daysUntil === 0 ? "Project delivery is due today" : "Upcoming project delivery";
-    const scheduleWhen = primary.plannedDate
-      ? `${primary.plannedDate}${primary.deliveryTime ? ` at ${primary.deliveryTime}` : ""}`
-      : "";
-    const description = scheduleComplete
-      ? `${orderLabel} is scheduled for ${scheduleWhen}.`
-      : `${orderLabel} is scheduled but its date, time, address or driver details need completion.`;
     items.push(notification({
       role: "pm",
       priority,
-      title,
-      description,
+      title: customerName,
+      description: planningDescription(address, "Delivery planning"),
       module: "projects",
       entityId: primary.entityId,
       actionLabel: scheduleComplete ? "View delivery schedule" : "Complete delivery schedule",
