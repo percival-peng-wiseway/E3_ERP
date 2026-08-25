@@ -36,7 +36,7 @@
 
 .root :global(.eyebrow) { margin: 0 0 10px; color: var(--forest-2); font-size: 13px; font-weight: 800; letter-spacing: .15em; text-transform: uppercase; }
 
-.root :global(.nav-tabs) { max-width: none; margin: 18px 0 0; display: grid; grid-template-columns: repeat(4, 1fr); background: var(--paper); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.root :global(.nav-tabs) { max-width: none; margin: 18px 0 0; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); background: var(--paper); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
 .root :global(.nav-tabs) button { border: 0; border-right: 1px solid var(--line); background: transparent; padding: 16px; color: var(--ink); position: relative; }
 .root :global(.nav-tabs) button:last-child { border-right: 0; }
 .root :global(.nav-tabs) button:hover { background: #f3f7f4; }
@@ -210,7 +210,7 @@
 .root :global(.modal-actions) { display: flex; justify-content: flex-end; gap: 10px; }
 
 @media (max-width: 900px) {
-  .root :global(.nav-tabs) { margin: 18px 0 0; border-radius: 0; grid-template-columns: repeat(4, minmax(120px, 1fr)); overflow-x: auto; }
+  .root :global(.nav-tabs) { margin: 18px 0 0; border-radius: 0; grid-auto-columns: minmax(120px, 1fr); overflow-x: auto; }
   .root :global(.workspace) { padding: 28px 0 48px; }
   .root :global(.stats) { grid-template-columns: 1fr 1fr; }
   .root :global(.form-layout), .root :global(.arrival-layout) { grid-template-columns: 1fr; gap: 26px; }
@@ -230,7 +230,7 @@
   .root :global(.topbar-actions) { gap: 6px; }
   .root :global(.admin-toggle), .root :global(.lang-toggle) { min-width: 0; padding: 8px; font-size: 13px; }
   .root :global(.workspace) { padding: 22px 0 40px; }
-  .root :global(.nav-tabs) { margin-top: 0; grid-template-columns: repeat(4, minmax(108px, 1fr)); scrollbar-width: thin; }
+  .root :global(.nav-tabs) { margin-top: 0; grid-auto-columns: minmax(108px, 1fr); scrollbar-width: thin; }
   .root :global(.filter-bar) { grid-template-columns: 1fr; }
   .root :global(.history-filters) { grid-template-columns: 1fr; padding: 16px; }
   .root :global(.history-filters) :global(.secondary) { width: 100%; }

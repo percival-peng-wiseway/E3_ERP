@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import type { ErpUser } from "@/lib/auth/types";
 import { readJsonResponse } from "@/lib/client/http";
+import { inventoryRoleCanAddStock } from "@/lib/inventory-operations/types";
 import styles from "./inventory-operations-workspace.module.css";
 
 type InventoryItem = {
@@ -91,6 +92,7 @@ export function InventoryOperationsWorkspace({ currentUser }: { currentUser: Erp
   const [adminPassword, setAdminPassword] = useState("");
   const [editingInventory, setEditingInventory] = useState<InventoryItem | null>(null);
   const canCreateOrder = currentUser.role === "sales" || currentUser.role === "admin";
+  const canAddStock = inventoryRoleCanAddStock(currentUser.role);
   const canManageStock = currentUser.role === "admin";
   const inventoryAdminActive = canManageStock && data.admin;
   const refresh = async () => {
@@ -398,7 +400,7 @@ export function InventoryOperationsWorkspace({ currentUser }: { currentUser: Erp
         ] as [View, string][]).filter(([key]) => (
           key !== "sale" || canCreateOrder
         ) && (
-          key !== "arrival" || canManageStock
+          key !== "arrival" || canAddStock
         )).map(([key, label]) => (
           <button
             key={key}

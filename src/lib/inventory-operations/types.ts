@@ -116,3 +116,27 @@ export type InventoryOperationAction =
   | "editTask"
   | "deliver"
   | "arrival";
+
+export type InventoryOperationRequiredRole = "admin" | "pm" | "sales";
+
+export function inventoryRoleCanAddStock(role: string) {
+  return role === "pm" || role === "admin";
+}
+
+export function inventoryOperationRequiredRole(
+  action: InventoryOperationAction,
+): InventoryOperationRequiredRole {
+  if (action === "sale") return "sales";
+  if ([
+    "schedule",
+    "editTask",
+    "cancelOrder",
+    "cancelDelivery",
+    "recallDelivery",
+    "deliver",
+    "arrival",
+  ].includes(action)) {
+    return "pm";
+  }
+  return "admin";
+}
