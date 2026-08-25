@@ -115,7 +115,7 @@ test("a complete Project Track delivery plan requires date, time and assignee", 
     deliveryScheduledTime: "09:00",
     deliveryAssignee: "Leo",
   })], NOW);
-  assert.equal(complete.badgeLabel, undefined);
+  assert.equal(complete.badgeLabel, "Delivery scheduled");
   assert.equal(complete.projectCreatedAt, "2026-08-20T01:02:03.000Z");
   assert.equal(complete.ownerName, "Percival");
 
@@ -135,6 +135,23 @@ test("non-delivery high-priority reminders keep their normal priority badge", ()
   assert.equal(deposit.badgeLabel, undefined);
   assert.equal(deposit.projectCreatedAt, undefined);
   assert.equal(deposit.ownerName, undefined);
+});
+
+test("installation reminders use explicit planning status and project metadata", () => {
+  const [needsPlan] = buildPaymentTrackNotifications([project({
+    stage: "installing",
+  })], NOW);
+  assert.equal(needsPlan.badgeLabel, "Installation plan needed");
+  assert.equal(needsPlan.projectCreatedAt, "2026-08-20T01:02:03.000Z");
+  assert.equal(needsPlan.ownerName, "Percival");
+
+  const [scheduled] = buildPaymentTrackNotifications([project({
+    stage: "installing",
+    installationScheduledFor: "2026-08-26",
+    installationScheduledTime: "09:00",
+    installationAssignee: "Daniel",
+  })], NOW);
+  assert.equal(scheduled.badgeLabel, "Installation scheduled");
 });
 
 test("Inventory delivery reminders use the earliest creation time and a consistent owner", () => {
@@ -167,14 +184,14 @@ test("Inventory delivery reminders fall back safely for inconsistent owners", ()
   assert.equal(notification.ownerName, "Not assigned");
 });
 
-test("complete Inventory delivery schedules keep their urgency badge", () => {
+test("complete Inventory delivery schedules keep urgency sorting with an explicit status badge", () => {
   const [notification] = buildOperationalProjectNotifications([order({
     status: "scheduled",
     plannedDate: "2026-08-26",
     deliveryTime: "09:00",
     scheduleComplete: true,
   })], NOW);
-  assert.equal(notification.badgeLabel, undefined);
+  assert.equal(notification.badgeLabel, "Delivery scheduled");
   assert.equal(notification.priority, "high");
   assert.equal(notification.projectCreatedAt, "2026-08-21T03:00:00.000Z");
   assert.equal(notification.ownerName, "Sales Owner");

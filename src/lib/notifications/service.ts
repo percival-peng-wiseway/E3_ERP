@@ -321,7 +321,7 @@ export function buildPaymentTrackNotifications(projects: PaymentTrackProject[], 
         items.push(notification({
           role: task.role,
           priority,
-          ...(!hasSchedule ? { badgeLabel: "Delivery plan needed" } : {}),
+          badgeLabel: hasSchedule ? "Delivery scheduled" : "Delivery plan needed",
           projectCreatedAt: project.createdAt,
           ownerName: project.specialist.name,
           title: customerName,
@@ -353,15 +353,20 @@ export function buildPaymentTrackNotifications(projects: PaymentTrackProject[], 
       } else if (task.action === "manage_installation") {
         const scheduledFor = project.installationScheduledFor;
         const daysUntil = daysUntilDate(scheduledFor, now);
-        const hasSchedule = scheduledFor !== null && daysUntil !== null;
+        const hasSchedule = daysUntil !== null
+          && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(cleanText(project.installationScheduledTime, 5))
+          && Boolean(cleanText(project.installationAssignee, 80));
         let priority: NotificationPriority = "high";
-        if (scheduledFor && daysUntil !== null) {
+        if (hasSchedule && daysUntil !== null) {
           if (daysUntil < -30 || daysUntil > 7) continue;
           priority = daysUntil <= 0 ? "urgent" : daysUntil <= 3 ? "high" : "normal";
         }
         items.push(notification({
           role: task.role,
           priority,
+          badgeLabel: hasSchedule ? "Installation scheduled" : "Installation plan needed",
+          projectCreatedAt: project.createdAt,
+          ownerName: project.specialist.name,
           title: customerName,
           description: planningDescription(customerAddress, "Installation planning"),
           module: "projects",
@@ -510,7 +515,7 @@ export function buildOperationalProjectNotifications(orders: OperationalOrder[],
     items.push(notification({
       role: "pm",
       priority,
-      ...(!scheduleComplete ? { badgeLabel: "Delivery plan needed" } : {}),
+      badgeLabel: scheduleComplete ? "Delivery scheduled" : "Delivery plan needed",
       projectCreatedAt,
       ownerName,
       title: customerName,
