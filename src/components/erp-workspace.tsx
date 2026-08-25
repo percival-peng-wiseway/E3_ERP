@@ -32,6 +32,11 @@ import e3EnergyMark from "@/assets/e3-energy-mark.png";
 import { ERP_ROLE_LABELS, type ErpUser } from "@/lib/auth/types";
 import { readJsonResponse } from "@/lib/client/http";
 import { groupOrders, type Order } from "@/lib/inventory-operations/types";
+import {
+  countActivePaymentTrackProjects,
+  type PaymentTrackListResponse,
+  type PaymentTrackUpdatedEventDetail,
+} from "@/lib/payment-track/types";
 import { AgentSettingsDialog } from "./agent-settings-dialog";
 import { FilesWorkspace } from "./files-workspace";
 import { HomeCollaborationWorkspace } from "./home-collaboration-workspace";
@@ -91,6 +96,7 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [agentSettingsOpen, setAgentSettingsOpen] = useState(false);
   const [pendingPmReviewCount, setPendingPmReviewCount] = useState<number | null>(null);
+  const [activeProjectTrackCount, setActiveProjectTrackCount] = useState<number | null>(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
@@ -183,6 +189,54 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
     };
   }, []);
 
+  useEffect(() => {
+    let active = true;
+    let latestRequest = 0;
+
+    async function loadActiveProjectTrackCount() {
+      const requestId = ++latestRequest;
+      try {
+        const response = await fetch("/api/payment-track", { cache: "no-store" });
+        if (!response.ok) return;
+        const body = await readJsonResponse<PaymentTrackListResponse>(response);
+        if (!active || requestId !== latestRequest || !Array.isArray(body.data)) return;
+        setActiveProjectTrackCount(countActivePaymentTrackProjects(body.data));
+      } catch {
+        // Retain the last confirmed count while Project Track is unavailable.
+      }
+    }
+
+    const refresh = (event?: Event) => {
+      const eventCount = event?.type === "erp:payment-track-updated"
+        ? (event as CustomEvent<PaymentTrackUpdatedEventDetail>).detail?.activeProjectCount
+        : undefined;
+      if (typeof eventCount === "number" && Number.isSafeInteger(eventCount) && eventCount >= 0) {
+        latestRequest += 1;
+        setActiveProjectTrackCount(eventCount);
+        return;
+      }
+      void loadActiveProjectTrackCount();
+    };
+    const refreshWhenVisible = () => {
+      if (!document.hidden) refresh();
+    };
+
+    refresh();
+    window.addEventListener("erp:payment-track-updated", refresh);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    const refreshTimer = window.setInterval(refreshWhenVisible, 60_000);
+
+    return () => {
+      active = false;
+      latestRequest += 1;
+      window.clearInterval(refreshTimer);
+      window.removeEventListener("erp:payment-track-updated", refresh);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, []);
+
   const navigate = (module: ModuleId, enabled = true) => {
     if (!enabled) return;
     setActiveModule(module);
@@ -249,6 +303,9 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
                 const pendingReviewLabel = pendingPmReviewCount === null
                   ? "Pending PM Review count is loading"
                   : `${pendingPmReviewCount} ${pendingPmReviewCount === 1 ? "order" : "orders"} pending PM review`;
+                const activeProjectTrackLabel = activeProjectTrackCount === null
+                  ? "Active Project Track count is loading"
+                  : `${activeProjectTrackCount} active ${activeProjectTrackCount === 1 ? "project" : "projects"}`;
                 return (
                   <button
                     key={item.id}
@@ -256,7 +313,9 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
                     onClick={() => navigate(item.id, item.enabled)}
                     title={!item.enabled
                       ? "Not available yet"
-                      : item.id === "projects" ? pendingReviewLabel : undefined}
+                      : item.id === "projects"
+                        ? pendingReviewLabel
+                        : item.id === "payments" ? activeProjectTrackLabel : undefined}
                   >
                     <Icon size={17} strokeWidth={1.8} />
                     <span className="nav-item-label">{item.label}</span>
@@ -267,6 +326,15 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
                         aria-live="polite"
                       >
                         {pendingPmReviewCount > 99 ? "99+" : pendingPmReviewCount}
+                      </span>
+                    )}
+                    {item.id === "payments" && activeProjectTrackCount !== null && (
+                      <span
+                        className="nav-count-badge"
+                        aria-label={activeProjectTrackLabel}
+                        aria-live="polite"
+                      >
+                        {activeProjectTrackCount > 99 ? "99+" : activeProjectTrackCount}
                       </span>
                     )}
                     {!item.enabled && <LockKeyhole size={12} />}

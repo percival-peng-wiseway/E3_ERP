@@ -173,6 +173,23 @@ export interface PaymentTrackProject {
   history: PaymentTrackHistoryEntry[];
 }
 
+export function isPaymentTrackProjectActive(
+  project: Pick<PaymentTrackProject, "stage" | "outstandingCents">,
+) {
+  return project.stage !== "done" || project.outstandingCents > 0;
+}
+
+export function countActivePaymentTrackProjects(
+  projects: ReadonlyArray<Pick<PaymentTrackProject, "stage" | "outstandingCents">>,
+) {
+  return projects.filter(isPaymentTrackProjectActive).length;
+}
+
+export interface PaymentTrackUpdatedEventDetail {
+  activeProjectCount?: number;
+  source?: string;
+}
+
 export interface PaymentTrackListResponse {
   data: PaymentTrackProject[];
   meta: {

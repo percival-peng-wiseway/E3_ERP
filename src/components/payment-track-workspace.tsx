@@ -40,7 +40,10 @@ import {
 } from "react";
 import type { ErpRole } from "@/lib/auth/types";
 import { readJsonResponse } from "@/lib/client/http";
-import { PAYMENT_TRACK_SCHEDULE_ASSIGNEES } from "@/lib/payment-track/types";
+import {
+  countActivePaymentTrackProjects,
+  PAYMENT_TRACK_SCHEDULE_ASSIGNEES,
+} from "@/lib/payment-track/types";
 import type {
   PaymentTrackAction,
   PaymentTrackAdminSession,
@@ -51,6 +54,7 @@ import type {
   PaymentTrackRole,
   PaymentTrackScheduleAssignee,
   PaymentTrackStage,
+  PaymentTrackUpdatedEventDetail,
 } from "@/lib/payment-track/types";
 import styles from "./payment-track-workspace.module.css";
 
@@ -71,6 +75,15 @@ type PmNotesConflict = {
   updatedAt: string | null;
   updatedBy: string | null;
 };
+
+function announcePaymentTrackUpdate(projects: PaymentTrackProject[]) {
+  window.dispatchEvent(new CustomEvent<PaymentTrackUpdatedEventDetail>("erp:payment-track-updated", {
+    detail: {
+      activeProjectCount: countActivePaymentTrackProjects(projects),
+      source: "payment-track",
+    },
+  }));
+}
 
 const ROLE_LABELS: Record<PaymentTrackRole, string> = {
   sales: "Sales",
@@ -492,6 +505,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
   const busyRef = useRef(false);
   const pmNotesDirtyRef = useRef(false);
   const loadRequestRef = useRef(0);
+  const projectsRef = useRef<PaymentTrackProject[]>([]);
 
   const selected = useMemo(
     () => projects.find((project) => project.id === selectedId) ?? null,
@@ -518,8 +532,12 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
       const response = await fetch("/api/payment-track", { cache: "no-store" });
       const body = await readJsonResponse<PaymentTrackListResponse & { error?: string }>(response);
       if (!response.ok) throw new Error(apiError(body, "Unable to load projects."));
+      if (!Array.isArray(body.data)) throw new Error("Project Track returned an invalid response.");
       if (requestId !== loadRequestRef.current) return;
-      setProjects(Array.isArray(body.data) ? body.data : []);
+      const nextProjects = body.data;
+      projectsRef.current = nextProjects;
+      setProjects(nextProjects);
+      announcePaymentTrackUpdate(nextProjects);
       setAdminSession((current) => ({ ...current, admin: Boolean(body.meta?.admin) }));
       setError("");
     } catch (loadError) {
@@ -613,7 +631,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
     receivable: projects.reduce((sum, project) => sum + project.balanceDueCents, 0),
     outstanding: projects.reduce((sum, project) => sum + project.outstandingCents, 0),
     adminReview: projects.filter(isAwaitingAdmin).length,
-    active: projects.filter((project) => project.stage !== "done" || project.outstandingCents > 0).length,
+    active: countActivePaymentTrackProjects(projects),
   }), [projects]);
 
   const filtered = useMemo(() => {
@@ -632,13 +650,14 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
   }, [projects, query]);
 
   const updateProject = (project: PaymentTrackProject) => {
-    setProjects((current) => {
-      const exists = current.some((item) => item.id === project.id);
-      return exists
-        ? current.map((item) => item.id === project.id ? project : item)
-        : [project, ...current];
-    });
-    window.dispatchEvent(new CustomEvent("erp:payment-track-updated"));
+    const current = projectsRef.current;
+    const exists = current.some((item) => item.id === project.id);
+    const nextProjects = exists
+      ? current.map((item) => item.id === project.id ? project : item)
+      : [project, ...current];
+    projectsRef.current = nextProjects;
+    setProjects(nextProjects);
+    announcePaymentTrackUpdate(nextProjects);
   };
 
   const openAdd = (element: HTMLElement) => {
@@ -929,13 +948,15 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
       const response = await fetch(`/api/payment-track/${encodeURIComponent(project.id)}`, { method: "DELETE" });
       const body = await readJsonResponse<{ error?: string }>(response);
       if (!response.ok) throw new Error(apiError(body, "Unable to delete the project."));
-      setProjects((current) => current.filter((item) => item.id !== project.id));
+      const nextProjects = projectsRef.current.filter((item) => item.id !== project.id);
+      projectsRef.current = nextProjects;
+      setProjects(nextProjects);
       pmNotesDirtyRef.current = false;
       setSelectedId(null);
       setPmNotesError("");
       setPmNotesConflict(null);
       setNotice(`${project.reference} deleted.`);
-      window.dispatchEvent(new CustomEvent("erp:payment-track-updated"));
+      announcePaymentTrackUpdate(nextProjects);
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : "Unable to delete the project.");
     } finally {
