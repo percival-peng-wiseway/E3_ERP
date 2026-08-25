@@ -1,4 +1,8 @@
-# Unify ERP
+<p align="center">
+  <img src="src/assets/e3-energy-app-icon.png" alt="E3 Energy" width="128" />
+</p>
+
+# E3 ERP
 
 An ERPNext-inspired operations workspace that brings Inventory, QuoteHelp, Project Track delivery and payment workflows, and employee reimbursements into one native interface.
 

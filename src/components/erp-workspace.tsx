@@ -3,7 +3,6 @@
 import {
   Activity,
   Bell,
-  Building2,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -27,7 +26,9 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
+import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
+import e3EnergyMark from "@/assets/e3-energy-mark.png";
 import { ERP_ROLE_LABELS, type ErpUser } from "@/lib/auth/types";
 import { readJsonResponse } from "@/lib/client/http";
 import { groupOrders, type Order } from "@/lib/inventory-operations/types";
@@ -194,8 +195,8 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
         <button className="mobile-nav-trigger" onClick={() => setSidebarOpen(true)} aria-label="Open navigation">
           <Menu size={19} />
         </button>
-        <button className="desk-brand" onClick={() => navigate("home")}>
-          <span className="desk-logo"><span /><span /><span /></span>
+        <button className="desk-brand" type="button" onClick={() => navigate("home")} aria-label="Go to E3 ERP home">
+          <Image className="desk-logo" src={e3EnergyMark} alt="" aria-hidden="true" priority sizes="29px" />
           <strong>E3 ERP</strong>
         </button>
         <div className="desk-search">
@@ -231,11 +232,11 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
 
       <aside className={`desk-sidebar ${sidebarOpen ? "open" : ""}`}>
         <div className="sidebar-mobile-heading">
-          <strong>E3 ERP</strong>
+          <div><Image className="sidebar-mobile-logo" src={e3EnergyMark} alt="" aria-hidden="true" sizes="28px" /><strong>E3 ERP</strong></div>
           <button onClick={() => setSidebarOpen(false)} aria-label="Close navigation"><X size={19} /></button>
         </div>
         <div className="company-switcher">
-          <span><Building2 size={17} /></span>
+          <span><Image className="company-logo" src={e3EnergyMark} alt="" aria-hidden="true" sizes="25px" /></span>
           <div><small>Company</small><strong>E3 Energy Pty Ltd</strong></div>
           <ChevronDown size={14} />
         </div>

@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import Image from "next/image";
+import e3EnergyLogo from "@/assets/e3-energy-logo.png";
 import { LoginForm } from "./login-form";
 import styles from "./login.module.css";
 
@@ -19,12 +21,13 @@ export default function LoginPage() {
       <section className={styles.card} aria-labelledby="login-title">
         <header className={styles.header}>
           <div className={styles.brand}>
-            <span className={styles.logo} aria-hidden="true">
-              <span />
-              <span />
-              <span />
-            </span>
-            <span className={styles.brandName}>E3 ERP</span>
+            <Image
+              className={styles.brandLogo}
+              src={e3EnergyLogo}
+              alt="E3 Energy"
+              priority
+              sizes="112px"
+            />
           </div>
 
           <div className={styles.heading}>
