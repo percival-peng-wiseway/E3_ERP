@@ -52,7 +52,6 @@ import {
 import type {
   PaymentTrackAction,
   PaymentTrackAdminSession,
-  PaymentTrackHistoryAction,
   PaymentTrackItem,
   PaymentTrackListResponse,
   PaymentTrackMutationResponse,
@@ -95,33 +94,6 @@ const ROLE_LABELS: Record<PaymentTrackRole, string> = {
   specialist: "Sales",
   pm: "Project Manager",
   admin: "Administrator",
-};
-
-const HISTORY_ACTION_LABELS: Record<PaymentTrackHistoryAction, string> = {
-  created_manually: "Project created manually",
-  contract_imported: "Proposal imported",
-  deposit_proof_uploaded: "Deposit proof uploaded",
-  deposit_acknowledged: "Deposit payment acknowledged",
-  deposit_confirmed: "Deposit confirmed",
-  delivery_scheduled: "Delivery scheduled",
-  marked_delivered: "Materials marked delivered",
-  collection_acknowledged: "Collection payment acknowledged",
-  collection_proof_uploaded: "Collection proof uploaded",
-  collection_confirmed: "Collection confirmed",
-  installation_scheduled: "Installation scheduled",
-  payment_acknowledged: "Payment acknowledged",
-  final_payment_proof_uploaded: "Final payment proof uploaded",
-  final_payment_confirmed: "Final payment confirmed",
-  marked_installed: "Installation completed",
-  coes_received: "COES received",
-  continued_to_stc: "Continued to STC Rebate",
-  stc_solar_confirmed: "Solar STC confirmed",
-  stc_battery_confirmed: "Battery STC confirmed",
-  solar_rebate_requirement_backfilled: "Solar Rebate requirement updated",
-  solar_rebate_confirmed: "Solar Rebate confirmed",
-  stage_skipped: "Administrator stage override",
-  pm_notes_updated: "PM notes updated",
-  completed: "Project completed",
 };
 
 const STAGES: Array<{
@@ -2309,23 +2281,6 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                   </div>
                 </section>
               ) : null}
-
-              <section className={styles.detailSection} aria-label="Project activity history">
-                <h3><Clock3 size={16} /> Activity <span>{selected.history.length}</span></h3>
-                <div className={styles.activityList}>
-                  {selected.history.slice().reverse().map((entry) => (
-                    <article className={styles.activityEntry} key={entry.id}>
-                      <div className={styles.activityEntryHeader}>
-                        <strong>{HISTORY_ACTION_LABELS[entry.action]}</strong>
-                        <time dateTime={entry.at}>{formatDate(entry.at, true)}</time>
-                      </div>
-                      <span>{entry.actorName} · {ROLE_LABELS[entry.actorRole]}</span>
-                      {entry.note ? <p>{entry.note}</p> : null}
-                    </article>
-                  ))}
-                  {!selected.history.length ? <p className={styles.emptyActivity}>No project activity recorded yet.</p> : null}
-                </div>
-              </section>
 
               {authenticatedRole === "admin" ? (
                 <div className={styles.dangerZone}>
