@@ -12,8 +12,11 @@ export const ERP_SESSION_SECONDS = 12 * 60 * 60;
 const DEVELOPMENT_SESSION_SECRET = "local-e3-erp-session-secret-change-before-production";
 
 type SessionPayload = {
-  version: 1;
+  version: 1 | 2;
   username: string;
+  displayName?: string;
+  role?: ErpUser["role"];
+  sessionVersion?: number;
   expiresAt: number;
 };
 
@@ -44,12 +47,16 @@ function signaturesMatch(left: string, right: string) {
   }
 }
 
-export function createErpSessionToken(user: ErpUser) {
+export function createErpSessionToken(user: ErpUser, sessionVersion: number) {
   const secret = sessionSecret();
   if (!secret) throw new Error("ERP employee access is not configured.");
+  if (!Number.isSafeInteger(sessionVersion) || sessionVersion < 1) throw new Error("The employee session version is invalid.");
   const payload: SessionPayload = {
-    version: 1,
+    version: 2,
     username: user.username,
+    displayName: user.displayName,
+    role: user.role,
+    sessionVersion,
     expiresAt: Math.floor(Date.now() / 1000) + ERP_SESSION_SECONDS,
   };
   const encoded = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
@@ -65,12 +72,17 @@ export function readErpSessionToken(token: string): ErpSession | null {
 
   try {
     const payload = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as Partial<SessionPayload>;
-    if (payload.version !== 1
+    if ((payload.version !== 1 && payload.version !== 2)
       || typeof payload.username !== "string"
       || typeof payload.expiresAt !== "number"
       || !Number.isSafeInteger(payload.expiresAt)
       || payload.expiresAt <= Math.floor(Date.now() / 1000)) return null;
-    const user = findErpUser(payload.username);
+    const user = payload.version === 2
+      && typeof payload.displayName === "string" && payload.displayName.length <= 80
+      && typeof payload.role === "string" && ["admin", "pm", "sales", "specialist"].includes(payload.role)
+      && Number.isSafeInteger(payload.sessionVersion) && (payload.sessionVersion || 0) >= 1
+      ? { username: payload.username, displayName: payload.displayName, role: payload.role } as ErpUser
+      : payload.version === 1 ? findErpUser(payload.username) : null;
     return user ? { user, expiresAt: payload.expiresAt } : null;
   } catch {
     return null;

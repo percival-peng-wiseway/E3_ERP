@@ -1,5 +1,6 @@
 import { ERP_USERNAMES } from "@/lib/auth/directory";
 import { isAcceptableErpSessionSecret } from "@/lib/auth/session-secret";
+import { erpCloudflareBindings } from "@/lib/server/cloudflare-storage";
 
 const SESSION_COOKIE = "e3_erp_session";
 const DEVELOPMENT_SESSION_SECRET = "local-e3-erp-session-secret-change-before-production";
@@ -8,6 +9,7 @@ const ACTIVE_USERNAMES = new Set(ERP_USERNAMES);
 type SessionPayload = {
   version?: unknown;
   username?: unknown;
+  sessionVersion?: unknown;
   expiresAt?: unknown;
 };
 
@@ -55,12 +57,23 @@ export async function hasValidEdgeSession(request: Request) {
     );
     if (!validSignature) return false;
     const payload = JSON.parse(new TextDecoder().decode(base64UrlBytes(encoded))) as SessionPayload;
-    return payload.version === 1
-      && typeof payload.username === "string"
-      && ACTIVE_USERNAMES.has(payload.username)
-      && typeof payload.expiresAt === "number"
-      && Number.isSafeInteger(payload.expiresAt)
-      && payload.expiresAt > Math.floor(Date.now() / 1_000);
+    if ((payload.version !== 1 && payload.version !== 2)
+      || typeof payload.username !== "string"
+      || !/^[a-z0-9][a-z0-9._-]{2,39}$/.test(payload.username)
+      || typeof payload.expiresAt !== "number"
+      || !Number.isSafeInteger(payload.expiresAt)
+      || payload.expiresAt <= Math.floor(Date.now() / 1_000)) return false;
+    const username = payload.username;
+    const sessionVersion = payload.version === 1 ? 1 : payload.sessionVersion;
+    if (!Number.isSafeInteger(sessionVersion) || (sessionVersion as number) < 1) return false;
+
+    const bindings = await erpCloudflareBindings();
+    if (!bindings) return payload.version === 2 || ACTIVE_USERNAMES.has(username);
+    if (!bindings.database) return false;
+    const account = await bindings.database.prepare(
+      "SELECT active, session_version FROM erp_users WHERE username = ?1",
+    ).bind(username).first<{ active: number; session_version: number }>();
+    return account?.active === 1 && account.session_version === sessionVersion;
   } catch {
     return false;
   }

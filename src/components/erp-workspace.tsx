@@ -21,6 +21,7 @@ import {
   PanelLeftClose,
   Search,
   Settings,
+  Users,
   ReceiptText,
   Warehouse,
   X,
@@ -51,6 +52,7 @@ import { ReimbursementWorkspace } from "./reimbursement-workspace";
 import { ReportsWorkspace } from "./reports-workspace";
 import { PaymentTrackWorkspace } from "./payment-track-workspace";
 import { SiteVisitingWorkspace } from "./site-visiting-workspace";
+import { UserManagementDialog } from "./user-management-dialog";
 
 type ModuleId = "home" | "files" | "inventory" | "quotations" | "projects" | "site-visits" | "payments" | "reimbursements" | "reports" | "finance";
 
@@ -99,6 +101,7 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
   const [activeModule, setActiveModule] = useState<ModuleId>("home");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [agentSettingsOpen, setAgentSettingsOpen] = useState(false);
+  const [userManagementOpen, setUserManagementOpen] = useState(false);
   const [pendingPmReviewCount, setPendingPmReviewCount] = useState<number | null>(null);
   const [activeProjectTrackCount, setActiveProjectTrackCount] = useState<number | null>(null);
   const [activeSiteVisitCount, setActiveSiteVisitCount] = useState<number | null>(null);
@@ -404,7 +407,10 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
         <div className="sidebar-footer">
           <button className={activeModule === "reports" ? "active" : ""} onClick={() => navigate("reports")}><FileBarChart size={16} /><span>Reports</span></button>
           {currentUser.role === "admin" ? (
-            <button onClick={() => setAgentSettingsOpen(true)}><Settings size={16} /><span>Settings</span></button>
+            <>
+              <button onClick={() => setAgentSettingsOpen(true)}><Settings size={16} /><span>Agent Settings</span></button>
+              <button onClick={() => setUserManagementOpen(true)}><Users size={16} /><span>User Management</span></button>
+            </>
           ) : null}
           <div><i /><span>Business services operational</span></div>
         </div>
@@ -437,7 +443,10 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
         </main>
       </div>
       {currentUser.role === "admin" ? (
-        <AgentSettingsDialog open={agentSettingsOpen} onClose={() => setAgentSettingsOpen(false)} />
+        <>
+          <AgentSettingsDialog open={agentSettingsOpen} onClose={() => setAgentSettingsOpen(false)} />
+          <UserManagementDialog open={userManagementOpen} onClose={() => setUserManagementOpen(false)} currentUsername={currentUser.username} />
+        </>
       ) : null}
     </div>
   );

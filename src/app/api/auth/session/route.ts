@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { hasValidEdgeSession } from "@/lib/auth/edge-session";
 import { erpAuthConfiguration, getErpSession } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-export function GET(request: NextRequest) {
-  const session = getErpSession(request);
+export async function GET(request: NextRequest) {
+  const session = await hasValidEdgeSession(request) ? getErpSession(request) : null;
   const response = NextResponse.json({
     data: {
       authenticated: Boolean(session),

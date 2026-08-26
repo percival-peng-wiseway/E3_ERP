@@ -134,8 +134,8 @@ export async function POST(request: NextRequest) {
       return noStoreJson({ error: "Too many login attempts. Try again later.", code: "rate_limited" }, { status: 429 });
     }
     const password = typeof body.password === "string" && body.password.length <= 200 ? body.password : "";
-    const user = username && password ? await verifyErpCredentials(username, password) : null;
-    if (!user) {
+    const authenticated = username && password ? await verifyErpCredentials(username, password) : null;
+    if (!authenticated) {
       recordFailure(ipKey, MAX_IP_FAILURES, now);
       recordFailure(accountKey, MAX_ACCOUNT_FAILURES, now);
       return noStoreJson({ error: "The username or password is incorrect.", code: "invalid_credentials" }, { status: 401 });
@@ -144,8 +144,8 @@ export async function POST(request: NextRequest) {
     // A successful login clears only that account/IP pair. It must not erase
     // failures against other employees or the aggregate IP protection.
     attempts.delete(accountKey);
-    const response = noStoreJson({ data: { user } });
-    response.cookies.set(ERP_SESSION_COOKIE, createErpSessionToken(user), {
+    const response = noStoreJson({ data: { user: authenticated.user } });
+    response.cookies.set(ERP_SESSION_COOKIE, createErpSessionToken(authenticated.user, authenticated.sessionVersion), {
       httpOnly: true,
       sameSite: "strict",
       secure: process.env.NODE_ENV === "production",

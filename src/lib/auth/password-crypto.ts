@@ -1,4 +1,4 @@
-import { scrypt, timingSafeEqual } from "node:crypto";
+import { randomBytes, scrypt, timingSafeEqual } from "node:crypto";
 
 const PASSWORD_BYTES = 32;
 const SCRYPT_OPTIONS = { N: 16_384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 } as const;
@@ -16,4 +16,10 @@ export async function verifyScryptPassword(password: string, salt: string, expec
   const candidate = await deriveScryptHash(password, salt);
   const expected = Buffer.from(expectedHash, "base64url");
   return candidate.length === expected.length && timingSafeEqual(candidate, expected);
+}
+
+export async function createScryptPasswordVerifier(password: string) {
+  const salt = randomBytes(16).toString("base64url");
+  const passwordHash = (await deriveScryptHash(password, salt)).toString("base64url");
+  return { salt, passwordHash };
 }
