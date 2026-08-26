@@ -10,6 +10,7 @@ import {
   ChevronRight,
   Clock3,
   LoaderCircle,
+  List,
   Mail,
   MapPin,
   Pencil,
@@ -33,6 +34,7 @@ import {
 } from "react";
 import type { ErpRole } from "@/lib/auth/types";
 import { readJsonResponse } from "@/lib/client/http";
+import type { SiteVisit } from "@/lib/site-visits/types";
 import {
   PAYMENT_TRACK_SCHEDULE_ASSIGNEES,
   type PaymentTrackListResponse,
@@ -87,7 +89,8 @@ type ProjectScheduleSourceOverride = {
   updatedBy: string;
 };
 
-type ScheduleFilter = "all" | "material_delivery" | "installing" | "inventory" | "custom";
+type ScheduleFilter = "all" | "material_delivery" | "installing" | "site_visit" | "custom";
+type ScheduleView = "calendar" | "list";
 type PaymentScheduleKind = "delivery" | "installation";
 type InventoryEditorState = {
   group: DeliveryGroup;
@@ -122,6 +125,7 @@ type CustomEditorState = {
 type CalendarEntry = (
   | { id: string; source: "inventory"; date: string; time: string | null; title: string; location: string; assignee: string; detail: string; completed: boolean; group: DeliveryGroup }
   | { id: string; source: "material_delivery" | "installing"; date: string; time: string | null; title: string; location: string; assignee: string; detail: string; completed: boolean; project: ScheduledPaymentProject }
+  | { id: string; source: "site_visit"; date: string; time: string; title: string; location: string; assignee: string; detail: string; completed: boolean; visit: SiteVisit }
   | { id: string; source: "custom"; date: string; time: string | null; title: string; location: string; assignee: string; detail: string; completed: boolean; job: ProjectScheduleJob }
 ) & { overrideKey: string | null; cancelled: boolean };
 
@@ -139,7 +143,7 @@ const FILTERS: Array<{ id: ScheduleFilter; label: string }> = [
   { id: "all", label: "All" },
   { id: "material_delivery", label: "Material Delivery" },
   { id: "installing", label: "Installing" },
-  { id: "inventory", label: "Inventory Dispatch" },
+  { id: "site_visit", label: "Site Visit" },
   { id: "custom", label: "Custom" },
 ];
 
@@ -283,7 +287,9 @@ function groupOrders(orders: InventoryOrder[]) {
 }
 
 function isScheduleFilterMatch(source: CalendarEntry["source"] | UnscheduledEntry["source"], filter: ScheduleFilter) {
-  return filter === "all" || source === filter;
+  if (filter === "all") return true;
+  if (filter === "material_delivery") return source === "material_delivery" || source === "inventory";
+  return source === filter;
 }
 
 function emptyCustomEditor(date: string): CustomEditorState {
@@ -294,10 +300,12 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
   const [weekStart, setWeekStart] = useState(() => weekStartFor(melbourneToday()));
   const [operations, setOperations] = useState<OperationsState>(EMPTY_OPERATIONS);
   const [projects, setProjects] = useState<ScheduledPaymentProject[]>([]);
+  const [siteVisits, setSiteVisits] = useState<SiteVisit[]>([]);
   const [customJobs, setCustomJobs] = useState<ProjectScheduleJob[]>([]);
   const [sourceOverrides, setSourceOverrides] = useState<ProjectScheduleSourceOverride[]>([]);
   const [sourceOverridesReady, setSourceOverridesReady] = useState(false);
   const [filter, setFilter] = useState<ScheduleFilter>("all");
+  const [view, setView] = useState<ScheduleView>("calendar");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -324,12 +332,13 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
     const requests = await Promise.allSettled([
       fetch("/api/inventory/operations", { cache: "no-store" }).then(async (response) => ({ response, body: await readJsonResponse<OperationsState & { error?: string }>(response) })),
       fetch("/api/payment-track", { cache: "no-store" }).then(async (response) => ({ response, body: await readJsonResponse<PaymentTrackListResponse & { error?: string }>(response) })),
+      fetch("/api/site-visits", { cache: "no-store" }).then(async (response) => ({ response, body: await readJsonResponse<{ data?: { visits?: SiteVisit[] }; error?: string }>(response) })),
       fetch(`/api/project-schedule?from=${encodeURIComponent(addIsoDays(weekStart, -90))}&to=${encodeURIComponent(addIsoDays(weekStart, 96))}`, { cache: "no-store" }).then(async (response) => ({ response, body: await readJsonResponse<{ data?: { jobs?: ProjectScheduleJob[]; overrides?: unknown[] }; error?: string }>(response) })),
     ]);
     if (requestId !== loadRequestRef.current) return;
     const warnings: string[] = [];
     let successfulSources = 0;
-    const [inventoryResult, paymentResult, customResult] = requests;
+    const [inventoryResult, paymentResult, siteVisitResult, customResult] = requests;
     if (inventoryResult.status === "fulfilled" && inventoryResult.value.response.ok) {
       successfulSources += 1;
       setOperations({
@@ -346,6 +355,13 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
     } else {
       setProjects([]);
       warnings.push("Project Track could not be refreshed.");
+    }
+    if (siteVisitResult.status === "fulfilled" && siteVisitResult.value.response.ok) {
+      successfulSources += 1;
+      setSiteVisits(Array.isArray(siteVisitResult.value.body.data?.visits) ? siteVisitResult.value.body.data.visits : []);
+    } else {
+      setSiteVisits([]);
+      warnings.push("Site visits could not be refreshed.");
     }
     const scheduleData = customResult.status === "fulfilled" ? customResult.value.body.data : undefined;
     const validScheduleData = customResult.status === "fulfilled"
@@ -374,10 +390,12 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
     const refresh = () => void load(true);
     window.addEventListener("erp:inventory-updated", refresh);
     window.addEventListener("erp:payment-track-updated", refresh);
+    window.addEventListener("erp:site-visits-updated", refresh);
     return () => {
       loadRequestRef.current += 1;
       window.removeEventListener("erp:inventory-updated", refresh);
       window.removeEventListener("erp:payment-track-updated", refresh);
+      window.removeEventListener("erp:site-visits-updated", refresh);
     };
   }, [load]);
 
@@ -540,9 +558,30 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
       overrideKey: null,
       cancelled: false,
     }));
-    return [...inventoryEntries, ...paymentEntries, ...customEntries]
+    const siteVisitEntries: CalendarEntry[] = sourceOverridesReady ? siteVisits.flatMap((visit) => {
+      if (!visit.scheduledDate || !visit.scheduledTime
+        || !["scheduled", "in_progress", "completed"].includes(visit.status)) return [];
+      const overrideKey = `site-visit:${visit.id.toLowerCase()}`;
+      const overrideState = sourceOverrideState.get(overrideKey);
+      if (overrideState === "deleted") return [];
+      return [{
+        id: `site-visit:${visit.id}:${visit.status}`,
+        source: "site_visit" as const,
+        date: visit.scheduledDate,
+        time: visit.scheduledTime,
+        title: visit.projectName,
+        location: visit.address || "Address required",
+        assignee: visit.assignee || "Team member not assigned",
+        detail: visit.reason ? `Site visit · ${visit.reason}` : "Site visit",
+        completed: visit.status === "completed",
+        visit,
+        overrideKey,
+        cancelled: overrideState === "cancelled",
+      }];
+    }) : [];
+    return [...inventoryEntries, ...paymentEntries, ...siteVisitEntries, ...customEntries]
       .sort((left, right) => `${left.date}:${left.time || "99:99"}:${left.title}`.localeCompare(`${right.date}:${right.time || "99:99"}:${right.title}`));
-  }, [completedInventoryGroups, customJobs, projects, scheduledInventoryGroups, sourceOverrideState, sourceOverridesReady]);
+  }, [completedInventoryGroups, customJobs, projects, scheduledInventoryGroups, siteVisits, sourceOverrideState, sourceOverridesReady]);
 
   const calendarEntries = useMemo(
     () => allDatedEntries.filter((entry) => entry.date >= weekStart && entry.date <= weekEnd),
@@ -861,7 +900,8 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
   const sourceLabel = (source: CalendarEntry["source"] | UnscheduledEntry["source"]) => {
     if (source === "material_delivery") return "Material Delivery";
     if (source === "installing") return "Installing";
-    if (source === "inventory") return "Inventory Dispatch";
+    if (source === "inventory") return "Material Delivery";
+    if (source === "site_visit") return "Site Visit";
     return "Custom";
   };
 
@@ -922,6 +962,25 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
     </>
   ) : null;
 
+  const renderEntryActions = (entry: CalendarEntry) => (
+    <>
+      {canManageSchedule && entry.source === "inventory" && !entry.completed && !entry.cancelled ? (
+        <>
+          <button type="button" onClick={() => openInventoryEditor(entry.group)} disabled={busy}><Pencil size={13} /> Edit</button>
+          <button type="button" className={styles.primaryInline} onClick={() => void inventoryAction(entry.group, "deliver")} disabled={busy}><CheckCircle2 size={13} /> Delivered</button>
+        </>
+      ) : null}
+      {canManageSchedule && (entry.source === "material_delivery" || entry.source === "installing") && !entry.completed && !entry.cancelled ? (
+        <>
+          <button type="button" onClick={() => openPaymentEditor(entry.project, entry.source === "installing" ? "installation" : "delivery")} disabled={busy}><Pencil size={13} /> Reschedule</button>
+          <button type="button" className={styles.primaryInline} onClick={() => void completePaymentEntry(entry)} disabled={busy}><CheckCircle2 size={13} /> {entry.source === "installing" ? "Installed" : "Delivered"}</button>
+        </>
+      ) : null}
+      {canManageSchedule && entry.source === "custom" ? <button type="button" onClick={() => openCustomEditor(entry.job)} disabled={busy}><Pencil size={13} /> Details</button> : null}
+      {entry.source !== "custom" ? renderSourceOverrideActions(entry) : null}
+    </>
+  );
+
   const renderCalendarEntry = (entry: CalendarEntry) => (
     <article key={entry.id} className={`${styles.scheduleCard} ${styles[entry.source]} ${entry.completed && !entry.cancelled ? styles.completedCard : ""} ${entry.cancelled ? styles.cancelledCard : ""}`}>
       <div className={styles.cardTopline}>
@@ -939,22 +998,7 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
         <span><UserRound size={13} />{entry.assignee}</span>
       </div>
       <small>{entry.detail}</small>
-      <div className={styles.cardButtons}>
-        {canManageSchedule && entry.source === "inventory" && !entry.completed && !entry.cancelled ? (
-          <>
-            <button type="button" onClick={() => openInventoryEditor(entry.group)} disabled={busy}><Pencil size={13} /> Edit</button>
-            <button type="button" className={styles.primaryInline} onClick={() => void inventoryAction(entry.group, "deliver")} disabled={busy}><CheckCircle2 size={13} /> Delivered</button>
-          </>
-        ) : null}
-        {canManageSchedule && (entry.source === "material_delivery" || entry.source === "installing") && !entry.completed && !entry.cancelled ? (
-          <>
-            <button type="button" onClick={() => openPaymentEditor(entry.project, entry.source === "installing" ? "installation" : "delivery")} disabled={busy}><Pencil size={13} /> Reschedule</button>
-            <button type="button" className={styles.primaryInline} onClick={() => void completePaymentEntry(entry)} disabled={busy}><CheckCircle2 size={13} /> {entry.source === "installing" ? "Installed" : "Delivered"}</button>
-          </>
-        ) : null}
-        {canManageSchedule && entry.source === "custom" ? <button type="button" onClick={() => openCustomEditor(entry.job)} disabled={busy}><Pencil size={13} /> Details</button> : null}
-        {entry.source !== "custom" ? renderSourceOverrideActions(entry) : null}
-      </div>
+      <div className={styles.cardButtons}>{renderEntryActions(entry)}</div>
     </article>
   );
 
@@ -965,6 +1009,10 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
           <h1 ref={scheduleHeadingRef} id="project-schedule-title" tabIndex={-1}>Weekly Schedule</h1>
         </div>
         <div className={styles.headerActions}>
+          <div className={styles.viewToggle} role="group" aria-label="Schedule view">
+            <button type="button" className={view === "calendar" ? styles.activeView : ""} onClick={() => setView("calendar")} aria-pressed={view === "calendar"} title="Calendar view"><CalendarDays size={16} /><span>Calendar</span></button>
+            <button type="button" className={view === "list" ? styles.activeView : ""} onClick={() => setView("list")} aria-pressed={view === "list"} title="List view"><List size={16} /><span>List</span></button>
+          </div>
           <button type="button" className={styles.secondaryButton} onClick={() => void load(true)} disabled={refreshing || busy}>
             <RefreshCw size={16} className={refreshing ? styles.spinning : ""} /> Refresh
           </button>
@@ -1058,7 +1106,7 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
 
       {loading ? (
         <div className={styles.loading}><LoaderCircle size={27} className={styles.spinning} /> Loading weekly schedule…</div>
-      ) : (
+      ) : view === "calendar" ? (
         <div className={styles.calendarScroller}>
           <div className={styles.calendarGrid} role="region" aria-labelledby="project-schedule-title">
             {days.map((day) => {
@@ -1080,13 +1128,43 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
             })}
           </div>
         </div>
+      ) : (
+        <div className={styles.scheduleListScroller} role="region" aria-label={`Weekly Schedule list for ${weekRangeLabel(weekStart, weekEnd)}`} tabIndex={0}>
+          <table className={styles.scheduleList}>
+            <caption className={styles.visuallyHidden}>Scheduled jobs from {weekRangeLabel(weekStart, weekEnd)}</caption>
+            <thead>
+              <tr><th>Date</th><th>Time</th><th>Project or customer</th><th>Type</th><th>Location</th><th>Assigned to</th><th>Status</th><th><span className={styles.visuallyHidden}>Actions</span></th></tr>
+            </thead>
+            <tbody>
+              {visibleEntries.map((entry) => (
+                <tr key={entry.id} className={`${styles.listRow} ${styles[entry.source]} ${entry.completed && !entry.cancelled ? styles.completedListRow : ""} ${entry.cancelled ? styles.cancelledListRow : ""}`}>
+                  <td data-label="Date"><strong>{dayLabel(entry.date)}</strong><span>{shortDate(entry.date)}</span></td>
+                  <td data-label="Time">{entry.time ? timeLabel(entry.time) : "All day"}</td>
+                  <td data-label="Project or customer"><strong>{entry.title}</strong><small>{entry.detail}</small></td>
+                  <td data-label="Type"><span className={styles.sourceBadge}>{sourceLabel(entry.source)}</span></td>
+                  <td data-label="Location"><span className={styles.listValue}><MapPin size={13} />{entry.location}</span></td>
+                  <td data-label="Assigned to"><span className={styles.listValue}><UserRound size={13} />{entry.assignee}</span></td>
+                  <td data-label="Status">{entry.cancelled
+                    ? <span className={styles.cancelledBadge}><X size={12} /> Cancelled</span>
+                    : entry.completed
+                      ? <span className={styles.completedBadge}><Check size={12} /> Complete</span>
+                      : entry.source === "site_visit" && entry.visit.status === "in_progress"
+                        ? <span className={styles.inProgressBadge}><Wrench size={12} /> In progress</span>
+                        : <span className={styles.scheduledBadge}><CalendarCheck2 size={12} /> Scheduled</span>}</td>
+                  <td data-label="Actions"><div className={`${styles.cardButtons} ${styles.listActions}`}>{renderEntryActions(entry)}</div></td>
+                </tr>
+              ))}
+              {!visibleEntries.length ? <tr><td className={styles.emptyList} colSpan={8}><CalendarDays size={20} />No scheduled jobs in this week for this filter</td></tr> : null}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {inventoryEditor ? (
         <div className={styles.modalBackdrop} role="presentation" onMouseDown={modalBackdropClick}>
           <form ref={modalRef} className={styles.modal} onSubmit={saveInventorySchedule} role="dialog" aria-modal="true" aria-labelledby="inventory-editor-title">
             <header>
-              <div><span>Inventory Dispatch</span><h2 id="inventory-editor-title">{inventoryEditor.group.primary.status === "pending" ? "Schedule Delivery" : "Edit Delivery"}</h2></div>
+              <div><span>Material Delivery</span><h2 id="inventory-editor-title">{inventoryEditor.group.primary.status === "pending" ? "Schedule Delivery" : "Edit Delivery"}</h2></div>
               <button type="button" onClick={closeModal} disabled={busy} aria-label="Close"><X size={19} /></button>
             </header>
             <div className={styles.modalBody}>

@@ -49,6 +49,39 @@
   gap: 9px;
 }
 
+.viewToggle {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.viewToggle button {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  gap: 6px;
+  border: 0;
+  border-right: 1px solid var(--line);
+  background: transparent;
+  color: #667185;
+  font-size: 12px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.viewToggle button:last-child {
+  border-right: 0;
+}
+
+.viewToggle button.activeView {
+  background: #eef0ff;
+  color: #4857cc;
+}
+
 .secondaryButton,
 .addButton,
 .dangerButton,
@@ -417,7 +450,7 @@
 }
 
 .inventory {
-  border-left-color: #247bc1;
+  border-left-color: #d78a24;
 }
 
 .material_delivery {
@@ -430,6 +463,10 @@
 
 .custom {
   border-left-color: #299873;
+}
+
+.site_visit {
+  border-left-color: #218b87;
 }
 
 .emptyTray {
@@ -453,6 +490,154 @@
   background: #fff;
   color: #6b7586;
   font-size: 14px;
+}
+
+.scheduleListScroller {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  scrollbar-color: #c4cbd5 transparent;
+  scrollbar-width: thin;
+}
+
+.scheduleList {
+  width: 100%;
+  min-width: 1180px;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.scheduleList th {
+  padding: 11px 12px;
+  color: #687386;
+  background: #f5f7f9;
+  border-bottom: 1px solid var(--line);
+  font-size: 11px;
+  font-weight: 780;
+  letter-spacing: .025em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.scheduleList th:nth-child(1) { width: 118px; }
+.scheduleList th:nth-child(2) { width: 94px; }
+.scheduleList th:nth-child(3) { width: 210px; }
+.scheduleList th:nth-child(4) { width: 132px; }
+.scheduleList th:nth-child(5) { width: 220px; }
+.scheduleList th:nth-child(6) { width: 155px; }
+.scheduleList th:nth-child(7) { width: 110px; }
+.scheduleList th:nth-child(8) { width: 260px; }
+
+.scheduleList td {
+  min-width: 0;
+  padding: 12px;
+  color: #455064;
+  border-bottom: 1px solid #e7ebef;
+  vertical-align: top;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.scheduleList tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.listRow > td:first-child {
+  border-left: 4px solid #8a94a5;
+}
+
+.listRow.inventory > td:first-child,
+.listRow.material_delivery > td:first-child { border-left-color: #d78a24; }
+.listRow.installing > td:first-child { border-left-color: #7857c9; }
+.listRow.custom > td:first-child { border-left-color: #299873; }
+.listRow.site_visit > td:first-child { border-left-color: #218b87; }
+
+.listRow:hover td {
+  background: #fafbfc;
+}
+
+.listRow td > strong,
+.listRow td > span,
+.listRow td > small {
+  display: block;
+}
+
+.listRow td > strong {
+  color: #273042;
+  font-size: 13px;
+}
+
+.listRow td > small,
+.listRow td > strong + span {
+  margin-top: 3px;
+  color: #788395;
+}
+
+.listValue {
+  display: flex !important;
+  align-items: flex-start;
+  gap: 5px;
+}
+
+.listValue svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.scheduledBadge,
+.inProgressBadge {
+  display: inline-flex !important;
+  width: max-content;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  color: #4e5dc8;
+  background: #eef0ff;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.inProgressBadge {
+  color: #18716e;
+  background: #e7f6f4;
+}
+
+.completedListRow td {
+  background: #f8fbf9;
+}
+
+.cancelledListRow td {
+  background: #fff9f6;
+}
+
+.listActions {
+  margin-top: 0;
+}
+
+.emptyList {
+  height: 180px;
+  color: #7f8998 !important;
+  text-align: center;
+}
+
+.emptyList svg {
+  margin-right: 7px;
+  vertical-align: middle;
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .calendarScroller {
@@ -569,7 +754,7 @@
 }
 
 .scheduleCard.inventory {
-  border-left-color: #247bc1;
+  border-left-color: #d78a24;
 }
 
 .scheduleCard.material_delivery {
@@ -582,6 +767,10 @@
 
 .scheduleCard.custom {
   border-left-color: #299873;
+}
+
+.scheduleCard.site_visit {
+  border-left-color: #218b87;
 }
 
 .completedCard {
@@ -1028,6 +1217,14 @@
     align-items: stretch;
   }
 
+  .viewToggle {
+    width: 100%;
+  }
+
+  .viewToggle button {
+    flex: 1;
+  }
+
   .headerActions button {
     min-height: 38px;
   }
@@ -1098,6 +1295,81 @@
 
   .paymentAssigneeField {
     grid-column: auto;
+  }
+
+  .scheduleListScroller {
+    overflow: visible;
+    border: 0;
+    background: transparent;
+  }
+
+  .scheduleList,
+  .scheduleList tbody,
+  .scheduleList tr,
+  .scheduleList td {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .scheduleList thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+  }
+
+  .scheduleList tbody {
+    display: grid;
+    gap: 10px;
+  }
+
+  .scheduleList tr {
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: #fff;
+  }
+
+  .scheduleList td {
+    display: grid;
+    grid-template-columns: minmax(95px, .36fr) minmax(0, 1fr);
+    padding: 9px 11px;
+    border-bottom: 1px solid #edf0f3;
+  }
+
+  .scheduleList td::before {
+    content: attr(data-label);
+    padding-right: 10px;
+    color: #7b8595;
+    font-size: 11px;
+    font-weight: 750;
+  }
+
+  .listRow > td:first-child {
+    border-left-width: 4px;
+  }
+
+  .listRow td > strong + span,
+  .listRow td > small {
+    margin-top: 2px;
+  }
+
+  .listActions {
+    width: 100%;
+  }
+
+  .emptyList {
+    display: flex !important;
+    min-height: 150px;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .emptyList::before {
+    content: none !important;
   }
 }
 
