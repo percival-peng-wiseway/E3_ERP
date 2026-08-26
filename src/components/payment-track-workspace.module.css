@@ -884,101 +884,6 @@
 .detailAmounts .outstandingAmount { background: #f2f4ff; }
 .detailAmounts .outstandingAmount strong { color: #4c5cc4; }
 
-.pmNotesPanel {
-  min-width: 0;
-  padding: 14px;
-  background: #fff;
-  border: 1px solid #dfe5e9;
-  border-radius: 8px;
-}
-
-.pmNotesHeader {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 10px;
-}
-
-.pmNotesIcon {
-  display: grid;
-  width: 36px;
-  height: 36px;
-  flex: 0 0 auto;
-  place-items: center;
-  color: #5969d3;
-  background: #e9ecff;
-  border-radius: 7px;
-}
-
-.pmNotesHeader > div { min-width: 0; flex: 1; }
-.pmNotesHeader h3 { margin: 0; color: #46515a; font-size: 14px; }
-.pmNotesHeader p { margin: 3px 0 0; color: #7b8791; font-size: 12px; line-height: 1.45; }
-.pmNotesHeader > small { max-width: 260px; color: #84909a; font-size: 12px; line-height: 1.4; text-align: right; }
-
-.pmNotesEditor { margin-top: 12px; }
-.pmNotesEditor > label { display: block; margin-bottom: 6px; color: #596671; font-size: 13px; font-weight: 700; }
-.pmNotesEditor textarea {
-  width: 100%;
-  min-height: 126px;
-  padding: 11px 12px;
-  resize: vertical;
-  color: #29343d;
-  background: #fff;
-  border: 1px solid #d4dce1;
-  border-radius: 7px;
-  outline: 0;
-  font: inherit;
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 1.55;
-}
-.pmNotesEditor textarea:focus { border-color: #6574d9; box-shadow: 0 0 0 3px rgba(92, 108, 216, .12); }
-.pmNotesEditor textarea:disabled { color: #74808a; background: #f5f7f8; cursor: wait; }
-
-.pmNotesFooter {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  margin-top: 8px;
-  gap: 12px;
-}
-.pmNotesFooter > div { display: flex; min-width: 0; flex-direction: column; gap: 3px; color: #84909a; font-size: 12px; line-height: 1.4; }
-.pmNotesFooter button { min-width: 140px; min-height: 40px; flex: 0 0 auto; }
-
-.pmNotesFeedback { min-height: 22px; margin-top: 7px; }
-.pmNotesSuccess,
-.pmNotesError { display: flex; align-items: flex-start; gap: 6px; font-size: 12px; line-height: 1.45; }
-.pmNotesSuccess { color: #26745b; }
-.pmNotesError { color: #a23e3e; }
-.pmNotesSuccess svg,
-.pmNotesError svg { margin-top: 1px; flex: 0 0 auto; }
-
-.pmNotesConflict {
-  margin-top: 9px;
-  padding: 10px 11px;
-  color: #685426;
-  background: #fff9ea;
-  border: 1px solid #ead9ac;
-  border-radius: 7px;
-}
-.pmNotesConflict > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-.pmNotesConflict strong { color: #715824; font-size: 12px; }
-.pmNotesConflict small { color: #8a764c; font-size: 12px; text-align: right; }
-.pmNotesConflict p { margin: 8px 0 0; overflow-wrap: anywhere; color: #5b513c; font-size: 13px; line-height: 1.55; white-space: pre-wrap; }
-
-.pmNotesReadOnly {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  margin-top: 12px;
-  padding-top: 12px;
-  gap: 14px;
-  border-top: 1px solid #edf0f2;
-}
-.pmNotesReadOnly p { min-width: 0; margin: 0; flex: 1; overflow-wrap: anywhere; color: #46535d; font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
-.pmNotesReadOnly .pmNotesEmpty { color: #89949d; font-style: italic; }
-.pmNotesReadOnly button { min-height: 40px; flex: 0 0 auto; }
-
 .actionPanel,
 .readOnlyStep {
   display: flex;
@@ -1342,14 +1247,6 @@
   .parallelWorkflowGrid { grid-template-columns: 1fr; }
   .detailStageBar { align-items: flex-start; flex-wrap: wrap; }
   .detailStatus { order: 3; flex-basis: 100%; }
-  .pmNotesHeader { align-items: flex-start; flex-wrap: wrap; }
-  .pmNotesHeader > small { max-width: none; flex-basis: 100%; margin-left: 46px; text-align: left; }
-  .pmNotesFooter,
-  .pmNotesReadOnly { align-items: stretch; flex-direction: column; }
-  .pmNotesConflict > div { align-items: flex-start; flex-direction: column; gap: 3px; }
-  .pmNotesConflict small { text-align: left; }
-  .pmNotesFooter button,
-  .pmNotesReadOnly button { width: 100%; }
   .scheduleActionHeader { align-items: flex-start; flex-direction: column; }
   .scheduleFields { grid-template-columns: 1fr; }
   .scheduleActionButtons button { min-width: 0; flex: 1; }
@@ -1366,7 +1263,6 @@
   .compactFields,
   .stcActions { grid-template-columns: 1fr; }
   .formGrid fieldset { align-items: flex-start; flex-direction: column; gap: 10px; }
-  .pmNotesHeader > small { margin-left: 0; }
   .actionButtons { align-items: stretch; flex-direction: column; }
   .actionButtons button { width: 100%; }
   .cardSchedule { align-items: flex-start; flex-direction: column; gap: 5px; }

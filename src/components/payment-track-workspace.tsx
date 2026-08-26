@@ -70,12 +70,6 @@ type WorkflowConfirmation = {
   confirmLabel: string;
   successMessage: string;
 };
-type PmNotesConflict = {
-  notes: string;
-  updatedAt: string | null;
-  updatedBy: string | null;
-};
-
 function announcePaymentTrackUpdate(projects: PaymentTrackProject[]) {
   window.dispatchEvent(new CustomEvent<PaymentTrackUpdatedEventDetail>("erp:payment-track-updated", {
     detail: {
@@ -124,7 +118,6 @@ const STAGES: Array<{
 const EMPTY_ADMIN_SESSION: PaymentTrackAdminSession = { admin: false, configured: false };
 const MAX_AGREEMENT_SIZE = 15 * 1024 * 1024;
 const MAX_PROOF_SIZE = 10 * 1024 * 1024;
-const DISCARD_PM_NOTES_MESSAGE = "Discard your unsaved PM notes?";
 const PROOF_TYPES = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
 
 type ScheduleAssignee = PaymentTrackScheduleAssignee | "";
@@ -494,16 +487,9 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
   const [installationDate, setInstallationDate] = useState("");
   const [installationTime, setInstallationTime] = useState("");
   const [installationAssignee, setInstallationAssignee] = useState<ScheduleAssignee>("");
-  const [pmNotesDraft, setPmNotesDraft] = useState("");
-  const [pmNotesBaseUpdatedAt, setPmNotesBaseUpdatedAt] = useState<string | null>(null);
-  const [pmNotesError, setPmNotesError] = useState("");
-  const [pmNotesSaved, setPmNotesSaved] = useState(false);
-  const [pmNotesSaving, setPmNotesSaving] = useState(false);
-  const [pmNotesConflict, setPmNotesConflict] = useState<PmNotesConflict | null>(null);
   const [workflowConfirmation, setWorkflowConfirmation] = useState<WorkflowConfirmation | null>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const busyRef = useRef(false);
-  const pmNotesDirtyRef = useRef(false);
   const loadRequestRef = useRef(0);
   const projectsRef = useRef<PaymentTrackProject[]>([]);
 
@@ -519,10 +505,6 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
   useEffect(() => {
     busyRef.current = busy;
   }, [busy]);
-
-  useEffect(() => {
-    pmNotesDirtyRef.current = Boolean(selected && pmNotesDraft !== selected.pmNotes);
-  }, [pmNotesDraft, selected]);
 
   const load = useCallback(async (quiet = false) => {
     const requestId = ++loadRequestRef.current;
@@ -592,7 +574,6 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
         }
         setShowAdd(false);
         setShowAdminLogin(false);
-        if (pmNotesDirtyRef.current && !window.confirm(DISCARD_PM_NOTES_MESSAGE)) return;
         setSelectedId(null);
         return;
       }
@@ -644,7 +625,6 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
       project.customer.phone,
       project.customer.email,
       project.specialist.name,
-      project.pmNotes,
       ...project.items.flatMap((item) => [item.model, item.description]),
     ].join(" ").toLocaleLowerCase("en-AU").includes(term));
   }, [projects, query]);
@@ -682,12 +662,6 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
     setInstallationDate(project.installationScheduledFor || "");
     setInstallationTime(project.installationScheduledTime || "");
     setInstallationAssignee(project.installationAssignee || "");
-    setPmNotesDraft(project.pmNotes || "");
-    setPmNotesBaseUpdatedAt(project.pmNotesUpdatedAt || null);
-    setPmNotesError("");
-    setPmNotesSaved(false);
-    setPmNotesConflict(null);
-    pmNotesDirtyRef.current = false;
     setError("");
     setRole(authenticatedRole);
     setSelectedId(project.id);
@@ -811,7 +785,6 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
 
   const uploadProof = async (kind: ProofKind) => {
     if (!selected || !proofFile) return;
-    if (pmNotesDirtyRef.current && !window.confirm(DISCARD_PM_NOTES_MESSAGE)) return;
     if (!PROOF_TYPES.has(proofFile.type) || proofFile.size > MAX_PROOF_SIZE) {
       setError("Choose a PDF, JPG, PNG or WebP proof up to 10 MB.");
       return;
@@ -843,7 +816,6 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
     successMessage = "Project updated.",
   ) => {
     if (!selected) return;
-    if (pmNotesDirtyRef.current && !window.confirm(DISCARD_PM_NOTES_MESSAGE)) return;
     setBusy(true);
     setError("");
     try {
@@ -873,71 +845,6 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
     }
   };
 
-  const savePmNotes = async () => {
-    if (!selected || role !== "pm" || pmNotesDraft.length > 5_000) return;
-    setBusy(true);
-    setPmNotesSaving(true);
-    setPmNotesError("");
-    setPmNotesSaved(false);
-    try {
-      const response = await fetch(`/api/payment-track/${selected.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "update_pm_notes",
-          actorRole: "pm",
-          notes: pmNotesDraft,
-          expectedPmNotesUpdatedAt: pmNotesBaseUpdatedAt,
-        }),
-      });
-      const result = await readJsonResponse<PaymentTrackMutationResponse & { error?: string }>(response);
-      if (!response.ok) {
-        const message = apiError(result, response.status === 409
-          ? "These PM notes were updated elsewhere. Review the latest version before trying again."
-          : "Unable to save PM notes.");
-        if (response.status === 409) {
-          let latestLoaded = false;
-          try {
-            const latestResponse = await fetch("/api/payment-track", { cache: "no-store" });
-            const latestBody = await readJsonResponse<PaymentTrackListResponse & { error?: string }>(latestResponse);
-            if (latestResponse.ok) {
-              const latest = latestBody.data.find((project) => project.id === selected.id);
-              if (latest) {
-                updateProject(latest);
-                setPmNotesBaseUpdatedAt(latest.pmNotesUpdatedAt);
-                setPmNotesConflict({
-                  notes: latest.pmNotes,
-                  updatedAt: latest.pmNotesUpdatedAt,
-                  updatedBy: latest.pmNotesUpdatedBy,
-                });
-                pmNotesDirtyRef.current = pmNotesDraft !== latest.pmNotes;
-                latestLoaded = true;
-              }
-            }
-          } catch {
-            // Keep the local draft even when the latest saved version cannot be reloaded.
-          }
-          setPmNotesError(latestLoaded
-            ? `${message} Your unsaved text is still here; compare it with the latest saved version below, then save again.`
-            : `${message} Your unsaved text is still here, but the latest saved version could not be loaded.`);
-          return;
-        }
-        throw new Error(message);
-      }
-      updateProject(result.data);
-      setPmNotesDraft(result.data.pmNotes);
-      setPmNotesBaseUpdatedAt(result.data.pmNotesUpdatedAt);
-      setPmNotesConflict(null);
-      pmNotesDirtyRef.current = false;
-      setPmNotesSaved(true);
-    } catch (notesError) {
-      setPmNotesError(notesError instanceof Error ? notesError.message : "Unable to save PM notes.");
-    } finally {
-      setPmNotesSaving(false);
-      setBusy(false);
-    }
-  };
-
   const deleteProject = async () => {
     if (!selected || busy || authenticatedRole !== "admin") return;
     const project = selected;
@@ -951,10 +858,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
       const nextProjects = projectsRef.current.filter((item) => item.id !== project.id);
       projectsRef.current = nextProjects;
       setProjects(nextProjects);
-      pmNotesDirtyRef.current = false;
       setSelectedId(null);
-      setPmNotesError("");
-      setPmNotesConflict(null);
       setNotice(`${project.reference} deleted.`);
       announcePaymentTrackUpdate(nextProjects);
     } catch (deleteError) {
@@ -981,11 +885,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
   };
 
   const closeProjectDetail = () => {
-    if (pmNotesDirtyRef.current && !window.confirm(DISCARD_PM_NOTES_MESSAGE)) return;
-    pmNotesDirtyRef.current = false;
     setSelectedId(null);
-    setPmNotesError("");
-    setPmNotesConflict(null);
   };
 
   const closeFromBackdrop = (event: ReactMouseEvent<HTMLDivElement>) => {
@@ -1925,83 +1825,6 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                   <strong>{formatMoney(selected.outstandingCents)}</strong>
                   {selected.overpaymentCents > 0 ? <small>{formatMoney(selected.overpaymentCents)} overpaid</small> : null}
                 </div>
-              </section>
-
-              <section className={styles.pmNotesPanel} aria-labelledby={`pm-notes-title-${selected.id}`}>
-                <header className={styles.pmNotesHeader}>
-                  <span className={styles.pmNotesIcon}><FileText size={18} /></span>
-                  <div>
-                    <h3 id={`pm-notes-title-${selected.id}`}>PM Notes</h3>
-                    <p>Delivery, installation, grid-connection and project handover details visible to every role.</p>
-                  </div>
-                  <small>
-                    {selected.pmNotesUpdatedAt
-                      ? `Last saved ${formatDate(selected.pmNotesUpdatedAt, true)} by ${selected.pmNotesUpdatedBy || "Project Manager"}`
-                      : "Not saved yet"}
-                  </small>
-                </header>
-
-                {role === "pm" ? (
-                  <div className={styles.pmNotesEditor}>
-                    <label htmlFor={`pm-notes-${selected.id}`}>Project Manager notes</label>
-                    <textarea
-                      id={`pm-notes-${selected.id}`}
-                      value={pmNotesDraft}
-                      maxLength={5_000}
-                      rows={5}
-                      aria-describedby={`pm-notes-hint-${selected.id} pm-notes-count-${selected.id}`}
-                      placeholder="Add delivery access, installation, grid-connection or handover details…"
-                      disabled={busy}
-                      onChange={(event) => {
-                        setPmNotesDraft(event.target.value);
-                        pmNotesDirtyRef.current = event.target.value !== selected.pmNotes;
-                        setPmNotesSaved(false);
-                        setPmNotesError("");
-                      }}
-                    />
-                    <div className={styles.pmNotesFooter}>
-                      <div>
-                        <span id={`pm-notes-hint-${selected.id}`}>Leave this empty and save to clear the notes.</span>
-                        <span id={`pm-notes-count-${selected.id}`}>{pmNotesDraft.length.toLocaleString("en-AU")} / 5,000 characters</span>
-                      </div>
-                      <button
-                        className={styles.primaryButton}
-                        type="button"
-                        disabled={busy || pmNotesDraft === selected.pmNotes || pmNotesDraft.length > 5_000}
-                        onClick={() => void savePmNotes()}
-                      >
-                        {pmNotesSaving ? <LoaderCircle className={styles.spinning} size={16} /> : <FileCheck2 size={16} />}
-                        {pmNotesSaving ? "Saving Notes…" : "Save Notes"}
-                      </button>
-                    </div>
-                    <div className={styles.pmNotesFeedback} aria-live="polite">
-                      {pmNotesSaved ? <span className={styles.pmNotesSuccess}><CheckCircle2 size={15} /> PM notes saved successfully.</span> : null}
-                      {pmNotesError ? <span className={styles.pmNotesError} role="alert"><AlertCircle size={15} /> {pmNotesError}</span> : null}
-                    </div>
-                    {pmNotesConflict ? (
-                      <aside className={styles.pmNotesConflict} aria-label="Latest saved PM notes">
-                        <div>
-                          <strong>Latest saved version</strong>
-                          <small>
-                            {pmNotesConflict.updatedAt
-                              ? `${formatDate(pmNotesConflict.updatedAt, true)} by ${pmNotesConflict.updatedBy || "Project Manager"}`
-                              : "No previous saved version"}
-                          </small>
-                        </div>
-                        <p>{pmNotesConflict.notes || "The latest saved version is empty."}</p>
-                      </aside>
-                    ) : null}
-                  </div>
-                ) : (
-                  <div className={styles.pmNotesReadOnly}>
-                    <p className={selected.pmNotes ? "" : styles.pmNotesEmpty}>
-                      {selected.pmNotes || "No PM notes have been added yet."}
-                    </p>
-                    <button className={styles.secondaryButton} type="button" disabled={busy} onClick={() => selectRole("pm")}>
-                      Continue as Project Manager <ChevronRight size={15} />
-                    </button>
-                  </div>
-                )}
               </section>
 
               {renderActionPanel(selected)}
