@@ -13,6 +13,8 @@ import {
   ExternalLink,
   FileCheck2,
   FileText,
+  LayoutGrid,
+  List as ListIcon,
   LoaderCircle,
   MapPin,
   PackageCheck,
@@ -60,6 +62,8 @@ import styles from "./payment-track-workspace.module.css";
 
 type AddMode = "agreement" | "manual";
 type ProofKind = "deposit";
+type ProjectTrackViewMode = "board" | "list";
+type ProjectTrackStageFilter = "all" | PaymentTrackStage;
 type WorkflowConfirmation = {
   action: Extract<
     PaymentTrackAction,
@@ -488,6 +492,8 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
   const [installationTime, setInstallationTime] = useState("");
   const [installationAssignee, setInstallationAssignee] = useState<ScheduleAssignee>("");
   const [workflowConfirmation, setWorkflowConfirmation] = useState<WorkflowConfirmation | null>(null);
+  const [viewMode, setViewMode] = useState<ProjectTrackViewMode>("board");
+  const [listStage, setListStage] = useState<ProjectTrackStageFilter>("all");
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const busyRef = useRef(false);
   const loadRequestRef = useRef(0);
@@ -628,6 +634,22 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
       ...project.items.flatMap((item) => [item.model, item.description]),
     ].join(" ").toLocaleLowerCase("en-AU").includes(term));
   }, [projects, query]);
+
+  const listProjects = useMemo(() => {
+    const stageRank = new Map(STAGES.map((stage, index) => [stage.id, index]));
+    return filtered
+      .filter((project) => listStage === "all" || project.stage === listStage)
+      .slice()
+      .sort((left, right) => {
+        if (listStage === "all") {
+          const stageOrder = (stageRank.get(left.stage) ?? 0) - (stageRank.get(right.stage) ?? 0);
+          if (stageOrder) return stageOrder;
+        }
+        if (left.stage === "done" && right.stage === "done") return compareDoneProjects(left, right);
+        return right.updatedAt.localeCompare(left.updatedAt)
+          || left.reference.localeCompare(right.reference, "en-AU", { numeric: true });
+      });
+  }, [filtered, listStage]);
 
   const updateProject = (project: PaymentTrackProject) => {
     const current = projectsRef.current;
@@ -1511,10 +1533,36 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
       <div className={styles.boardToolbar}>
         <label className={styles.searchField}>
           <Search size={16} />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search customer, proposal, specialist or item…" />
+          <input
+            aria-label="Search Project Track projects"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search customer, proposal, specialist or item…"
+          />
         </label>
         <div className={styles.toolbarMeta}>
-          <span>{filtered.length} {filtered.length === 1 ? "project" : "projects"}</span>
+          <div className={styles.viewToggle} role="group" aria-label="Project Track view">
+            <button
+              type="button"
+              className={viewMode === "board" ? styles.activeView : ""}
+              aria-pressed={viewMode === "board"}
+              onClick={() => setViewMode("board")}
+            >
+              <LayoutGrid size={15} /> Board
+            </button>
+            <button
+              type="button"
+              className={viewMode === "list" ? styles.activeView : ""}
+              aria-pressed={viewMode === "list"}
+              onClick={() => setViewMode("list")}
+            >
+              <ListIcon size={16} /> List
+            </button>
+          </div>
+          <span aria-live="polite" aria-atomic="true">
+            {viewMode === "list" ? listProjects.length : filtered.length}{" "}
+            {(viewMode === "list" ? listProjects.length : filtered.length) === 1 ? "project" : "projects"}
+          </span>
           <button type="button" disabled={refreshing} onClick={() => void load(true)}>
             <RefreshCw className={refreshing ? styles.spinning : ""} size={15} /> Refresh
           </button>
@@ -1523,6 +1571,90 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
 
       {loading ? (
         <div className={styles.loadingState}><LoaderCircle className={styles.spinning} size={20} /> Loading projects…</div>
+      ) : viewMode === "list" ? (
+        <section className={styles.listView} aria-label="Project Track list view">
+          <nav className={styles.listStageTabs} aria-label="Filter projects by stage">
+            <button
+              type="button"
+              className={listStage === "all" ? styles.activeListStage : ""}
+              aria-pressed={listStage === "all"}
+              onClick={() => setListStage("all")}
+            >
+              <span>All</span><b>{filtered.length}</b>
+            </button>
+            {STAGES.map((stage) => {
+              const count = filtered.filter((project) => project.stage === stage.id).length;
+              return (
+                <button
+                  key={stage.id}
+                  type="button"
+                  className={`${styles[stage.tone]} ${listStage === stage.id ? styles.activeListStage : ""}`}
+                  aria-pressed={listStage === stage.id}
+                  onClick={() => setListStage(stage.id)}
+                >
+                  <span>{stage.title}</span><b>{count}</b>
+                </button>
+              );
+            })}
+          </nav>
+
+          <div className={styles.listHeader} aria-hidden="true">
+            <span>Project</span><span>Stage</span><span>Amount due</span><span>Next owner</span><span>Next action</span><span />
+          </div>
+          <div className={styles.projectList}>
+            {listProjects.map((project) => {
+              const status = projectStatus(project);
+              const nextStep = projectNextStep(project, role);
+              const canContinue = nextStep.roles.includes(role);
+              const stage = STAGES.find((item) => item.id === project.stage);
+              const isSettledDone = project.stage === "done" && project.outstandingCents === 0;
+              return (
+                <button
+                  key={project.id}
+                  type="button"
+                  className={`${styles.projectListRow} ${isSettledDone ? styles.settledListRow : ""}`}
+                  onClick={(event) => openProject(project, event.currentTarget)}
+                  aria-label={`Open ${customerName(project)}, ${stageLabel(project.stage)}, ${formatMoney(project.outstandingCents)} due, next owner ${status.owner}, next action ${nextStep.label}`}
+                >
+                  <span className={styles.listProjectIdentity}>
+                    <strong>{customerName(project)}</strong>
+                    <small>{project.reference} · Proposal {project.quoteNumber}</small>
+                    <small><MapPin size={12} /> {customerAddress(project)}</small>
+                  </span>
+                  <span className={`${styles.listStageBadge} ${styles[stage?.tone || "blue"]}`}>
+                    {stageLabel(project.stage)}
+                  </span>
+                  <span className={styles.listAmount}>
+                    <strong>{formatMoney(project.outstandingCents)}</strong>
+                    {project.overpaymentCents > 0 ? <small>{formatMoney(project.overpaymentCents)} overpaid</small> : null}
+                  </span>
+                  <span className={styles.listOwner}>
+                    <strong>{status.owner}</strong>
+                    <small>Specialist: {project.specialist.name || "—"}</small>
+                  </span>
+                  <span className={styles.listNextAction}>
+                    <strong className={canContinue ? styles.listActionReady : ""}>{nextStep.label}</strong>
+                    <small>{status.label}</small>
+                  </span>
+                  <ChevronRight className={styles.listOpenIcon} size={17} />
+                </button>
+              );
+            })}
+            {!listProjects.length ? (
+              <div className={styles.emptyList}>
+                <FileText size={20} />
+                <strong>No projects in this view</strong>
+                <span>
+                  {query
+                    ? "No projects match this search and stage."
+                    : listStage === "all"
+                      ? "No projects have been added yet."
+                      : `No projects are currently in ${stageLabel(listStage)}.`}
+                </span>
+              </div>
+            ) : null}
+          </div>
+        </section>
       ) : (
         <div className={styles.boardScroller} tabIndex={0} aria-label="Payment workflow board">
           <div className={styles.board}>

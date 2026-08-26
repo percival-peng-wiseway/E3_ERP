@@ -224,6 +224,11 @@
 
 .toolbarMeta button:disabled { opacity: .55; cursor: wait; }
 
+.toolbarMeta .viewToggle { display: inline-flex; padding: 3px; gap: 2px; background: #eef1f3; border-radius: 7px; }
+.toolbarMeta .viewToggle button { height: 30px; padding: 0 9px; color: #71808a; background: transparent; border: 0; border-radius: 5px; box-shadow: none; font-size: 12px; }
+.toolbarMeta .viewToggle button:hover { color: #4656bf; border-color: transparent; }
+.toolbarMeta .viewToggle button.activeView { color: #4656bf; background: #fff; box-shadow: 0 1px 3px rgba(35, 48, 58, .12); }
+
 .loadingState {
   display: flex;
   min-height: 480px;
@@ -235,6 +240,107 @@
   border: 1px solid var(--border);
   border-radius: 9px;
 }
+
+.listView { min-width: 0; }
+
+.listStageTabs {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  padding: 7px;
+  gap: 5px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 9px 9px 0 0;
+}
+
+.listStageTabs button {
+  display: inline-flex;
+  min-width: 0;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  flex: 1 1 auto;
+  gap: 7px;
+  color: #66747e;
+  background: #f8fafb;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 680;
+  cursor: pointer;
+}
+
+.listStageTabs button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.listStageTabs button b { display: grid; min-width: 21px; height: 21px; padding: 0 5px; flex: 0 0 auto; place-items: center; color: var(--tone, #64717b); background: var(--tone-bg, #edf1f3); border-radius: 999px; font-size: 11px; }
+.listStageTabs button:hover { color: #4656bf; background: #f3f5ff; }
+.listStageTabs button.activeListStage { color: var(--tone, #4656bf); background: var(--tone-bg, #eef0ff); border-color: var(--tone-border, #d4d9f7); box-shadow: inset 0 -2px var(--tone, #5868d8); }
+
+.listHeader,
+.projectListRow {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(245px, 1.35fr) minmax(145px, .7fr) minmax(120px, .58fr) minmax(140px, .62fr) minmax(210px, 1fr) 24px;
+  align-items: center;
+  gap: 14px;
+}
+
+.listHeader { min-height: 39px; padding: 0 15px; color: #89949c; background: #f6f8f9; border: 1px solid var(--border); border-top: 0; font-size: 11px; font-weight: 750; letter-spacing: .045em; text-transform: uppercase; }
+.projectList { overflow: hidden; background: #fff; border: 1px solid var(--border); border-top: 0; border-radius: 0 0 9px 9px; }
+
+.projectListRow {
+  position: relative;
+  width: 100%;
+  min-height: 76px;
+  padding: 11px 15px;
+  color: #46535d;
+  background: #fff;
+  border: 0;
+  border-bottom: 1px solid #edf0f2;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 130ms ease, box-shadow 130ms ease;
+}
+
+.projectListRow:last-child { border-bottom: 0; }
+.projectListRow:hover { z-index: 1; background: #f8f9ff; box-shadow: inset 3px 0 #6676df; }
+.projectListRow:focus-visible { z-index: 2; outline: 2px solid #6676df; outline-offset: -2px; }
+.settledListRow { background: #f0f6f3; }
+.settledListRow:hover { background: #e9f3ee; box-shadow: inset 3px 0 #4f9b7c; }
+
+.listProjectIdentity,
+.listAmount,
+.listOwner,
+.listNextAction { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.listProjectIdentity strong { overflow: hidden; color: #28343d; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.listProjectIdentity small { display: flex; min-width: 0; align-items: center; gap: 4px; overflow: hidden; color: #65727c; font-size: 11px; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
+.listProjectIdentity small:first-of-type { color: #6975ce; font-weight: 680; }
+.listProjectIdentity svg { flex: 0 0 auto; }
+
+.listStageBadge { display: inline-flex; width: fit-content; max-width: 100%; min-height: 27px; align-items: center; padding: 0 8px; overflow: hidden; color: var(--tone); background: var(--tone-bg); border: 1px solid var(--tone-border); border-radius: 6px; font-size: 11px; font-weight: 730; text-overflow: ellipsis; white-space: nowrap; }
+.listStageTabs .amber,
+.listStageBadge.amber { --tone: #855300; }
+.listStageTabs .blue,
+.listStageBadge.blue { --tone: #245f91; }
+.listStageTabs .cyan,
+.listStageBadge.cyan { --tone: #176576; }
+.listStageTabs .teal,
+.listStageBadge.teal { --tone: #176b59; }
+.listAmount strong { color: #26313a; font-size: 15px; }
+.listAmount small { color: #9b5e22; font-size: 11px; }
+.listOwner strong,
+.listNextAction strong { overflow: hidden; color: #46535d; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.listOwner small,
+.listNextAction small { overflow: hidden; color: #65727c; font-size: 11px; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
+.listNextAction strong.listActionReady { color: #4c5dcc; }
+.listOpenIcon { color: #9aa4ab; }
+
+.emptyList { display: flex; min-height: 220px; align-items: center; justify-content: center; padding: 30px; flex-direction: column; gap: 6px; color: #8d989f; text-align: center; }
+.emptyList strong { color: #5f6c75; font-size: 13px; }
+.emptyList span { font-size: 12px; }
 
 .boardScroller {
   width: 100%;
@@ -1211,6 +1317,17 @@
 @keyframes fadeIn { from { opacity: 0; } }
 @keyframes modalIn { from { opacity: 0; transform: translateY(7px) scale(.992); } }
 
+@media (max-width: 1280px) {
+  .listHeader { display: none; }
+  .projectListRow { grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 9px 16px; }
+  .listProjectIdentity { grid-column: 1; grid-row: 1 / span 2; }
+  .listStageBadge { grid-column: 2; grid-row: 1; justify-self: end; }
+  .listAmount { grid-column: 2; grid-row: 2; align-items: flex-end; }
+  .listOwner { grid-column: 1; grid-row: 3; }
+  .listNextAction { grid-column: 1 / -1; grid-row: 4; padding: 8px 30px 8px 10px; background: #f7f8fa; border-radius: 6px; }
+  .listOpenIcon { position: absolute; right: 14px; bottom: 16px; }
+}
+
 @media (max-width: 1120px) {
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .metrics article:nth-child(2) { border-right: 0; }
@@ -1233,8 +1350,15 @@
   .metrics article { border-right: 0; border-bottom: 1px solid #edf0f2; }
   .metrics article:last-child { border-bottom: 0; }
   .boardToolbar { align-items: stretch; flex-direction: column; }
+  .toolbarMeta { align-items: stretch; flex-wrap: wrap; justify-content: space-between; }
+  .toolbarMeta .viewToggle { order: -1; width: 100%; }
+  .toolbarMeta .viewToggle button { flex: 1; }
+  .listStageTabs { align-items: stretch; flex-wrap: wrap; }
+  .listStageTabs button { min-width: calc(50% - 4px); flex: 1 1 calc(50% - 4px); }
+  .projectListRow { min-height: 0; padding: 13px; }
+  .listProjectIdentity { grid-row: 1; }
+  .listOwner { grid-column: 1 / -1; grid-row: 3; padding-top: 7px; border-top: 1px solid #edf0f2; }
   .searchField { width: 100%; }
-  .toolbarMeta { justify-content: space-between; }
   .backdrop { align-items: end; padding: 10px 0 0; }
   .modal { width: 100%; max-height: 94vh; border-radius: 13px 13px 0 0; }
   .formGrid,
