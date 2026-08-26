@@ -183,6 +183,8 @@ type ExtractedPdfText = {
   semanticText: string;
 };
 
+const MAX_PROPOSAL_PAGES = 40;
+
 async function extractPdfText(bytes: Uint8Array): Promise<ExtractedPdfText> {
   const { getDocument } = await loadPdfRuntime();
   const loadingTask = getDocument({
@@ -196,7 +198,7 @@ async function extractPdfText(bytes: Uint8Array): Promise<ExtractedPdfText> {
   let accumulatedCharacters = 0;
 
   try {
-    if (document.numPages < 1 || document.numPages > 20) {
+    if (document.numPages < 1 || document.numPages > MAX_PROPOSAL_PAGES) {
       throw new Error("Agreement page count is outside the supported range");
     }
     for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
@@ -251,6 +253,16 @@ function captured(text: string, expression: RegExp) {
   return match?.[1]?.replace(/\s+/g, " ").trim() || "";
 }
 
+function capturedLast(text: string, expression: RegExp) {
+  const flags = expression.flags.includes("g") ? expression.flags : `${expression.flags}g`;
+  const matches = text.matchAll(new RegExp(expression.source, flags));
+  let value = "";
+  for (const match of matches) {
+    if (match[1]) value = match[1].replace(/\s+/g, " ").trim();
+  }
+  return value;
+}
+
 function amountToCents(value: string) {
   const normalized = value.replace(/[$,\s]/g, "");
   if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) return null;
@@ -271,6 +283,102 @@ function splitPersonName(value: string) {
   return {
     firstName: parts.shift() || "",
     lastName: parts.join(" "),
+  };
+}
+
+type GreenSketchPartyDetails = {
+  customerName: string;
+  customerEmail: string;
+  customerPhone: string;
+  specialistName: string;
+  specialistPhone: string;
+  address: ReturnType<typeof parseAustralianAddress>;
+};
+
+function parseAustralianAddress(value: string) {
+  const match = /^(.*?),\s*([^,]+?)\s+(ACT|NSW|NT|QLD|SA|TAS|VIC|WA)\s+(\d{4})(?:,\s*Australia)?$/i.exec(value.trim());
+  if (!match) return null;
+  return {
+    addressLine1: match[1].trim(),
+    suburb: match[2].replace(/\s+/g, " ").trim(),
+    state: match[3].toUpperCase(),
+    postcode: match[4],
+  };
+}
+
+function greenSketchPartyDetails(layoutText: string): GreenSketchPartyDetails | null {
+  const coverLines = (layoutText.split("\f", 1)[0] || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  let headingIndex = -1;
+  for (let index = 0; index < coverLines.length; index += 1) {
+    if (/^Prepared\s+for\s+(?:Prepared\s+)?By$/i.test(coverLines[index])) headingIndex = index;
+  }
+  if (headingIndex < 0) return null;
+
+  const nextHeadingOffset = coverLines
+    .slice(headingIndex + 1)
+    .findIndex((line) => /^Prepared\s+for\s+(?:Prepared\s+)?By$/i.test(line));
+  const quoteOffset = coverLines
+    .slice(headingIndex + 1)
+    .findIndex((line) => /^(?:Quote\s+No\.?|Quotation)\b/i.test(line));
+  const candidateEnds = [
+    nextHeadingOffset >= 0 ? headingIndex + 1 + nextHeadingOffset : -1,
+    quoteOffset >= 0 ? headingIndex + 1 + quoteOffset : -1,
+    Math.min(coverLines.length, headingIndex + 20),
+  ].filter((value) => value > headingIndex);
+  const blockEnd = Math.min(...candidateEnds);
+
+  let emailIndex = -1;
+  for (let index = headingIndex + 1; index < blockEnd; index += 1) {
+    if ((coverLines[index].match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi)?.length || 0) >= 2) {
+      emailIndex = index;
+    }
+  }
+  if (emailIndex < 0) return null;
+
+  const emails = coverLines[emailIndex].match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || [];
+  let specialistEmail = emails.at(-1) || "";
+  for (let index = emails.length - 1; index >= 0; index -= 1) {
+    if (/@e3energy\.com\.au$/i.test(emails[index])) {
+      specialistEmail = emails[index];
+      break;
+    }
+  }
+  const customerEmail = emails.find((email) => email.toLowerCase() !== specialistEmail.toLowerCase()) || emails[0] || "";
+  const namesLine = coverLines[emailIndex - 1] || "";
+  const specialistFirstName = specialistEmail.split("@", 1)[0]?.split(/[+._-]/, 1)[0] || "";
+  let specialistStart = -1;
+  if (specialistFirstName) {
+    const nameExpression = new RegExp(
+      `\\b${specialistFirstName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
+      "gi",
+    );
+    for (const match of namesLine.matchAll(nameExpression)) specialistStart = match.index;
+  }
+  if (specialistStart <= 0) return null;
+
+  const phoneExpression = /(?:\+?61|0)[\s-]?\(?[23478]\)?(?:[\s-]*\d){8}/g;
+  let phoneIndex = -1;
+  for (let index = emailIndex + 1; index < blockEnd; index += 1) {
+    if ((coverLines[index].match(phoneExpression)?.length || 0) >= 2) phoneIndex = index;
+  }
+  const phones = phoneIndex >= 0
+    ? coverLines[phoneIndex].match(phoneExpression) || []
+    : [];
+  const address = coverLines
+    .slice(Math.max(phoneIndex + 1, emailIndex + 1), blockEnd)
+    .map(parseAustralianAddress)
+    .find((value) => value !== null) || null;
+
+  return {
+    customerName: namesLine.slice(0, specialistStart).trim(),
+    customerEmail,
+    customerPhone: phones[0] || "",
+    specialistName: namesLine.slice(specialistStart).trim(),
+    specialistPhone: phones[1] || "",
+    address,
   };
 }
 
@@ -343,8 +451,50 @@ function between(text: string, start: RegExp, end: RegExp) {
   return endMatch ? source.slice(0, endMatch.index) : source;
 }
 
+type GreenQuotationBlock = {
+  itemText: string;
+  priceText: string;
+};
+
+const greenSystemTotalExpression = /\bSystem\s+Total\s*\((?:incl\.?|including)\s*GST\)\s*\$?\s*[\d,]+(?:\.\d{1,2})?/i;
+
+function greenQuotationBlock(flatText: string): GreenQuotationBlock | null {
+  const quotationMatches = Array.from(flatText.matchAll(/\bQuotation\b/gi));
+  for (let index = quotationMatches.length - 1; index >= 0; index -= 1) {
+    const quotation = quotationMatches[index];
+    const quotationEnd = (quotation.index ?? 0) + quotation[0].length;
+    const source = flatText.slice(quotationEnd);
+    const total = greenSystemTotalExpression.exec(source);
+    if (!total || total.index > 20_000) continue;
+    const nextQuotation = source.search(/\bQuotation\b/i);
+    if (nextQuotation >= 0 && nextQuotation < total.index) continue;
+    return {
+      itemText: source.slice(0, total.index).trim(),
+      priceText: source.slice(total.index).trim(),
+    };
+  }
+  return null;
+}
+
 export function assessProposalSolarRebateRequirement(sourceText: string): boolean | null {
   const flatText = sourceText.replace(/\s+/g, " ").trim();
+  const greenQuotation = greenQuotationBlock(flatText);
+  if (greenQuotation) {
+    const deductions = /\bDeductions\b/i.exec(greenQuotation.priceText);
+    const finalPrice = /\bFinal\s+Price\s*\((?:incl\.?|including)\s*GST\)\s*\$?\s*[\d,]+(?:\.\d{1,2})?/i.exec(
+      greenQuotation.priceText,
+    );
+    if (!deductions || !finalPrice || finalPrice.index <= deductions.index) return null;
+    const deductionText = greenQuotation.priceText.slice(
+      deductions.index + deductions[0].length,
+      finalPrice.index,
+    );
+    if (!/\bSolar\s+Rebate\b/i.test(deductionText)) return false;
+    return /\bSolar\s+Rebate\b(?=[\s:$-]*\$?\s*-?[\d,]+(?:\.\d{1,2})?)/i.test(deductionText)
+      ? true
+      : null;
+  }
+
   const systemQuoteIndex = flatText.search(/\bSystem\s+Quote\b/i);
   if (systemQuoteIndex < 0) return null;
   const quoteText = flatText.slice(systemQuoteIndex);
@@ -364,7 +514,70 @@ export async function paymentAgreementRequiresSolarRebatePdf(bytes: Uint8Array) 
   return assessProposalSolarRebateRequirement(extractedText.layoutText);
 }
 
-function extractItems(flatText: string) {
+type ExtractedItems = {
+  items: Array<Omit<PaymentTrackItem, "id">>;
+  unparsedGreenCoreCategories: string[];
+};
+
+const greenRowMarkerExpression = /\b(?:Solar\s+Panels?|Inverter|Battery)\s*:|\b(?:Sub[\s-]*switchboard|AC\s+Cable\s+Run|Installation\s+Cost|Delivery\s+Cost)\b(?=\s*(?::|x\b))/i;
+
+function greenItemCapacity(category: string, name: string) {
+  const unit = category === "Solar Panel" ? "W" : category === "Solar Inverter" ? "kW" : "kWh";
+  const match = new RegExp(`\\b(\\d+(?:\\.\\d+)?)\\s*${unit}\\b`, "i").exec(name);
+  return match ? `${match[1]}${unit}` : "";
+}
+
+function extractGreenItems(quoteBlock: string): ExtractedItems {
+  const items: Array<Omit<PaymentTrackItem, "id">> = [];
+  const unparsed = new Set<string>();
+  const coreMatches = Array.from(quoteBlock.matchAll(/\b(Solar\s+Panels?|Inverter|Battery)\s*:/gi));
+
+  for (const match of coreMatches) {
+    const label = match[1];
+    const category = /^Solar\s+Panels?$/i.test(label)
+      ? "Solar Panel"
+      : /^Inverter$/i.test(label)
+        ? "Solar Inverter"
+        : "Battery";
+    const rowStart = (match.index ?? 0) + match[0].length;
+    const remaining = quoteBlock.slice(rowStart);
+    const nextMarker = greenRowMarkerExpression.exec(remaining);
+    const rowText = (nextMarker ? remaining.slice(0, nextMarker.index) : remaining).trim();
+    const row = /^(.+?)\s+x\s*(\d{1,3})\b/i.exec(rowText);
+    const name = row?.[1]?.replace(/\s+/g, " ").replace(/^[\s:–—-]+|[\s:–—-]+$/g, "").trim() || "";
+    const quantity = row ? Number(row[2]) : 0;
+    if (!name || !Number.isSafeInteger(quantity) || quantity < 1) {
+      unparsed.add(category);
+      continue;
+    }
+    items.push({
+      category,
+      description: name,
+      model: name,
+      capacity: greenItemCapacity(category, name),
+      quantity,
+    });
+  }
+
+  const supportingItems: Array<[RegExp, string, string]> = [
+    [/\bSub[\s-]*switchboard\b(?:\s*:\s*[^x]{1,160}?)?\s+x\s*(\d{1,3})\b/i, "Electrical", "Sub switchboard"],
+    [/\bAC\s+Cable\s+Run\b(?:\s*:\s*[^x]{1,160}?)?\s+x\s*(\d{1,3})\b/i, "Electrical", "AC Cable Run"],
+    [/\bInstallation\s+Cost\b(?:\s*:\s*[^x]{1,160}?)?\s+x\s*(\d{1,3})\b/i, "Installation", "Installation Cost"],
+    [/\bDelivery\s+Cost\b(?:\s*:\s*[^x]{1,160}?)?\s+x\s*(\d{1,3})\b/i, "Delivery", "Delivery Cost"],
+  ];
+  for (const [expression, category, description] of supportingItems) {
+    const match = expression.exec(quoteBlock);
+    const quantity = match ? Number(match[1]) : 0;
+    if (Number.isSafeInteger(quantity) && quantity > 0) {
+      items.push({ category, description, model: "", capacity: "", quantity });
+    }
+  }
+  return { items, unparsedGreenCoreCategories: [...unparsed] };
+}
+
+function extractItems(flatText: string, greenQuotation: GreenQuotationBlock | null): ExtractedItems {
+  if (greenQuotation) return extractGreenItems(greenQuotation.itemText);
+
   // Proposal documents repeat product names throughout the cover and system
   // summary. When a priced System Quote exists, use that authoritative table
   // so an earlier "Battery Storage System" heading cannot steal the section.
@@ -393,7 +606,7 @@ function extractItems(flatText: string) {
   if (/\bInstallation\b[\s\S]*?\bSystem\s+Price\b/i.test(itemText)) {
     items.push({ category: "Installation", description: "System installation", model: "", quantity: 1, capacity: "" });
   }
-  return items;
+  return { items, unparsedGreenCoreCategories: [] };
 }
 
 export async function parsePaymentAgreementPdf(bytes: Uint8Array): Promise<ParsedPaymentAgreement> {
@@ -410,19 +623,25 @@ export async function parsePaymentAgreementPdf(bytes: Uint8Array): Promise<Parse
   const sourceText = extractedText.layoutText;
   const flatText = sourceText.replace(/\s+/g, " ").trim();
   const semanticText = extractedText.semanticText.replace(/\s+/g, " ").trim();
+  const greenSketchQuotation = greenQuotationBlock(flatText);
+  const greenSketchParties = greenSketchQuotation ? greenSketchPartyDetails(sourceText) : null;
+  const pricingText = greenSketchQuotation?.priceText || flatText;
   const proposalNumber = captured(
     semanticText,
     /Proposal\s*(?:No|Number)\.?\s*:?\s*([A-Z0-9-]{4,})/i,
   );
   const quoteNumber = proposalNumber
-    || captured(flatText, /Quote\s*No\s*:?\s*([A-Z0-9-]{4,})/i);
+    || (greenSketchQuotation
+      ? capturedLast(sourceText.split("\f", 1)[0] || "", /(?:^|\n)\s*Quote\s*No\.?\s*:?\s*([A-Z0-9-]{4,})/im)
+      : captured(flatText, /Quote\s*No\.?\s*:?\s*([A-Z0-9-]{4,})/i));
   const legacySpecialistName = captured(flatText, /(?:Solar\s+)?Specialist\s*:?\s*(.+?)(?=\s+Mobile\s*:)/i);
   const preparedByName = captured(
     semanticText,
     /Prepared\s+by\s*:?\s*(.+?)(?=\s+[+()\d][+()\d\s-]{7,25}\s+[A-Z0-9._%+-]+@)/i,
   );
-  const specialistName = withoutHonorific(legacySpecialistName || preparedByName);
-  const specialistPhone = captured(flatText, /Specialist[\s\S]*?Mobile\s*:?\s*([+()\d][+()\d\s-]{5,25})/i)
+  const specialistName = withoutHonorific(greenSketchParties?.specialistName || legacySpecialistName || preparedByName);
+  const specialistPhone = greenSketchParties?.specialistPhone
+    || captured(flatText, /Specialist[\s\S]*?Mobile\s*:?\s*([+()\d][+()\d\s-]{5,25})/i)
     || captured(
       semanticText,
       /Prepared\s+by\s*:?\s*.+?\s+([+()\d][+()\d\s-]{7,25})(?=\s+[A-Z0-9._%+-]+@)/i,
@@ -433,15 +652,17 @@ export async function parsePaymentAgreementPdf(bytes: Uint8Array): Promise<Parse
     semanticText,
     /Prepared\s+for\s*:?\s*(.+?)(?=\s+[+()\d][+()\d\s-]{7,25}\s+(?:Unit|Suite|Shop|Lot|\d))/i,
   );
-  const proposalCustomerName = splitPersonName(preparedForName);
+  const proposalCustomerName = splitPersonName(greenSketchParties?.customerName || preparedForName);
   const firstName = legacyFirstName || proposalCustomerName.firstName;
   const lastName = legacyLastName || proposalCustomerName.lastName;
-  const customerPhone = captured(flatText, /Contact\s*No\.?\s*:?\s*([+()\d][+()\d\s-]{5,25})(?=\s+Email\s*:)/i)
+  const customerPhone = greenSketchParties?.customerPhone
+    || captured(flatText, /Contact\s*No\.?\s*:?\s*([+()\d][+()\d\s-]{5,25})(?=\s+Email\s*:)/i)
     || captured(
       semanticText,
       /Prepared\s+for\s*:?\s*.+?\s+([+()\d][+()\d\s-]{7,25})(?=\s+(?:Unit|Suite|Shop|Lot|\d))/i,
     );
-  const email = captured(flatText, /Email\s*:?\s*([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/i);
+  const email = greenSketchParties?.customerEmail
+    || captured(flatText, /Email\s*:?\s*([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/i);
 
   const installationBlock = between(flatText, /Installation\s+Address\s*:?/i, /Installation\s+Information/i);
   const legacyAddressLine1 = captured(installationBlock, /Address\s+Line\s+1\s*:?\s*(.+?)(?=\s+Address\s+Line\s+1\s*:)/i)
@@ -451,24 +672,36 @@ export async function parsePaymentAgreementPdf(bytes: Uint8Array): Promise<Parse
   const legacyState = captured(installationBlock, /State\s*:?\s*([A-Z]{2,3})(?=\s+State\s*:)/i)
     || captured(installationBlock, /State\s*:?\s*([A-Z]{2,3})(?=\s+Postcode\s*:)/i);
   const legacyPostcode = captured(installationBlock, /Postcode\s*:?\s*(\d{4})/i);
-  const parsedProposalAddress = proposalAddress(semanticText);
+  const parsedProposalAddress = proposalAddress(semanticText) || greenSketchParties?.address;
   const addressLine1 = legacyAddressLine1 || parsedProposalAddress?.addressLine1 || "";
   const suburb = legacySuburb || parsedProposalAddress?.suburb || "";
   const state = legacyState || parsedProposalAddress?.state || "";
   const postcode = legacyPostcode || parsedProposalAddress?.postcode || "";
-  const balanceText = captured(flatText, /\bBalance\s+Due\b\s*:?\s*\$?\s*([\d,]+(?:\.\d{1,2})?)/i);
-  const depositText = captured(flatText, /\bDeposit\s+Amount\b\s*:?\s*\$?\s*([\d,]+(?:\.\d{1,2})?)/i)
-    || captured(flatText, /\bLess\s+Deposit(?:\s+Payment\s+pending)?\s*\$?\s*([\d,]+(?:\.\d{1,2})?)/i);
+  const balanceText = greenSketchQuotation
+    ? captured(pricingText, /\bFinal\s+Price\s*\((?:incl\.?|including)\s*GST\)\s*\$?\s*([\d,]+(?:\.\d{1,2})?)/i)
+    : captured(pricingText, /\bBalance\s+Due\b\s*:?\s*\$?\s*([\d,]+(?:\.\d{1,2})?)/i);
+  const depositText = greenSketchQuotation
+    ? captured(pricingText, /\bDeposit\b\s*\$\s*([\d,]+(?:\.\d{1,2})?)/i)
+    : captured(pricingText, /\bDeposit\s+Amount\b\s*:?\s*\$?\s*([\d,]+(?:\.\d{1,2})?)/i)
+      || captured(pricingText, /\bLess\s+Deposit(?:\s+Payment\s+pending)?\s*\$?\s*([\d,]+(?:\.\d{1,2})?)/i);
   const balanceDueCents = amountToCents(balanceText);
   const expectedDepositCents = depositText ? amountToCents(depositText) : null;
-  const items = extractItems(flatText);
+  const extractedItems = extractItems(flatText, greenSketchQuotation);
+  const items = extractedItems.items;
 
   const missingFields: string[] = [];
   if (!quoteNumber) missingFields.push("Proposal Number / Quote No");
-  if (!specialistName) missingFields.push("Specialist");
+  if (!specialistName) missingFields.push("Sales representative");
   if (!firstName && !lastName) missingFields.push("customer name");
+  if (greenSketchQuotation && !customerPhone) missingFields.push("customer phone");
+  if (greenSketchQuotation && (!addressLine1 || !suburb || !state || !postcode)) {
+    missingFields.push("installation address");
+  }
   if (balanceDueCents === null) missingFields.push("Balance Due");
   if (!items.length) missingFields.push("items");
+  for (const category of extractedItems.unparsedGreenCoreCategories) {
+    missingFields.push(`${category} item details`);
+  }
   if (missingFields.length) {
     throw new PaymentAgreementParseError(
       `The proposal is missing fields required for Project Track: ${missingFields.join(", ")}.`,

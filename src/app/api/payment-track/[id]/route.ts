@@ -22,6 +22,7 @@ import {
   PAYMENT_TRACK_ACTIONS,
   PAYMENT_TRACK_ROLES,
   PAYMENT_TRACK_SCHEDULE_ASSIGNEES,
+  PAYMENT_TRACK_STAGE_SKIP_REASON_MAX_LENGTH,
   type PaymentTrackAction,
   type PaymentTrackRole,
   type PaymentTrackScheduleAssignee,
@@ -57,6 +58,7 @@ const DELIVERY_SCHEDULE_FIELDS = new Set([
   "deliveryTime",
   "deliveryAssignee",
 ]);
+const SKIP_STAGE_FIELDS = new Set(["action", "actorRole", "actorName", "reason", "expectedUpdatedAt"]);
 
 function paymentTrackTimeIsValid(value: unknown): value is string {
   return typeof value === "string" && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value);
@@ -73,6 +75,21 @@ function hasOnlyInstallationScheduleFields(body: Record<string, unknown>) {
 
 function hasOnlyDeliveryScheduleFields(body: Record<string, unknown>) {
   return Object.keys(body).every((field) => DELIVERY_SCHEDULE_FIELDS.has(field));
+}
+
+function stageSkipReason(value: unknown) {
+  if (typeof value !== "string") return null;
+  const reason = value.trim();
+  if (!reason
+    || reason.length > PAYMENT_TRACK_STAGE_SKIP_REASON_MAX_LENGTH
+    || /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(reason)) return null;
+  return reason;
+}
+
+function paymentTrackUpdatedAtIsValid(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value;
 }
 
 export async function PATCH(
@@ -106,6 +123,31 @@ export async function PATCH(
       && (actorRole !== "admin" || !isAuthorizedActorRequest(request, "admin"))) {
       return paymentTrackError(403, "admin_required", "Only an Administrator can confirm money received.");
     }
+    let reason: string | undefined;
+    let expectedUpdatedAt: string | undefined;
+    if (action === "skip_stage") {
+      if (actorRole !== "admin") {
+        return paymentTrackError(403, "admin_required", "Only an Administrator can skip a Project Track stage.");
+      }
+      const parsedReason = stageSkipReason(body.reason);
+      if (!parsedReason) {
+        return paymentTrackError(
+          400,
+          "invalid_skip_reason",
+          `Provide an Administrator stage override reason of up to ${PAYMENT_TRACK_STAGE_SKIP_REASON_MAX_LENGTH} characters.`,
+        );
+      }
+      if (!Object.keys(body).every((field) => SKIP_STAGE_FIELDS.has(field))
+        || !paymentTrackUpdatedAtIsValid(body.expectedUpdatedAt)) {
+        return paymentTrackError(
+          400,
+          "invalid_skip_request",
+          "Reload the project and submit the exact project version shown in the Administrator override dialog, without extra fields.",
+        );
+      }
+      reason = parsedReason;
+      expectedUpdatedAt = body.expectedUpdatedAt;
+    }
 
     let notes: string | undefined;
     let expectedPmNotesUpdatedAt: string | null | undefined;
@@ -129,6 +171,7 @@ export async function PATCH(
       || action === "confirm_collection"
       || action === "confirm_final_payment"
       || action === "continue_to_stc"
+      || action === "skip_stage"
       || actorRole === "admin";
     if (adminAction && !isPaymentTrackAdmin(request)) {
       return paymentTrackError(401, "admin_required", "Administrator access is required.");
@@ -194,6 +237,8 @@ export async function PATCH(
       installationDate,
       installationTime,
       installationAssignee,
+      reason,
+      expectedUpdatedAt,
       notes,
       expectedPmNotesUpdatedAt,
     });

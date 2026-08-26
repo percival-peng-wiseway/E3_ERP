@@ -367,10 +367,8 @@ function pmOrAdmin(actor: SiteVisitActor) {
 }
 
 function assertSiteVisitActionRole(input: SiteVisitActionInput, actor: SiteVisitActor) {
-  if (input.action === "approve" && actor.role !== "admin") {
-    throw new SiteVisitRepositoryError("Only an Administrator can approve site visits.", 403, "role_forbidden");
-  }
-  if ((input.action === "schedule"
+  if ((input.action === "approve"
+      || input.action === "schedule"
       || input.action === "reopen"
       || input.action === "cancel"
       || input.action === "restore")

@@ -410,7 +410,9 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
   const announcementsAbortRef = useRef<AbortController | null>(null);
   const announcementMutationAbortRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
-  const notificationRole = currentUser.role;
+  const notificationRole: NotificationRole = currentUser.role === "specialist"
+    ? "sales"
+    : currentUser.role;
   const isAdmin = currentUser.role === "admin";
   const agentConversationStorageKey = `${LEGACY_AGENT_CONVERSATION_STORAGE_KEY}:${encodeURIComponent(currentUser.username.toLocaleLowerCase("en-AU"))}`;
 

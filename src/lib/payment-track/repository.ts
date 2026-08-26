@@ -8,7 +8,7 @@ import * as cloudflareStorage from "../server/cloudflare-storage.ts";
 // @ts-expect-error -- the project intentionally does not enable TS emit-time extension imports.
 import { paymentAgreementRequiresSolarRebatePdf } from "./pdf-parser.ts";
 // @ts-expect-error -- explicit extension is required by the focused Node ESM tests.
-import { PAYMENT_TRACK_SCHEDULE_ASSIGNEES } from "./types.ts";
+import * as paymentTrackTypes from "./types.ts";
 import type {
   PaymentTrackAction,
   PaymentTrackCustomer,
@@ -24,6 +24,11 @@ import type {
   PaymentTrackSpecialist,
   PaymentTrackUploadContentType,
 } from "./types";
+
+const {
+  PAYMENT_TRACK_SCHEDULE_ASSIGNEES,
+  PAYMENT_TRACK_STAGE_SKIP_REASON_MAX_LENGTH,
+} = paymentTrackTypes;
 
 const {
   CloudflareDocumentConflictError,
@@ -126,6 +131,8 @@ export type PaymentTrackTransitionInput = {
   installationDate?: string;
   installationTime?: string;
   installationAssignee?: PaymentTrackScheduleAssignee;
+  reason?: string;
+  expectedUpdatedAt?: string;
   notes?: string;
   expectedPmNotesUpdatedAt?: string | null;
 };
@@ -661,8 +668,10 @@ function buildProject(
 }
 
 function assertProposalNumberAvailable(projects: StoredProject[], quoteNumber: string) {
-  if (process.env.PAYMENT_TRACK_ENFORCE_UNIQUE_PROPOSAL !== "true") return;
-  if (projects.some((project) => project.quoteNumber.toLowerCase() === quoteNumber.toLowerCase())) {
+  const normalizedQuoteNumber = quoteNumber.trim().toLocaleLowerCase("en-AU");
+  if (projects.some((project) => (
+    project.quoteNumber.trim().toLocaleLowerCase("en-AU") === normalizedQuoteNumber
+  ))) {
     throw new PaymentTrackRepositoryError("A project with this Proposal Number already exists.", 409, "duplicate_quote");
   }
 }
@@ -764,8 +773,8 @@ export function uploadPaymentTrackProof(
     if (index < 0) throw new PaymentTrackRepositoryError("Project not found.", 404, "not_found");
     const project = projects[index];
 
-    if (role !== "specialist") throw new PaymentTrackRepositoryError("Only the Specialist can upload deposit proof.", 403, "role_forbidden");
-    if (project.stage !== "deposit_not_paid" || project.deposit.confirmedAt) {
+    if (role !== "sales") throw new PaymentTrackRepositoryError("Only Sales can upload deposit proof.", 403, "role_forbidden");
+    if (project.stage !== "deposit_not_paid" || project.deposit.acknowledgedAt || project.deposit.confirmedAt) {
       throw new PaymentTrackRepositoryError("Deposit proof can no longer be changed.", 409, "invalid_transition");
     }
 
@@ -826,7 +835,7 @@ function installationScheduleIsComplete(project: StoredProject) {
     && validScheduleAssignee(project.installationAssignee);
 }
 
-function nextPmNotesTimestamp(project: StoredProject) {
+function nextProjectTimestamp(project: StoredProject) {
   const previous = [project.updatedAt, project.pmNotesUpdatedAt]
     .map((value) => typeof value === "string" ? Date.parse(value) : Number.NaN)
     .filter(Number.isFinite);
@@ -843,6 +852,27 @@ function normalizedPmNotes(value: string | undefined) {
     throw new PaymentTrackRepositoryError("PM notes must be 5,000 characters or fewer.", 400, "invalid_pm_notes");
   }
   return notes;
+}
+
+function normalizedStageSkipReason(value: string | undefined) {
+  if (typeof value !== "string") {
+    throw new PaymentTrackRepositoryError(
+      "A reason is required for an Administrator stage override.",
+      400,
+      "invalid_skip_reason",
+    );
+  }
+  const reason = value.trim();
+  if (!reason
+    || reason.length > PAYMENT_TRACK_STAGE_SKIP_REASON_MAX_LENGTH
+    || /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(reason)) {
+    throw new PaymentTrackRepositoryError(
+      `The stage override reason must be between 1 and ${PAYMENT_TRACK_STAGE_SKIP_REASON_MAX_LENGTH} characters.`,
+      400,
+      "invalid_skip_reason",
+    );
+  }
+  return reason;
 }
 
 function rebateRequirementsComplete(project: StoredProject) {
@@ -901,9 +931,10 @@ export function transitionPaymentTrackProject(
         "solar_rebate_assessment_pending",
       );
     }
-    const timestamp = action === "update_pm_notes"
-      ? nextPmNotesTimestamp(project)
-      : new Date().toISOString();
+    // updatedAt is also the optimistic-concurrency version for high-impact
+    // Administrator overrides, so every mutation must advance it even when two
+    // requests are serialized within the same millisecond.
+    const timestamp = nextProjectTimestamp(project);
     const actor = actorName(input.actorRole, input.actorName);
 
     if (action === "update_pm_notes") {
@@ -928,10 +959,26 @@ export function transitionPaymentTrackProject(
       project.pmNotesUpdatedAt = timestamp;
       project.pmNotesUpdatedBy = actor;
       project.history.push(historyEntry("pm_notes_updated", timestamp, "pm", actor));
+    } else if (action === "acknowledge_deposit") {
+      requireRole(input.actorRole, ["sales"], "Only Sales can confirm that the deposit was paid.");
+      if (project.stage !== "deposit_not_paid"
+        || project.deposit.proof
+        || project.deposit.acknowledgedAt
+        || project.deposit.confirmedAt) {
+        throw new PaymentTrackRepositoryError(
+          "The deposit can only be confirmed without proof once while it is awaiting payment.",
+          409,
+          "invalid_transition",
+        );
+      }
+      project.deposit.acknowledgedAt = timestamp;
+      project.deposit.acknowledgedBy = actor;
+      project.history.push(historyEntry("deposit_acknowledged", timestamp, "sales", actor, "Paid confirmed without uploaded proof"));
     } else if (action === "confirm_deposit") {
       requireRole(input.actorRole, ["admin"], "Only an Administrator can confirm a deposit.");
-      if (project.stage !== "deposit_not_paid" || !project.deposit.proof || project.deposit.confirmedAt) {
-        throw new PaymentTrackRepositoryError("Upload deposit proof before confirming the deposit.", 409, "invalid_transition");
+      const submittedForReview = Boolean(project.deposit.proof || project.deposit.acknowledgedAt);
+      if (project.stage !== "deposit_not_paid" || !submittedForReview || project.deposit.confirmedAt) {
+        throw new PaymentTrackRepositoryError("Sales must upload deposit proof or confirm payment before the deposit is recorded.", 409, "invalid_transition");
       }
       const amount = validateNonNegativeAmount(input.amountCents);
       project.deposit.confirmedAmountCents = amount;
@@ -1122,6 +1169,89 @@ export function transitionPaymentTrackProject(
         project.history.push(historyEntry("solar_rebate_confirmed", timestamp, input.actorRole, actor));
       }
       completeProjectIfRequirementsMet(project, timestamp, input.actorRole, actor);
+    } else if (action === "skip_stage") {
+      requireRole(input.actorRole, ["admin"], "Only an Administrator can skip a Project Track stage.");
+      const reason = normalizedStageSkipReason(input.reason);
+      if (typeof input.expectedUpdatedAt !== "string" || input.expectedUpdatedAt !== project.updatedAt) {
+        throw new PaymentTrackRepositoryError(
+          "This project changed after the Administrator stage override was opened. Reload it and review the current stage before trying again.",
+          409,
+          "stale_project",
+        );
+      }
+      const skippedStage = project.stage;
+      let nextStage: PaymentTrackProject["stage"];
+      const populatedFields: string[] = [];
+
+      if (skippedStage === "deposit_not_paid") {
+        if (project.deposit.proof || project.deposit.acknowledgedAt) {
+          throw new PaymentTrackRepositoryError(
+            "The deposit is awaiting Administrator payment review and cannot be skipped.",
+            409,
+            "payment_review_pending",
+          );
+        }
+        nextStage = "material_delivery";
+      } else if (skippedStage === "material_delivery") {
+        if (project.collection.proof || project.collection.acknowledgedAt) {
+          throw new PaymentTrackRepositoryError(
+            "The collection is awaiting Administrator payment review and cannot be skipped.",
+            409,
+            "payment_review_pending",
+          );
+        }
+        if (!project.deliveredAt) {
+          project.deliveredAt = timestamp;
+          populatedFields.push(`deliveredAt=${timestamp}`);
+        }
+        nextStage = "installing";
+      } else if (skippedStage === "installing") {
+        if (!project.installedAt) {
+          project.installedAt = timestamp;
+          populatedFields.push(`installedAt=${timestamp}`);
+        }
+        nextStage = "waiting_coes";
+      } else if (skippedStage === "waiting_coes") {
+        if (!project.coesReceivedAt) {
+          project.coesReceivedAt = timestamp;
+          populatedFields.push(`coesReceivedAt=${timestamp}`);
+        }
+        nextStage = rebateRequirementsComplete(project) ? "done" : "stc_rebate";
+      } else if (skippedStage === "stc_rebate") {
+        if (project.stcSolarRequired && !project.stcSolarReceivedAt) {
+          project.stcSolarReceivedAt = timestamp;
+          populatedFields.push(`stcSolarReceivedAt=${timestamp}`);
+        }
+        if (project.stcBatteryRequired && !project.stcBatteryReceivedAt) {
+          project.stcBatteryReceivedAt = timestamp;
+          populatedFields.push(`stcBatteryReceivedAt=${timestamp}`);
+        }
+        if (project.solarRebateRequired && !project.solarRebateReceivedAt) {
+          project.solarRebateReceivedAt = timestamp;
+          populatedFields.push(`solarRebateReceivedAt=${timestamp}`);
+        }
+        nextStage = "done";
+      } else {
+        throw new PaymentTrackRepositoryError("A completed project has no stage to skip.", 409, "invalid_transition");
+      }
+
+      project.stage = nextStage;
+      populatedFields.unshift(`stage=${nextStage}`);
+      if (nextStage === "done" && !project.completedAt) {
+        project.completedAt = timestamp;
+        populatedFields.push(`completedAt=${timestamp}`);
+      }
+      populatedFields.push(`updatedAt=${timestamp}`);
+      project.history.push(historyEntry(
+        "stage_skipped",
+        timestamp,
+        "admin",
+        actor,
+        `Transition: ${skippedStage} → ${nextStage}; Reason: ${reason}; Fields populated: ${populatedFields.join(", ")}`,
+      ));
+      if (nextStage === "done") {
+        completeProjectIfRequirementsMet(project, timestamp, "admin", actor);
+      }
     }
 
     project.updatedAt = timestamp;

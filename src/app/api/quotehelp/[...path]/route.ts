@@ -20,7 +20,10 @@ const ALLOWED_METHODS_BY_PATH: Record<string, ReadonlySet<string>> = {
 };
 const COOKIE_NAMESPACE = {
   prefix: "__erp_quotehelp_",
-  path: "/api/quotehelp",
+  // The namespaced HttpOnly cookie must also reach read-only Agent and unified
+  // quotation routes so they can query the same authenticated live session.
+  path: "/api",
+  legacyPaths: ["/api/quotehelp"],
 };
 
 type RouteContext = { params: Promise<{ path: string[] }> };

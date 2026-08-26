@@ -1,0 +1,9 @@
+[
+  { "name": "inventory attention", "query": "Which stock items need attention?", "expectedWorkflow": "inventory_query" },
+  { "name": "draft quotations", "query": "Show draft quotations", "expectedWorkflow": "quotation_summary" },
+  { "name": "pending deliveries", "query": "Show deliveries pending PM review", "expectedWorkflow": "pending_deliveries" },
+  { "name": "outstanding receivables", "query": "How much customer payment is outstanding?", "expectedWorkflow": "outstanding_payments" },
+  { "name": "site visits", "query": "Give me the site visit summary", "expectedWorkflow": "site_visit_summary" },
+  { "name": "reimbursements", "query": "Show the reimbursement payment summary", "expectedWorkflow": "reimbursement_summary" },
+  { "name": "reports", "query": "What is the Reports document status?", "expectedWorkflow": "reports_status" }
+]

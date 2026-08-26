@@ -10,6 +10,9 @@ import type { ProjectScheduleJob, ProjectScheduleStatus } from "@/lib/project-sc
 import { listReimbursements } from "@/lib/reimbursements/repository";
 import type { ReimbursementClaim, ReimbursementStatus } from "@/lib/reimbursements/types";
 import { getReportContent } from "@/lib/reports/repository";
+import { normalizedInventoryArgs } from "./tool-input";
+
+export { normalizedInventoryArgs } from "./tool-input";
 
 const DEFAULT_INVENTORY_OPERATIONS_URL = "https://inventory.e3energy.com.au/api/inventory";
 const UPSTREAM_RESPONSE_LIMIT = 2 * 1024 * 1024;
@@ -52,7 +55,7 @@ export const DEEPSEEK_TOOLS = [
         type: "object",
         properties: {
           query: { type: "string", description: "SKU/category search text, or an empty string." },
-          status: { type: "string", enum: ["all", "sufficient", "low_stock", "on_order", "overstock", "out_of_stock"] },
+          status: { type: "string", enum: ["all", "attention", "sufficient", "low_stock", "on_order", "overstock", "out_of_stock"], description: "Use attention to return every non-sufficient stock status in one query." },
           limit: { type: "integer", minimum: 1, maximum: 20 },
         },
         required: ["query", "status", "limit"],
@@ -101,7 +104,7 @@ export const DEEPSEEK_TOOLS = [
     type: "function",
     function: {
       name: "search_payment_projects",
-      description: "Search Project Track receivables and workflow projects by reference, proposal, customer, Specialist, address, item or PM Notes. Use receipt and receipt_status for exact Solar STC, Battery STC or Solar Rebate questions. Pending means required, not received and currently actionable at the STC Rebate stage. Include customer contact details or PM Notes only when the user explicitly asks for each one.",
+      description: "Search Project Track receivables and workflow projects by reference, proposal, customer, Sales representative, address, item or PM Notes. Use receipt and receipt_status for exact Solar STC, Battery STC or Solar Rebate questions. Pending means required, not received and currently actionable at the STC Rebate stage. Include customer contact details or PM Notes only when the user explicitly asks for each one.",
       strict: true,
       parameters: {
         type: "object",
@@ -229,6 +232,10 @@ function normalizedSearch(value: string): string {
   return value.trim().toLocaleLowerCase("en-AU");
 }
 
+function normalizedSku(value: string): string {
+  return normalizedSearch(value).replace(/[^a-z0-9]/gu, "");
+}
+
 function containsQuery(values: unknown[], query: string): boolean {
   const term = normalizedSearch(query);
   return !term || values.some((value) => String(value ?? "").toLocaleLowerCase("en-AU").includes(term));
@@ -310,7 +317,13 @@ function rebateReceiptSearchValues(project: PaymentTrackProject): string[] {
 }
 
 function paymentProjectQuery(query: string, receipt: PaymentReceiptFilter, status: PaymentReceiptStatusFilter) {
-  let searchable = query;
+  let searchable = query.replace(
+    /\b(?:outstanding|unpaid|amount\s+due|balance\s+due|remaining\s+balance|final\s+payment)s?\b|尾款|未收(?:款)?|欠款|应收(?:款)?/giu,
+    " ",
+  );
+  searchable = searchable
+    .replace(/\b(?:show|list|all|customer|customers|project|projects|payment|payments|receivable|receivables|what|is|are|the|total|how|much|please|with|have|has)\b/giu, " ")
+    .replace(/请问|显示|列出|查看|所有|全部|客户|项目|总额|合计|多少|还有|的/gu, " ");
   if (receipt !== "all") {
     const receiptPatterns: Record<RebateReceipt, RegExp> = {
       solar_stc: /\bsolar[\s_-]*stc\b/giu,
@@ -328,6 +341,10 @@ function paymentProjectQuery(query: string, receipt: PaymentReceiptFilter, statu
     searchable = searchable.replace(statusPatterns[status], " ");
   }
   return searchable.replace(/\s+/gu, " ").trim();
+}
+
+function asksForOutstandingPayment(query: string) {
+  return /\b(?:outstanding|unpaid|amount\s+due|balance\s+due|remaining\s+balance|final\s+payment)s?\b|尾款|未收(?:款)?|欠款|应收(?:款)?/iu.test(query);
 }
 
 function pendingRebateReceiptCounts(projects: PaymentTrackProject[]) {
@@ -464,7 +481,7 @@ function safePaymentProject(
         address: [project.customer.addressLine1, project.customer.suburb, project.customer.state, project.customer.postcode].filter(Boolean).join(", "),
       } : {}),
     },
-    specialist: project.specialist.name,
+    salesRepresentative: project.specialist.name,
     ...(includePmNotes ? {
       pmNotes: project.pmNotes || null,
       pmNotesUpdatedAt: project.pmNotesUpdatedAt,
@@ -549,16 +566,41 @@ function validContactQueryArgs(args: UnknownRecord, filterName: string, allowed:
     && typeof args.include_contact_details === "boolean";
 }
 
-function validPaymentProjectArgs(args: UnknownRecord) {
+function normalizedPaymentProjectArgs(args: UnknownRecord): {
+  query: string;
+  stage: PaymentTrackStage | "all";
+  receipt: PaymentReceiptFilter;
+  receiptStatus: PaymentReceiptStatusFilter;
+  limit: number;
+  includeContactDetails: boolean;
+  includePmNotes: boolean;
+} | null {
+  const allowedKeys = new Set(["query", "stage", "receipt", "receipt_status", "limit", "include_contact_details", "include_pm_notes"]);
+  if (Object.keys(args).some((key) => !allowedKeys.has(key))) return null;
   const stages = ["all", "deposit_not_paid", "material_delivery", "installing", "waiting_coes", "stc_rebate", "done"];
-  return exactKeys(args, ["query", "stage", "receipt", "receipt_status", "limit", "include_contact_details", "include_pm_notes"])
-    && typeof args.query === "string" && args.query.length <= 200
-    && typeof args.stage === "string" && stages.includes(args.stage)
-    && typeof args.receipt === "string" && PAYMENT_RECEIPT_FILTERS.includes(args.receipt as PaymentReceiptFilter)
-    && typeof args.receipt_status === "string" && PAYMENT_RECEIPT_STATUSES.includes(args.receipt_status as PaymentReceiptStatusFilter)
-    && Number.isInteger(args.limit) && (args.limit as number) >= 1 && (args.limit as number) <= 20
-    && typeof args.include_contact_details === "boolean"
-    && typeof args.include_pm_notes === "boolean";
+  const query = args.query ?? "";
+  const stage = args.stage ?? "all";
+  const receipt = args.receipt ?? "all";
+  const receiptStatus = args.receipt_status ?? "all";
+  const rawLimit = args.limit ?? 20;
+  const limit = typeof rawLimit === "string" && /^\d+$/.test(rawLimit) ? Number(rawLimit) : rawLimit;
+  const includeContactDetails = args.include_contact_details ?? false;
+  const includePmNotes = args.include_pm_notes ?? false;
+  if (typeof query !== "string" || query.length > 200
+    || typeof stage !== "string" || !stages.includes(stage)
+    || typeof receipt !== "string" || !PAYMENT_RECEIPT_FILTERS.includes(receipt as PaymentReceiptFilter)
+    || typeof receiptStatus !== "string" || !PAYMENT_RECEIPT_STATUSES.includes(receiptStatus as PaymentReceiptStatusFilter)
+    || !Number.isInteger(limit) || (limit as number) < 1 || (limit as number) > 20
+    || typeof includeContactDetails !== "boolean" || typeof includePmNotes !== "boolean") return null;
+  return {
+    query: query.trim(),
+    stage: stage as PaymentTrackStage | "all",
+    receipt: receipt as PaymentReceiptFilter,
+    receiptStatus: receiptStatus as PaymentReceiptStatusFilter,
+    limit: limit as number,
+    includeContactDetails,
+    includePmNotes,
+  };
 }
 
 function validProjectScheduleArgs(args: UnknownRecord) {
@@ -771,8 +813,8 @@ export async function runAgentTool(provider: ERPProvider, call: ToolCall): Promi
     }
 
     if (call.name === "search_inventory") {
-      const allowed = ["all", "sufficient", "low_stock", "on_order", "overstock", "out_of_stock"];
-      if (!validQueryArgs(args, "status", allowed)) return safeToolJson({ error: { code: "invalid_arguments", message: "Invalid inventory search arguments." } });
+      const inventoryArgs = normalizedInventoryArgs(args);
+      if (!inventoryArgs) return safeToolJson({ error: { code: "invalid_arguments", message: "Invalid inventory search arguments." } });
       let items;
       let source: "operations" | ERPProvider["source"] = "operations";
       try {
@@ -781,18 +823,19 @@ export async function runAgentTool(provider: ERPProvider, call: ToolCall): Promi
         source = provider.source;
         const fallbackStatus: Record<string, InventoryStatus | undefined> = { low_stock: "low_stock", out_of_stock: "out_of_stock" };
         items = (await provider.listInventory({
-          search: args.query ? String(args.query) : undefined,
-          status: fallbackStatus[String(args.status)],
-          limit: args.limit as number,
+          search: inventoryArgs.query || undefined,
+          status: fallbackStatus[inventoryArgs.status],
+          limit: inventoryArgs.limit,
         })).map((item) => ({
           sku: item.sku, name: item.name, category: item.category || "", warehouse: item.warehouse,
           status: item.status === "in_stock" ? "sufficient" : item.status, onHand: item.onHand, reserved: item.reserved, available: item.available,
           reorderLevel: item.reorderLevel, uom: item.uom,
         }));
       }
-      const filtered = items.filter((item) => containsQuery([item.sku, "name" in item ? item.name : "", item.category], String(args.query)))
-        .filter((item) => args.status === "all" || item.status === args.status)
-        .slice(0, args.limit as number);
+      const filtered = items.filter((item) => containsQuery([item.sku, "name" in item ? item.name : "", item.category], inventoryArgs.query))
+        .filter((item) => inventoryArgs.status === "all"
+          || (inventoryArgs.status === "attention" ? item.status !== "sufficient" : item.status === inventoryArgs.status))
+        .slice(0, inventoryArgs.limit);
       return safeToolJson({ source, demo: source === "demo", count: filtered.length, items: filtered });
     }
 
@@ -821,29 +864,32 @@ export async function runAgentTool(provider: ERPProvider, call: ToolCall): Promi
     }
 
     if (call.name === "search_payment_projects") {
-      if (!validPaymentProjectArgs(args)) return safeToolJson({ error: { code: "invalid_arguments", message: "Invalid Project Track search arguments." } });
-      const matched = (await listPaymentTrackProjects()).filter((project) => args.stage === "all" || project.stage === args.stage as PaymentTrackStage)
+      const paymentArgs = normalizedPaymentProjectArgs(args);
+      if (!paymentArgs) return safeToolJson({ error: { code: "invalid_arguments", message: "Invalid Project Track search arguments." } });
+      const outstandingOnly = asksForOutstandingPayment(paymentArgs.query);
+      const matched = (await listPaymentTrackProjects()).filter((project) => paymentArgs.stage === "all" || project.stage === paymentArgs.stage)
         .filter((project) => matchesRebateReceipt(
           project,
-          args.receipt as PaymentReceiptFilter,
-          args.receipt_status as PaymentReceiptStatusFilter,
+          paymentArgs.receipt,
+          paymentArgs.receiptStatus,
         ))
+        .filter((project) => !outstandingOnly || project.outstandingCents > 0)
         .filter((project) => containsQuery([
           project.reference, project.quoteNumber, project.customer.firstName, project.customer.lastName,
           project.customer.phone, project.customer.email, project.customer.addressLine1, project.specialist.name,
-          ...(args.include_pm_notes === true ? [project.pmNotes] : []),
+          ...(paymentArgs.includePmNotes ? [project.pmNotes] : []),
           ...rebateReceiptSearchValues(project),
           ...project.items.flatMap((item) => [item.category, item.description, item.model]),
         ], paymentProjectQuery(
-          String(args.query),
-          args.receipt as PaymentReceiptFilter,
-          args.receipt_status as PaymentReceiptStatusFilter,
+          paymentArgs.query,
+          paymentArgs.receipt,
+          paymentArgs.receiptStatus,
         )));
       return safePaymentSearchJson(
         matched,
-        args.limit as number,
-        args.include_contact_details === true,
-        args.include_pm_notes === true,
+        paymentArgs.limit,
+        paymentArgs.includeContactDetails,
+        paymentArgs.includePmNotes,
       );
     }
 
@@ -938,6 +984,100 @@ export async function runAgentTool(provider: ERPProvider, call: ToolCall): Promi
   }
 }
 
+export async function fastInventoryAnswer(rawMessage: string) {
+  const skuCandidates = rawMessage.match(/\b(?=[a-z0-9_-]{2,40}\b)(?=[a-z0-9_-]*[a-z])(?=[a-z0-9_-]*\d)[a-z0-9_-]+\b/giu);
+  const message = normalizedSearch(rawMessage);
+  const asksForAttention = /low[\s-]*stock|out[\s-]*of[\s-]*stock|over[\s-]*stock|need(?:s|ing)?\s+attention|items?\s+(?:that\s+)?(?:need|requiring)\s+attention|replenish|低库存|缺货|积压|补货|需要关注/u.test(message);
+  const asksForOverview = /inventory\s+(?:overview|summary)|stock\s+(?:overview|summary)|库存(?:概况|总览)/u.test(message);
+  if (!skuCandidates?.length && !asksForAttention && !asksForOverview) return null;
+
+  const state = await inventoryOperationsState();
+  const inventory = state.inventory.map(safeOperationsInventory);
+  const item = skuCandidates
+    ? skuCandidates
+    .map((candidate) => normalizedSku(candidate))
+    .map((candidate) => inventory.find((entry) => normalizedSku(entry.sku) === candidate))
+    .find(Boolean)
+    : undefined;
+  const suggestions = ["Which stock items need attention?", "Give me an inventory overview", "Show deliveries pending PM review"];
+  if (item) {
+    const status = item.status.replaceAll("_", " ");
+    return {
+      mode: "local" as const,
+      answer: `**${item.sku}** has **${item.available.toLocaleString("en-AU")} available** (${item.onHand.toLocaleString("en-AU")} on hand, ${item.reserved.toLocaleString("en-AU")} reserved, ${item.pending.toLocaleString("en-AU")} pending). Status: ${status}.`,
+      suggestions,
+    };
+  }
+
+  if (skuCandidates?.length) return null;
+
+  if (asksForAttention) {
+    const items = inventory.filter((entry) => entry.status !== "sufficient");
+    const lines = items.map((entry) => `- **${entry.sku}**: ${entry.available.toLocaleString("en-AU")} available (${entry.onHand.toLocaleString("en-AU")} on hand, ${entry.reserved.toLocaleString("en-AU")} reserved)`).join("\n");
+    return {
+      mode: "local" as const,
+      answer: items.length ? `${items.length} stock items need attention:\n\n${lines}` : "No stock items currently need attention.",
+      suggestions,
+    };
+  }
+
+  const onHand = inventory.reduce((sum, entry) => sum + entry.onHand, 0);
+  const available = inventory.reduce((sum, entry) => sum + entry.available, 0);
+  const needsAttention = inventory.filter((entry) => entry.status === "low_stock" || entry.status === "out_of_stock").length;
+  return {
+    mode: "local" as const,
+    answer: `Inventory has **${inventory.length} stock items**, with **${onHand.toLocaleString("en-AU")} on hand** and **${available.toLocaleString("en-AU")} available**. ${needsAttention} items need attention.`,
+    suggestions,
+  };
+}
+
+export async function fastPaymentTrackAnswer(rawMessage: string) {
+  if (!asksForOutstandingPayment(rawMessage)) return null;
+
+  const message = normalizedSearch(rawMessage);
+  const projects = await listPaymentTrackProjects();
+  const specificallyMentioned = projects.filter((project) => [
+    project.reference,
+    project.quoteNumber,
+    `${project.customer.firstName} ${project.customer.lastName}`.trim(),
+  ].some((value) => {
+    const candidate = normalizedSearch(value);
+    return candidate.length >= 3 && message.includes(candidate);
+  }));
+  const scoped = specificallyMentioned.length ? specificallyMentioned : projects;
+  const outstanding = scoped
+    .filter((project) => project.outstandingCents > 0)
+    .sort((left, right) => right.outstandingCents - left.outstandingCents);
+  const total = outstanding.reduce((sum, project) => sum + project.outstandingCents, 0);
+  const shown = outstanding.slice(0, 20);
+  const isChinese = /[\u3400-\u9fff]/u.test(rawMessage);
+  const money = (cents: number) => new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD" }).format(cents / 100);
+  const lines = shown.map((project) => {
+    const customer = `${project.customer.firstName} ${project.customer.lastName}`.trim();
+    return `- **${project.reference}** · ${customer} · ${money(project.outstandingCents)} · ${project.stage.replaceAll("_", " ")}`;
+  }).join("\n");
+  const suggestions = isChinese
+    ? ["显示所有未收尾款", "尾款总额是多少？", "给我项目追踪概况"]
+    : ["Show all outstanding balances", "What is the total amount due?", "Give me a Project Track overview"];
+
+  if (!outstanding.length) {
+    return {
+      mode: "local" as const,
+      answer: isChinese ? "当前范围内没有未结清的客户尾款。" : "There are no outstanding customer balances in the current scope.",
+      suggestions,
+    };
+  }
+
+  const hidden = outstanding.length - shown.length;
+  return {
+    mode: "local" as const,
+    answer: isChinese
+      ? `共有 **${outstanding.length} 个项目**存在未收尾款，合计 **${money(total)}**：\n\n${lines}${hidden ? `\n\n另有 ${hidden} 个项目未显示。` : ""}`
+      : `**${outstanding.length} projects** have outstanding balances totalling **${money(total)}**:\n\n${lines}${hidden ? `\n\n${hidden} additional projects are not shown.` : ""}`,
+    suggestions,
+  };
+}
+
 export async function localWorkspaceAnswer(provider: ERPProvider, rawMessage: string) {
   const message = normalizedSearch(rawMessage);
   const suggestions = [
@@ -989,7 +1129,7 @@ export async function localWorkspaceAnswer(provider: ERPProvider, rawMessage: st
     };
   }
 
-  if (/payment|amount due|outstanding|deposit|收款|应收/.test(message)) {
+  if (/payment|amount due|outstanding|deposit|收款|应收|尾款|未收|欠款/.test(message)) {
     const projects = await listPaymentTrackProjects();
     const outstanding = projects.reduce((sum, project) => sum + project.outstandingCents, 0) / 100;
     return { mode: "local" as const, answer: `Project Track has ${projects.length} projects with AUD ${outstanding.toLocaleString("en-AU", { minimumFractionDigits: 2 })} outstanding. Check the model endpoint in Settings for conversational project-level answers.`, suggestions };

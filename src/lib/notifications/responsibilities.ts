@@ -32,7 +32,7 @@ export function paymentTrackResponsibilities(project: PaymentTrackProject): Paym
     if (project.deposit.confirmedAt) return [];
     return project.deposit.proof || project.deposit.acknowledgedAt
       ? [{ action: "confirm_deposit", role: "admin" }]
-      : [{ action: "upload_deposit_proof", role: "specialist" }];
+      : [{ action: "upload_deposit_proof", role: "sales" }];
   }
 
   if (project.stage === "material_delivery") {
@@ -50,13 +50,13 @@ export function paymentTrackResponsibilities(project: PaymentTrackProject): Paym
   const tasks: PaymentTrackResponsibility[] = [];
   if (project.stage === "stc_rebate") {
     if (project.stcSolarRequired && !project.stcSolarReceivedAt) {
-      tasks.push({ action: "confirm_solar_stc", role: "specialist" });
+      tasks.push({ action: "confirm_solar_stc", role: "admin" });
     }
     if (project.stcBatteryRequired && !project.stcBatteryReceivedAt) {
-      tasks.push({ action: "confirm_battery_stc", role: "specialist" });
+      tasks.push({ action: "confirm_battery_stc", role: "admin" });
     }
     if (project.solarRebateRequired && !project.solarRebateReceivedAt) {
-      tasks.push({ action: "confirm_solar_rebate", role: "specialist" });
+      tasks.push({ action: "confirm_solar_rebate", role: "admin" });
     }
   }
 

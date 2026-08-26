@@ -76,8 +76,8 @@ function summary(value: PaymentTrackProject) {
   return paymentTrackResponsibilities(value).map(({ action, role }) => `${role}:${action}`);
 }
 
-test("deposit work stays with Specialist until evidence is submitted, then moves to Admin", () => {
-  assert.deepEqual(summary(project()), ["specialist:upload_deposit_proof"]);
+test("deposit work stays with Sales until evidence is submitted, then moves to Admin", () => {
+  assert.deepEqual(summary(project()), ["sales:upload_deposit_proof"]);
   assert.deepEqual(summary(project({
     deposit: {
       ...project().deposit,
@@ -121,16 +121,16 @@ test("an outstanding installed project notifies Sales, but does not add a PM COE
   ]);
 });
 
-test("Specialist receipt work remains independent from final-payment responsibility", () => {
+test("Administrator receipt work remains independent from Sales final-payment responsibility", () => {
   assert.deepEqual(summary(project({
     stage: "stc_rebate",
     stcSolarRequired: true,
     stcBatteryRequired: true,
     solarRebateRequired: true,
   })), [
-    "specialist:confirm_solar_stc",
-    "specialist:confirm_battery_stc",
-    "specialist:confirm_solar_rebate",
+    "admin:confirm_solar_stc",
+    "admin:confirm_battery_stc",
+    "admin:confirm_solar_rebate",
     "sales:record_final_payment",
   ]);
 });

@@ -25,6 +25,10 @@ const UPSTREAM_TIMEOUT_MS = 8_000;
 const MAX_SOURCE_RECORDS = 500;
 const MAX_NOTIFICATIONS = 250;
 const DAY_MS = 24 * 60 * 60 * 1_000;
+const COLLECTION_CONFIRMATION_ASSIGNEE = {
+  username: "jiaqi",
+  displayName: "Jiaqi",
+} as const;
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -105,6 +109,7 @@ function notification(
     badgeLabel: rawBadgeLabel,
     projectCreatedAt: rawProjectCreatedAt,
     ownerName: rawOwnerName,
+    assigneeUsername: rawAssigneeUsername,
     ...fields
   } = item;
   const entityId = rawEntityId ? safeEntityId(rawEntityId) : "";
@@ -113,6 +118,7 @@ function notification(
   const ownerName = rawOwnerName === undefined
     ? ""
     : cleanText(rawOwnerName, 160) || "Not assigned";
+  const assigneeUsername = cleanText(rawAssigneeUsername, 40).toLocaleLowerCase("en-AU");
   return {
     ...fields,
     id: id || notificationId(item.module, entityId || "general", item.actionLabel),
@@ -123,6 +129,7 @@ function notification(
     ...(badgeLabel ? { badgeLabel } : {}),
     ...(projectCreatedAt ? { projectCreatedAt } : {}),
     ...(ownerName ? { ownerName } : {}),
+    ...(assigneeUsername ? { assigneeUsername } : {}),
   };
 }
 
@@ -301,6 +308,8 @@ export function buildPaymentTrackNotifications(projects: PaymentTrackProject[], 
         items.push(notification({
           role: task.role,
           priority: "high",
+          ownerName: COLLECTION_CONFIRMATION_ASSIGNEE.displayName,
+          assigneeUsername: COLLECTION_CONFIRMATION_ASSIGNEE.username,
           title: customerName,
           description: amountAction(project.expectedDepositCents, "expected deposit", "Confirm deposit"),
           module: "payments",
@@ -344,6 +353,8 @@ export function buildPaymentTrackNotifications(projects: PaymentTrackProject[], 
         items.push(notification({
           role: task.role,
           priority: "high",
+          ownerName: COLLECTION_CONFIRMATION_ASSIGNEE.displayName,
+          assigneeUsername: COLLECTION_CONFIRMATION_ASSIGNEE.username,
           title: customerName,
           description: amountAction(project.outstandingCents, "outstanding", "Confirm collection"),
           module: "payments",
@@ -549,9 +560,20 @@ function notificationCounts(items: WorkspaceNotification[]): NotificationCounts 
   return counts;
 }
 
+export function notificationIsVisibleTo(
+  item: WorkspaceNotification,
+  role: NotificationRoleFilter,
+  username = "",
+) {
+  if (role === "all") return true;
+  if (item.role !== role) return false;
+  const normalizedUsername = cleanText(username, 40).toLocaleLowerCase("en-AU");
+  return !item.assigneeUsername || !normalizedUsername || item.assigneeUsername === normalizedUsername;
+}
+
 export async function buildWorkspaceNotifications(
   role: NotificationRoleFilter = "all",
-  options: { includeReimbursements?: boolean } = {},
+  options: { includeReimbursements?: boolean; username?: string } = {},
 ): Promise<NotificationsResponse> {
   const now = new Date();
   const reimbursementTask = options.includeReimbursements
@@ -584,7 +606,7 @@ export async function buildWorkspaceNotifications(
       generatedAt: now.toISOString(),
       notifications: (role === "all"
         ? allNotifications
-        : allNotifications.filter((item) => item.role === role)).slice(0, MAX_NOTIFICATIONS),
+        : allNotifications.filter((item) => notificationIsVisibleTo(item, role, options.username))).slice(0, MAX_NOTIFICATIONS),
       counts,
     },
     meta: {

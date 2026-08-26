@@ -52,11 +52,11 @@ export async function POST(
     if (kind !== "deposit") {
       return paymentTrackError(400, "invalid_kind", "Only the initial deposit requires payment proof.");
     }
-    if (role !== "specialist") {
-      return paymentTrackError(403, "role_forbidden", "Only the Specialist can upload deposit proof.");
+    if (role !== "sales") {
+      return paymentTrackError(403, "role_forbidden", "Only Sales can upload deposit proof.");
     }
     if (!isAuthorizedActorRequest(request, role)) {
-      return paymentTrackError(403, "role_forbidden", "Only an Administrator can perform the Specialist step.");
+      return paymentTrackError(403, "role_forbidden", "Your signed-in role cannot perform the Sales step.");
     }
     const proof = form.get("proof");
     if (!(proof instanceof File) || proof.size < 1 || proof.size > MAX_PROOF_SIZE) {

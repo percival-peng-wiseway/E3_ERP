@@ -63,3 +63,42 @@ test("distinguishes an authoritative negative from an unassessable document", ()
   `), null);
   assert.equal(assessProposalSolarRebateRequirement(""), null);
 });
+
+test("assesses Solar Rebate only inside a complete GreenSketch deductions block", () => {
+  assert.equal(assessProposalSolarRebateRequirement(`
+    Quotation
+    Solar Panel: LONGi LR5-54HTH-440M / 440W x 14
+    System Total (incl. GST) $12,400.00
+    Deductions
+    Solar Rebate - $400.00
+    Deposit $1,000.00
+    Final Price (incl. GST) $11,000.00
+  `), true);
+
+  assert.equal(assessProposalSolarRebateRequirement(`
+    Quotation
+    Battery: Huawei LUNA2000-7-S1 / 13.8 kWh x 2
+    System Total (incl. GST) $12,000.00
+    Deductions
+    Battery Rebate $2,000.00
+    Deposit $1,000.00
+    Final Price (incl. GST) $9,000.00
+    Terms mention Solar Rebate eligibility separately.
+  `), false);
+
+  assert.equal(assessProposalSolarRebateRequirement(`
+    Quotation
+    Solar Panel: LONGi LR5-54HTH-440M / 440W x 14
+    System Total (incl. GST) $12,400.00
+    Deductions
+    Solar Rebate pending assessment
+    Final Price (incl. GST) $12,400.00
+  `), null);
+
+  assert.equal(assessProposalSolarRebateRequirement(`
+    Quotation
+    Solar Panel: LONGi LR5-54HTH-440M / 440W x 14
+    System Total (incl. GST) $12,400.00
+    Solar Rebate - $400.00
+  `), null);
+});

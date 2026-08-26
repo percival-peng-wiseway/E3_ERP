@@ -200,7 +200,7 @@
 }
 
 .filters::-webkit-scrollbar { display: none; }
-.filters button { min-height: 35px; padding: 0 12px; color: #66747e; background: transparent; border: 0; border-radius: 7px; font-size: 12px; font-weight: 650; cursor: pointer; white-space: nowrap; }
+.filters button { display: inline-flex; min-height: 35px; align-items: center; justify-content: center; padding: 0 12px; color: #66747e; background: transparent; border: 0; border-radius: 7px; font-size: 12px; font-weight: 650; line-height: 1; cursor: pointer; white-space: nowrap; }
 .filters button.activeFilter { color: #263640; background: #fff; box-shadow: 0 1px 4px rgba(27, 43, 53, .10); }
 
 .visitGrid {
@@ -224,8 +224,12 @@
 
 .visitCard:hover,
 .visitCard:focus-within { border-color: #9fc6df; box-shadow: 0 7px 22px rgba(28, 48, 61, .085); transform: translateY(-1px); }
+.completedVisitCard { background: #f1f6f3; border-color: #c9ddd4; }
+.completedVisitCard:hover,
+.completedVisitCard:focus-within { border-color: #8fb9a8; box-shadow: 0 7px 22px rgba(41, 91, 72, .10); }
+.completedVisitCard .cardFooter { background: #e8f1ec; border-top-color: #d6e5de; }
 .cardTop { display: flex; min-height: 24px; align-items: center; justify-content: space-between; gap: 8px; }
-.statusBadge, .todayBadge { display: inline-flex; min-height: 24px; align-items: center; padding: 0 9px; border-radius: 999px; font-size: 11px; font-weight: 750; }
+.statusBadge, .todayBadge { display: inline-flex; min-height: 24px; align-items: center; justify-content: center; padding: 0 9px; border-radius: 999px; font-size: 11px; font-weight: 750; line-height: 1; text-align: center; }
 .status_pending_approval { color: #955b19; background: #fff0d6; }
 .status_approved { color: #226e9e; background: #e7f3fb; }
 .status_scheduled { color: #8b611b; background: #fff3da; }
@@ -234,14 +238,15 @@
 .status_cancelled { color: #777f85; background: #eceff1; }
 .todayBadge { color: #1f70a9; background: #e8f4fc; }
 
-.visitCard h2 { overflow: hidden; margin: 8px 0 4px; color: #263640; font-size: 18px; font-weight: 720; letter-spacing: -.015em; text-overflow: ellipsis; white-space: nowrap; }
+.visitCard h2 { overflow: hidden; margin: 8px 0 4px; color: #263640; font-size: 18px; font-weight: 720; line-height: 1.25; letter-spacing: -.015em; text-overflow: ellipsis; white-space: nowrap; }
 .address { display: flex; min-height: 0; align-items: flex-start; margin: 0; gap: 6px; color: #667680; font-size: 13px; line-height: 1.4; }
 .address svg { flex: 0 0 auto; margin-top: 1px; color: #63859d; }
 .address span { display: -webkit-box; min-width: 0; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .cardMeta { display: flex; flex-wrap: wrap; margin-top: 8px; gap: 5px 12px; color: #536670; font-size: 12px; }
-.cardMeta span, .cardProgress span { display: inline-flex; min-width: 0; align-items: center; gap: 5px; overflow-wrap: anywhere; }
+.cardMeta span, .cardProgress span { display: inline-flex; min-width: 0; align-items: center; gap: 5px; line-height: 1.3; overflow-wrap: anywhere; }
+.cardMeta svg, .cardProgress svg { flex: 0 0 auto; }
 .cardMeta svg { color: #8797a1; }
-.cardFooter { display: flex; min-width: 0; min-height: 44px; align-items: stretch; margin: 10px -12px -12px; padding: 6px 12px; gap: 6px; background: #f8fafb; border-top: 1px solid #edf1f3; }
+.cardFooter { display: flex; min-width: 0; min-height: 44px; align-items: center; margin: 10px -12px -12px; padding: 6px 12px; gap: 6px; background: #f8fafb; border-top: 1px solid #edf1f3; }
 .cardProgress { display: flex; min-width: 0; flex: 1; align-items: center; justify-content: flex-start; gap: 6px 12px; color: #70808a; font-size: 12px; }
 .cardReason { max-width: 58%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cardOpenButton { position: absolute; inset: 0; z-index: 3; width: 100%; height: 100%; padding: 0; background: transparent; border: 0; border-radius: 10px; cursor: pointer; }
@@ -269,6 +274,8 @@
   color: #8a969e;
   font-size: 11px;
   font-weight: 690;
+  line-height: 1.2;
+  text-align: center;
 }
 
 .workflowProgress li:not(:last-child)::after {
@@ -295,6 +302,7 @@
   font-size: 10px;
   font-style: normal;
 }
+.workflowProgress i svg { display: block; }
 
 .workflowProgress .workflowComplete { color: #31745f; }
 .workflowProgress .workflowComplete i { color: #fff; background: #52a287; }
@@ -302,7 +310,8 @@
 .workflowProgress .workflowCurrent { color: #256d9d; }
 .workflowProgress .workflowCurrent i { color: #fff; background: #3187bf; box-shadow: 0 0 0 3px #e5f2fa; }
 .compactWorkflow { margin: 8px 0 6px; padding: 0; background: transparent; border: 0; border-radius: 0; }
-.compactWorkflow li { flex-direction: column; gap: 2px; font-size: 9px; line-height: 1.1; }
+.compactWorkflow li { flex-direction: column; gap: 3px; font-size: 9px; line-height: 1.15; }
+.compactWorkflow li span { display: flex; min-height: 11px; align-items: center; justify-content: center; }
 .compactWorkflow li:not(:last-child)::after { top: 9px; right: -26%; width: 52%; }
 .compactWorkflow i { width: 18px; height: 18px; font-size: 8px; }
 
@@ -408,8 +417,6 @@
 .detailTitle > span { grid-column: 1; grid-row: 1; }
 .detailTitle p { display: flex; grid-column: 1 / -1; align-items: center; margin: 0; gap: 5px; color: #72818b; font-size: 12px; }
 .detailBody { min-height: 0; padding: 17px; overflow-y: auto; overscroll-behavior: contain; }
-.visitActions { display: flex; align-items: center; margin-bottom: 13px; gap: 8px; }
-.mapButton { margin-left: auto; }
 .detailGrid { display: grid; grid-template-columns: minmax(360px, 1.12fr) minmax(300px, .88fr); gap: 13px; }
 .panel { min-width: 0; margin-bottom: 13px; padding: 17px; background: #fff; border: 1px solid var(--visit-border); border-radius: 11px; box-shadow: 0 2px 7px rgba(31, 50, 63, .025); }
 .panelTitle { display: flex; align-items: center; margin-bottom: 15px; gap: 10px; }
@@ -488,10 +495,15 @@
 .photoGrid figcaption button { display: grid; width: 30px; height: 30px; flex: 0 0 auto; padding: 0; place-items: center; color: #9c554f; background: transparent; border: 0; border-radius: 6px; cursor: pointer; }
 .photoEmpty { display: flex; min-height: 100px; align-items: center; justify-content: center; flex-direction: column; gap: 8px; color: #8a969e; background: #fafbfc; border: 1px dashed #d6e0e5; border-radius: 9px; font-size: 12px; text-align: center; }
 .notesArea { min-height: 130px; }
-.dangerZone { display: flex; align-items: center; justify-content: flex-end; padding: 3px 2px 8px; gap: 8px; }
-.dangerZone button { display: inline-flex; min-height: 39px; align-items: center; padding: 0 11px; gap: 6px; color: #a04f48; background: transparent; border: 1px solid #e3c8c5; border-radius: 8px; cursor: pointer; }
 .stickyFooter { display: flex; min-height: 68px; flex: 0 0 auto; align-items: center; justify-content: space-between; padding: 11px 17px calc(11px + env(safe-area-inset-bottom)); gap: 14px; background: #fff; border-top: 1px solid var(--visit-border); box-shadow: 0 -5px 18px rgba(30, 48, 61, .05); }
-.stickyFooter > div { color: #7a8790; font-size: 12px; }
+.footerStatus { color: #7a8790; font-size: 12px; }
+.footerActions { display: flex; align-items: center; justify-content: flex-end; margin-left: auto; gap: 8px; flex-wrap: wrap; }
+.footerCancelButton { display: inline-flex; min-height: 43px; align-items: center; justify-content: center; padding: 0 13px; color: #a04f48; background: #fff; border: 1px solid #e3c8c5; border-radius: 9px; font-weight: 690; cursor: pointer; }
+.footerCancelButton:disabled { cursor: not-allowed; opacity: .54; }
+.footerCancelButton:focus-visible { outline: 3px solid rgba(160, 79, 72, .2); outline-offset: 2px; }
+.footerDeleteButton { display: inline-flex; min-height: 43px; align-items: center; justify-content: center; padding: 0 13px; gap: 6px; color: #a13f39; background: #fff7f6; border: 1px solid #dfb4b0; border-radius: 9px; font-weight: 720; cursor: pointer; }
+.footerDeleteButton:disabled { cursor: not-allowed; opacity: .54; }
+.footerDeleteButton:focus-visible { outline: 3px solid rgba(161, 63, 57, .2); outline-offset: 2px; }
 .readOnlyLabel { color: #87949c; font-size: 12px; font-weight: 650; }
 .spinner { animation: spin .8s linear infinite; }
 
@@ -525,9 +537,6 @@
   .detailBody { padding: 12px; }
   .workflowProgress { padding-inline: 9px; }
   .workflowProgress li { gap: 4px; font-size: 10px; }
-  .visitActions { display: grid; grid-template-columns: 1fr 1fr; }
-  .visitActions > :only-child { grid-column: 1 / -1; }
-  .visitActions .mapButton { width: 100%; margin: 0; }
   .panel { padding: 14px; }
   .photoGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .stickyFooter { padding-inline: 12px; }
@@ -559,10 +568,13 @@
   .photoActions { grid-template-columns: 1fr; }
   .cameraButton,
   .uploadButton { min-height: 64px; }
-  .dangerZone { align-items: stretch; flex-direction: column; }
-  .dangerZone button { justify-content: center; }
-  .stickyFooter > div { display: none; }
-  .stickyFooter .primaryButton { width: 100%; }
+  .footerStatus { display: none; }
+  .footerActions { display: grid; width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-left: 0; }
+  .footerActions .mapButton,
+  .footerActions .footerCancelButton,
+  .footerActions .footerDeleteButton { width: 100%; }
+  .footerActions .primaryButton,
+  .footerActions .readOnlyLabel { width: 100%; grid-column: 1 / -1; }
   .readOnlyLabel { width: 100%; text-align: center; }
 }
 

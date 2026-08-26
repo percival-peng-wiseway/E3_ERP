@@ -18,6 +18,7 @@ export const PAYMENT_TRACK_SCHEDULE_ASSIGNEES = ["Leo", "Daniel"] as const;
 export type PaymentTrackScheduleAssignee = (typeof PAYMENT_TRACK_SCHEDULE_ASSIGNEES)[number];
 
 export const PAYMENT_TRACK_ACTIONS = [
+  "acknowledge_deposit",
   "confirm_deposit",
   "schedule_delivery",
   "mark_delivered",
@@ -32,10 +33,13 @@ export const PAYMENT_TRACK_ACTIONS = [
   "confirm_stc_solar",
   "confirm_stc_battery",
   "confirm_solar_rebate",
+  "skip_stage",
   "update_pm_notes",
 ] as const;
 
 export type PaymentTrackAction = (typeof PAYMENT_TRACK_ACTIONS)[number];
+
+export const PAYMENT_TRACK_STAGE_SKIP_REASON_MAX_LENGTH = 500;
 
 export type PaymentTrackFileKind =
   | "contract"
@@ -103,6 +107,7 @@ export type PaymentTrackHistoryAction =
   | "created_manually"
   | "contract_imported"
   | "deposit_proof_uploaded"
+  | "deposit_acknowledged"
   | "deposit_confirmed"
   | "delivery_scheduled"
   | "marked_delivered"
@@ -120,6 +125,7 @@ export type PaymentTrackHistoryAction =
   | "stc_battery_confirmed"
   | "solar_rebate_requirement_backfilled"
   | "solar_rebate_confirmed"
+  | "stage_skipped"
   | "pm_notes_updated"
   | "completed";
 

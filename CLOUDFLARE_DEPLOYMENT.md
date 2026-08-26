@@ -45,7 +45,7 @@ Optional read-only dashboard/Agent data sources:
 - `ERP_QUOTATION_API_URL`
 - `ERP_API_TOKEN`
 
-The eight employee accounts are built in as usernames, roles and salted password verifiers. Plain-text passwords are not stored in Git. Do not put real secrets in `wrangler.jsonc`, `.env.example`, or `.dev.vars.example`.
+The initial employee accounts are seeded into `ERP_DB` by migration, and subsequent account, role, status and password changes are made under **Settings → User Management**. Only salted scrypt password verifiers are stored; plain-text passwords are not retained. Do not put real secrets in `wrangler.jsonc`, `.env.example`, or `.dev.vars.example`.
 
 Before exposing the login page publicly, add a Cloudflare WAF rate-limit rule for `POST /api/auth/login`. The application also applies bounded per-IP and per-account protection, but Worker instances do not share in-memory counters; the Cloudflare rule provides the deployment-wide limit.
 
@@ -66,7 +66,7 @@ Inventory and QuoteHelp continue to save to their existing upstream services, so
 
 Worker-hosted business modules use the resources declared in `wrangler.jsonc`:
 
-- `ERP_DB` (D1) stores normalized Files directory metadata plus versioned Project Track, Project Schedule, Site Visiting, Reimbursements, Reports, Group Chat, Public Announcements and saved Agent-settings documents. Files item mutations use row versions, while document updates use compare-and-swap retries, so separate Worker isolates cannot silently overwrite one another.
+- `ERP_DB` (D1) stores the normalized employee directory and Files metadata plus versioned Project Track, Project Schedule, Site Visiting, Reimbursements, Reports, Group Chat, Public Announcements and saved Agent-settings documents. Employee rows carry audit fields, optimistic row versions and session versions; changing an account invalidates its earlier signed sessions. Files item mutations use row versions, while document updates use compare-and-swap retries, so separate Worker isolates cannot silently overwrite one another.
 - `ERP_FILES` (private Workers KV) stores Files blobs plus immutable Project Track contracts/payment proofs, Site Visiting photos and Reimbursement invoices. Files downloads require an ERP session; workflow attachments retain their per-file access controls.
 - Local development continues to use the corresponding `.data` files, so Node-based development and focused repository tests do not need Cloudflare bindings.
 

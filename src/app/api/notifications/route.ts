@@ -22,16 +22,18 @@ export async function GET(request: Request) {
       }, { status: 401 });
     }
 
-    const result = await buildWorkspaceNotifications(session.user.role, {
-      includeReimbursements: session.user.role === "admin" || isReimbursementAdmin(request),
+    const notificationRole = session.user.role === "specialist" ? "sales" : session.user.role;
+    const result = await buildWorkspaceNotifications(notificationRole, {
+      includeReimbursements: notificationRole === "admin" || isReimbursementAdmin(request),
+      username: session.user.username,
     });
     const visibleCount = result.data.notifications.length;
     result.data.counts = {
       all: visibleCount,
-      sales: session.user.role === "sales" ? visibleCount : 0,
-      specialist: session.user.role === "specialist" ? visibleCount : 0,
-      pm: session.user.role === "pm" ? visibleCount : 0,
-      admin: session.user.role === "admin" ? visibleCount : 0,
+      sales: notificationRole === "sales" ? visibleCount : 0,
+      specialist: 0,
+      pm: notificationRole === "pm" ? visibleCount : 0,
+      admin: notificationRole === "admin" ? visibleCount : 0,
     };
     return noStoreJson(result);
   } catch {

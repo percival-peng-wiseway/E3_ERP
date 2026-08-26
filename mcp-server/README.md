@@ -2,7 +2,7 @@
 
 This is a read-only MCP server for ERP agents. It currently exposes the inventory and quotation modules. Finance and project management are marked as `comingSoon` in the summary, and the server does not provide placeholder query tools for them.
 
-By default, data comes from [`src/demo-data.ts`](./src/demo-data.ts). When `ERP_WORKSPACE_API_URL` is set, the MCP server reads the connected inventory and quotation applications through the workspace's unified API. Every tool has `readOnlyHint: true` and does not modify business data.
+`ERP_WORKSPACE_API_URL` and its matching internal `ERP_WORKSPACE_API_TOKEN` are required. The MCP server reads the connected inventory and quotation applications through the workspace's unified API and fails closed when a live source is unavailable. Because a server-to-server MCP request has no employee browser cookie, the workspace deployment must also configure `ERP_QUOTATION_API_URL` (and `ERP_API_TOKEN` when that source requires one) for MCP quotation tools; the browser-only QuoteHelp session cannot authenticate an MCP process. The old `src/demo-data.ts` file now supplies types and status helpers only; its example records are never loaded by the data source. Every tool has `readOnlyHint: true` and does not modify business data.
 
 ## Tools
 
@@ -42,6 +42,12 @@ Type checking:
 npm run typecheck
 ```
 
+Tests:
+
+```bash
+npm test
+```
+
 ## MCP client configuration
 
 Run `npm run build`, then add the absolute path to an MCP host that supports stdio:
@@ -69,7 +75,7 @@ To use live data from the applications connected to the workspace:
       "args": ["/absolute/path/to/ERP/mcp-server/dist/index.js"],
       "env": {
         "ERP_WORKSPACE_API_URL": "http://localhost:3000",
-        "ERP_WORKSPACE_API_TOKEN": ""
+        "ERP_WORKSPACE_API_TOKEN": "the workspace ERP_INTERNAL_API_TOKEN"
       }
     }
   }

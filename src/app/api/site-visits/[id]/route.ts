@@ -23,7 +23,7 @@ export const runtime = "nodejs";
 
 const MAX_JSON_SIZE = 128 * 1024;
 const ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const PM_ADMIN_ACTIONS = new Set<SiteVisitAction>(["schedule", "reopen", "cancel", "restore"]);
+const PM_ADMIN_ACTIONS = new Set<SiteVisitAction>(["approve", "schedule", "reopen", "cancel", "restore"]);
 
 async function siteVisitId(context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
@@ -82,9 +82,6 @@ export async function PATCH(
     const actor: SiteVisitActor = session
       ? { role: session.user.role, name: session.user.displayName }
       : { role: "admin", name: "Internal API" };
-    if (input.action === "approve" && actor.role !== "admin") {
-      return siteVisitError(403, "role_forbidden", "Only an Administrator can approve site visits.");
-    }
     if (PM_ADMIN_ACTIONS.has(input.action) && actor.role !== "pm" && actor.role !== "admin") {
       return siteVisitError(
         403,

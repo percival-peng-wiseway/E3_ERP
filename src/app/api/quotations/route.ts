@@ -30,7 +30,7 @@ export async function GET(request: Request) {
           : undefined,
       limit: positiveInteger(url.searchParams.get("limit")),
     };
-    const provider = getERPProvider();
+    const provider = getERPProvider(request);
     const data = await provider.listQuotations(query);
 
     return NextResponse.json({

@@ -4,22 +4,32 @@
 
 # E3 ERP
 
-An ERPNext-inspired operations workspace that brings Inventory, QuoteHelp, Project Track delivery and payment workflows, and employee reimbursements into one native interface.
+An ERPNext-inspired operations workspace that brings shared Files, Inventory, QuoteHelp, Project Track delivery and payment workflows, and employee reimbursements into one native interface.
 
 The application no longer uses iframes. The browser calls same-origin ERP APIs, and controlled server-side proxies connect to the existing Inventory and QuoteHelp services. Existing data, accounts and business rules remain in use.
 
-Employee access is protected by a unified ERP sign-in. The server issues a signed, HttpOnly session cookie and keeps salted password verifiers out of the browser bundle. Current employee account roles are Administrator, Project Manager and Sales; authenticated administrators inherit the protected Reimbursements and Project Track administration permissions.
+Employee access is protected by a unified ERP sign-in. The server issues a signed, HttpOnly session cookie and keeps salted password verifiers out of the browser bundle. Employee accounts are managed in Cloudflare D1 with Administrator, Project Manager and Sales roles; authenticated administrators inherit the protected Reimbursements and Project Track administration permissions.
 
 ## Current modules
+
+### Files
+
+- Shared company file space for every signed-in employee, with folders, breadcrumbs, search and sorting
+- Create folders and upload PDF, image, text, CSV, Word, Excel and PowerPoint files up to 20 MiB each
+- Drag-and-drop and multi-file upload queue, safe image/PDF preview and protected downloads
+- Creators can rename, move, trash and restore their own items; Administrators can manage all items and permanently purge Trash
+- D1-backed directory metadata provides optimistic concurrency, duplicate-name protection, quotas and cycle-safe folder moves
 
 ### Home and Agent
 
 - Home shows role-specific action reminders and Admin-managed public announcements on the left, with E3 Agent on the right
 - Sales reminders are limited to actionable Project Track collections; PM receives only delivery and installation scheduling reminders; Admin receives submitted payment confirmations and reimbursement actions
-- The OpenAI-compatible Ollama endpoint answers questions across Inventory, Quotations, Project Management deliveries, Project Track, Reimbursements, Reports and public announcements using bounded read-only tools
+- The E3 Agent Harness answers questions across seven bounded, read-only business Skills: Inventory, Quotations, Project Management, Project Track, Site Visiting, Reimbursements and Reports
+- Common operational queries use deterministic workflows before any model call; open-ended questions use the configured OpenAI-compatible endpoint
+- Each request emits a privacy-safe trace containing only workflow/tool names, status and duration
 - `qwen3.5:9b` is the default model; the other models advertised by the endpoint can be selected from Settings
 - The current endpoint does not require an API key; an optional key remains supported for future compatible endpoints
-- If the endpoint is unavailable, basic local summaries remain available
+- If the endpoint is unavailable, deterministic workflows and basic local summaries remain available
 - Payment proof URLs, reimbursement invoice URLs, access tokens, cookies and API keys are never included in model tool results
 
 ### Inventory
@@ -44,6 +54,8 @@ Employee access is protected by a unified ERP sign-in. The server issues a signe
 ### Project Management
 
 - ERPNext-style delivery Kanban
+- Weekly Schedule combines Project Track material deliveries and Inventory dispatches under one Material Delivery view
+- Site Visiting requests with a confirmed visit date and time appear automatically in Weekly Schedule
 - Four stages: Pending PM Review, Scheduled, Today and Delivered
 - A task appears automatically in Pending PM Review when New Order is submitted in Inventory
 - PM users assign the address, date, driver and driver email before scheduling delivery
@@ -72,17 +84,19 @@ Employee access is protected by a unified ERP sign-in. The server issues a signe
 ### Project Track
 
 - Sales can import an E3 Solar Proposal PDF or create a project manually
-- Proposal import extracts the Specialist, Proposal Number, customer details, system items, expected deposit and printed Balance Due
+- Proposal import extracts the Sales representative, Proposal Number, customer details, system items, expected deposit and printed Balance Due
 - Six-stage Kanban: Deposit Not Paid, Material Delivery, Installing, Installed / Waiting COES, STC Rebate and Done
-- Specialist uploads deposit proof; Admin confirms the actual amount received, including zero
+- Sales uploads deposit proof or confirms payment without a file; Admin confirms the actual amount received, including zero
 - Project Managers schedule material delivery, mark delivery and installation complete, and confirm COES receipt
 - After delivery, Sales marks the customer payment as received without uploading a file; Admin records the actual amount before installation begins
 - Applicable Solar and Battery STC receipts are confirmed separately before completion
 - Installed / Waiting COES, STC Rebate and Done projects support repeatable Sales payment acknowledgements followed by Admin amount confirmation; partial or zero receipts remain collectible until the Amount Due reaches zero
 - Only the initial deposit requires a payment screenshot or PDF; every successful workflow action closes Project Details
 - Cards show the live remaining Amount Due, while Project Details retains the original proposal, every proof and the final-payment ledger
+- Administrators can override a stage completed outside ERP only with a reason and a current project version; pending payment reviews cannot be bypassed
+- Project Details includes a read-only Activity history with the actor, time, action and override details
 
-Project Track starts from the signed-in employee role. PM and Sales accounts cannot switch roles; Administrator accounts can cover Sales, PM and Specialist workflow steps until a dedicated Specialist account is added. The API verifies the signed-in role instead of trusting the role submitted by the browser.
+Project Track starts from the signed-in employee role. PM and Sales accounts cannot switch roles; Administrator accounts can cover Sales and PM workflow steps. The API verifies the signed-in role instead of trusting the role submitted by the browser.
 
 ### Reports
 
@@ -126,11 +140,12 @@ Production validation:
 
 ```bash
 npm run typecheck
+npm test
 npm run build
 npm start
 ```
 
-Cloudflare Workers deployment is preconfigured with OpenNext. See [CLOUDFLARE_DEPLOYMENT.md](./CLOUDFLARE_DEPLOYMENT.md) for the GitHub import settings, required secrets and current persistent-storage limitation.
+Cloudflare Workers deployment is preconfigured with OpenNext. See [CLOUDFLARE_DEPLOYMENT.md](./CLOUDFLARE_DEPLOYMENT.md) for the GitHub import settings, required secrets and persistent-storage configuration.
 
 ## Service configuration
 
@@ -158,7 +173,7 @@ GROUP_CHAT_DATA_DIR=
 - Agent and Agent Settings writes are same-origin protected and body-size limited. Local development stores the optional API key in a private `0700` directory using an atomic `0600` file; Cloudflare production stores saved settings in server-side D1. The key is returned only as a masked configured state, and a Cloudflare Secret remains preferred for production credentials.
 - The model connection is restricted to approved HTTPS hosts. Model tools strictly validate their arguments and return bounded, sanitised, read-only records.
 
-The home summary and retained read-only Agent/MCP APIs can use separate unified data sources:
+The unified read-only APIs use the live Inventory Operations service and the authenticated QuoteHelp session. An explicit quotation API can optionally replace the QuoteHelp session source:
 
 ```dotenv
 ERP_INVENTORY_API_URL=
@@ -166,7 +181,19 @@ ERP_QUOTATION_API_URL=
 ERP_API_TOKEN=
 ```
 
-When these are empty, the summary uses the included English demo data. This does not affect the native Inventory and QuoteHelp modules.
+When these overrides are empty, Inventory uses `INVENTORY_OPERATIONS_API_URL` and Quotations uses `QUOTEHELP_APP_URL`. Live-source failures are fail-closed: demo data is never substituted into Agent, Dashboard, Inventory or Quotations responses. After this change, users with an existing QuoteHelp login may need to sign in to QuoteHelp once more so its namespaced session cookie is available to the unified read-only routes.
+
+Agent source health and evals:
+
+```bash
+# Authenticated health check (in the signed-in application)
+GET /api/agent/health
+
+# Run seven live deterministic business evals against a running deployment
+E3_EVAL_BASE_URL=http://localhost:3000 E3_EVAL_COOKIE='your ERP session cookies' npm run eval:agent
+```
+
+The eval runner uses live business sources and checks workflow selection plus answer availability. It does not store business records in the repository.
 
 Reimbursements use local private storage by default:
 
@@ -176,13 +203,12 @@ REIMBURSEMENT_ADMIN_PASSWORD=
 REIMBURSEMENT_SESSION_SECRET=
 REPORTS_DATA_DIR=
 PAYMENT_TRACK_DATA_DIR=
-PAYMENT_TRACK_ENFORCE_UNIQUE_PROPOSAL=false
 SITE_VISIT_DATA_DIR=
 ```
 
-Local development includes the legacy Admin demo password `admin` for the module-specific fallback. Production employee login requires `ERP_AUTH_SESSION_SECRET` with at least 32 random characters. Cloudflare production uses D1 for the app's structured records and private Workers KV for Project Track files, Site Visiting photos and Reimbursement invoices; local development retains the `.data` fallback. Company SSO can replace the built-in employee directory later without changing the module APIs.
+Local development includes the legacy Admin demo password `admin` for the module-specific fallback. Production employee login requires `ERP_AUTH_SESSION_SECRET` with at least 32 random characters. Cloudflare production uses D1 for employee accounts and the app's other structured records, plus private Workers KV for Files blobs, Project Track files, Site Visiting photos and Reimbursement invoices; local development retains the `.data` fallback. Administrators manage employees under **Settings → User Management**. Account changes increment a server-checked session version, immediately invalidating that employee's existing sessions.
 
-Project Track currently allows repeated Proposal Numbers so the same proposal can be uploaded more than once during testing. Set `PAYMENT_TRACK_ENFORCE_UNIQUE_PROPOSAL=true` when testing is complete to restore the duplicate check. Every duplicate still receives its own project ID, `PAY-...` reference and stored contract file.
+Project Track rejects repeated Proposal Numbers across both PDF imports and manual projects. The comparison ignores letter case and surrounding whitespace, and duplicate attempts return a conflict without creating another project or contract file.
 
 ## Web APIs
 
@@ -191,8 +217,15 @@ Project Track currently allows repeated Proposal Numbers so the same proposal ca
 | `POST /api/auth/login` | Validate an employee account and create a signed session |
 | `GET /api/auth/session` | Return the current employee identity and role |
 | `POST /api/auth/logout` | Clear the employee session |
+| `GET/POST /api/settings/users` | List or create employee accounts as Administrator |
+| `PATCH /api/settings/users/:username` | Change an employee's name, role, status or password as Administrator |
 | `GET/POST /api/inventory/operations` | Controlled proxy for native Inventory and delivery operations |
 | `GET/POST/PUT/DELETE /api/quotehelp/*` | Controlled proxy for native QuoteHelp operations |
+| `GET /api/files` | Browse, search and inspect the shared Files workspace or Trash |
+| `POST /api/files/folders` | Create a folder as the signed-in employee |
+| `POST /api/files/upload` | Upload one validated file up to 20 MiB |
+| `PATCH/DELETE /api/files/items/:id` | Rename, move, trash, restore or Admin-purge an item |
+| `GET /api/files/items/:id/content` | Protected preview or download of a stored file |
 | `GET /api/inventory` | Unified read-only inventory list |
 | `GET /api/quotations` | Unified read-only quotation list |
 | `GET /api/dashboard` | Home inventory, alert and quotation summary |
@@ -216,11 +249,12 @@ Project Track currently allows repeated Proposal Numbers so the same proposal ca
 | `GET/POST /api/project-schedule` | List or create custom Weekly Schedule jobs |
 | `PATCH/DELETE /api/project-schedule/:id` | Update a custom job or permanently remove it as Administrator |
 | `POST /api/agent` | OpenAI-compatible model-backed read-only questions across ERP workspaces, with a local fallback |
+| `GET /api/agent/health` | Verify all seven E3 Agent business data sources without returning business records |
 | `GET/PUT/DELETE /api/settings/agent` | Masked Agent configuration, secure save and environment fallback |
 
 ## MCP Server
 
-`mcp-server` retains six read-only tools: inventory list, inventory item, low stock, quotation list, quotation detail and ERP summary. It cannot dispatch, reschedule, delete or confirm delivery.
+`mcp-server` retains six read-only tools: inventory list, inventory item, low stock, quotation list, quotation detail and ERP summary. It requires `ERP_WORKSPACE_API_URL` plus the matching internal token, has no demo fallback, and cannot dispatch, reschedule, delete or confirm delivery. MCP quotation tools also require the workspace to configure `ERP_QUOTATION_API_URL`, because a server-to-server MCP process cannot reuse an employee's browser-only QuoteHelp session.
 
 ```bash
 cd mcp-server
@@ -235,9 +269,13 @@ See `mcp-server/README.md` for details.
 
 ```text
 src/components/erp-workspace.tsx                  Authenticated ERPNext-style application shell
+src/components/files-workspace.tsx                Shared folder and file workspace
 src/app/login/                                    Mobile-first employee sign-in
 src/app/api/auth/                                 Employee login, session and logout APIs
+src/app/api/settings/users/                       Administrator-only employee management APIs
+src/app/api/files/                                Folder, upload, item and protected-content APIs
 src/lib/auth/                                     Account verifiers, roles and signed session handling
+src/lib/workspace-files/                          File metadata, storage and request validation
 src/middleware.ts                                 Cloudflare-compatible global page/API authentication boundary
 src/components/inventory-operations-workspace.tsx Native Inventory module
 src/components/quotehelp-workspace.tsx            Native quotation module
@@ -262,9 +300,9 @@ mcp-server/                                        Optional read-only MCP Server
 
 ## Production security requirements
 
-The current version includes a unified built-in employee identity and role system. Before broader external production access:
+The current version includes a unified D1-backed employee identity and role system. Before broader external production access:
 
-1. Replace the built-in directory with company SSO or Clerk when central onboarding, offboarding and password recovery are required.
+1. Consider company SSO or Clerk later if central identity-provider onboarding, MFA or self-service password recovery is required.
 2. Confirm detailed per-module permissions beyond the enforced Project Track roles; hidden buttons are not authorisation.
 3. Add distributed login rate limits, audit logs and operational alerts.
 4. Confirm that the upstream Inventory and QuoteHelp cookie policies match the final HTTPS ERP domain.

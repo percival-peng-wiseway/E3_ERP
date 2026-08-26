@@ -1,4 +1,3 @@
-import { DemoProvider } from "./demo-provider";
 import type { ERPProvider } from "./provider";
 import type {
   ERPDataSource,
@@ -17,7 +16,6 @@ export interface HttpProviderOptions {
   inventoryUrl?: string;
   quotationUrl?: string;
   token?: string;
-  fallback?: ERPProvider;
 }
 
 function isRecord(value: unknown): value is UnknownRecord {
@@ -30,6 +28,20 @@ function firstValue(record: UnknownRecord, keys: string[]): unknown {
     if (value !== undefined && value !== null && value !== "") return value;
   }
   return undefined;
+}
+
+function hasValue(record: UnknownRecord, keys: string[]): boolean {
+  return firstValue(record, keys) !== undefined;
+}
+
+function isInventoryRecord(record: UnknownRecord): boolean {
+  return hasValue(record, ["id", "name", "item_id", "sku", "item_code", "code"])
+    && hasValue(record, ["onHand", "on_hand", "stock", "actual_qty", "stock_qty", "qty", "available", "available_qty", "free_qty", "projected_qty"]);
+}
+
+function isQuotationRecord(record: UnknownRecord): boolean {
+  return hasValue(record, ["id", "name", "quotation_id", "number", "quotation_number"])
+    && hasValue(record, ["customer", "customer_name", "party_name"]);
 }
 
 function textValue(record: UnknownRecord, keys: string[], fallback = ""): string {
@@ -56,25 +68,32 @@ function optionalText(record: UnknownRecord, keys: string[]): string | undefined
 }
 
 function asRecords(payload: unknown): UnknownRecord[] {
-  if (Array.isArray(payload)) return payload.filter(isRecord);
-  if (!isRecord(payload)) return [];
+  if (Array.isArray(payload)) {
+    if (!payload.every(isRecord)) throw new Error("The upstream ERP API returned an invalid record list.");
+    return payload;
+  }
+  if (!isRecord(payload)) throw new Error("The upstream ERP API returned an invalid record list.");
 
   const candidates = [
     payload.data,
     payload.inventory,
+    payload.quotations,
     payload.items,
     payload.results,
     payload.message,
     isRecord(payload.data) ? payload.data.inventory : undefined,
+    isRecord(payload.data) ? payload.data.quotations : undefined,
     isRecord(payload.data) ? payload.data.items : undefined,
     isRecord(payload.data) ? payload.data.results : undefined,
   ];
 
   for (const candidate of candidates) {
-    if (Array.isArray(candidate)) return candidate.filter(isRecord);
+    if (!Array.isArray(candidate)) continue;
+    if (!candidate.every(isRecord)) throw new Error("The upstream ERP API returned an invalid record list.");
+    return candidate;
   }
 
-  return [payload];
+  throw new Error("The upstream ERP API returned an invalid record list.");
 }
 
 function normalizedInventoryStatusValue(value: unknown): string {
@@ -268,14 +287,12 @@ export class HttpProvider implements ERPProvider {
   private readonly inventoryUrl?: string;
   private readonly quotationUrl?: string;
   private readonly token?: string;
-  private readonly fallback: ERPProvider;
 
   constructor(options: HttpProviderOptions) {
     this.inventoryUrl = options.inventoryUrl?.trim() || undefined;
     this.quotationUrl = options.quotationUrl?.trim() || undefined;
     this.token = options.token?.trim() || undefined;
-    this.fallback = options.fallback ?? new DemoProvider();
-    this.source = this.inventoryUrl && this.quotationUrl ? "http" : "hybrid";
+    this.source = "http";
   }
 
   private async fetchRecords(url: string): Promise<UnknownRecord[]> {
@@ -295,8 +312,9 @@ export class HttpProvider implements ERPProvider {
   }
 
   async listInventory(query: InventoryQuery = {}): Promise<InventoryItem[]> {
-    if (!this.inventoryUrl) return this.fallback.listInventory(query);
+    if (!this.inventoryUrl) throw new Error("Live inventory source is not configured.");
     const records = await this.fetchRecords(this.inventoryUrl);
+    if (!records.every(isInventoryRecord)) throw new Error("The upstream ERP API returned invalid inventory records.");
     return applyInventoryQuery(records.map(normalizeInventory), query);
   }
 
@@ -314,8 +332,9 @@ export class HttpProvider implements ERPProvider {
   }
 
   async listQuotations(query: QuotationQuery = {}): Promise<Quotation[]> {
-    if (!this.quotationUrl) return this.fallback.listQuotations(query);
+    if (!this.quotationUrl) throw new Error("Live quotation source is not configured.");
     const records = await this.fetchRecords(this.quotationUrl);
+    if (!records.every(isQuotationRecord)) throw new Error("The upstream ERP API returned invalid quotation records.");
     return applyQuotationQuery(records.map(normalizeQuotation), query);
   }
 

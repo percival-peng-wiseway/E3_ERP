@@ -17,6 +17,7 @@ export type WorkspaceNotification = {
   badgeLabel?: string;
   projectCreatedAt?: string;
   ownerName?: string;
+  assigneeUsername?: string;
   title: string;
   description: string;
   module: NotificationModule;

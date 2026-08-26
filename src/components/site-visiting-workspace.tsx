@@ -657,7 +657,7 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
     }
   }
 
-  const canApprove = authenticatedRole === "admin";
+  const canApprove = authenticatedRole === "admin" || authenticatedRole === "pm";
   const canSchedule = authenticatedRole === "admin" || authenticatedRole === "pm";
   const requestEditable = detail?.status === "pending_approval";
   const visitEditable = detail?.status === "scheduled" || detail?.status === "in_progress";
@@ -794,8 +794,8 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
                   <section className={`${styles.panel} ${styles.stagePanel}`}>
                     <div className={styles.panelTitle}><span><CheckCircle2 size={18} /></span><div><h3>Approval</h3><p>The request must be approved before scheduling</p></div></div>
                     <div className={styles.stageCallout}>
-                      <strong>{canApprove ? "Review this request" : "Awaiting administrator approval"}</strong>
-                      <p>{canApprove ? "Confirm the customer details, reason and preferred time, then approve the request." : "An administrator will review this request. Site checks and photos unlock after it is scheduled."}</p>
+                      <strong>{canApprove ? "Review this request" : "Awaiting Project Manager approval"}</strong>
+                      <p>{canApprove ? "Confirm the customer details, reason and preferred time, then approve the request." : "A Project Manager will review this request. Site checks and photos unlock after it is scheduled."}</p>
                     </div>
                   </section>
                 ) : detail.status === "cancelled" && !hasActualSchedule(detail) ? (
@@ -914,26 +914,23 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
                 </>
               ) : null}
 
-              <div className={styles.visitActions}>
+            </div>
+
+            <div className={styles.stickyFooter}>
+              <div className={styles.footerStatus}>{detailDirty ? "You have unsaved changes" : requestEditable || visitEditable ? "All changes saved" : "Read only at this stage"}</div>
+              <div className={styles.footerActions}>
                 {detail.status === "pending_approval" && canApprove ? <button type="button" className={styles.approveButton} onClick={() => void runWorkflowAction("approve", "Site visit approved and ready to schedule.")} disabled={busy}><CheckCircle2 size={18} />Approve request</button> : null}
                 {detail.status === "scheduled" ? <button type="button" className={styles.startButton} onClick={() => void runWorkflowAction("start", "Site visit started.")} disabled={busy}><Navigation size={18} />Start visit</button> : null}
                 {detail.status === "in_progress" ? <button type="button" className={styles.completeButton} onClick={() => void runWorkflowAction("complete", "Site visit completed.")} disabled={busy}><CheckCircle2 size={18} />Complete visit</button> : null}
                 {detail.status === "completed" && canSchedule ? <button type="button" className={styles.secondaryButton} onClick={() => void runWorkflowAction("reopen", "Site visit reopened.")} disabled={busy}>Reopen visit</button> : null}
                 {detail.status === "cancelled" && canSchedule ? <button type="button" className={styles.secondaryButton} onClick={() => void runWorkflowAction("restore", "Site visit restored.")} disabled={busy}>Restore visit</button> : null}
                 <a className={styles.mapButton} href={mapsUrl(detail.address)} target="_blank" rel="noreferrer"><Navigation size={17} />Directions</a>
+                {canSchedule && detail.status !== "cancelled" && detail.status !== "completed" ? <button className={styles.footerCancelButton} type="button" onClick={() => void runWorkflowAction("cancel", detail.status === "pending_approval" ? "Site visit request cancelled." : "Site visit cancelled.")} disabled={busy}>{detail.status === "pending_approval" ? "Cancel request" : "Cancel visit"}</button> : null}
+                {authenticatedRole === "admin" ? <button className={styles.footerDeleteButton} type="button" onClick={() => void deleteVisit()} disabled={busy}><Trash2 size={16} />Delete visit</button> : null}
+                {requestEditable || visitEditable ? <button type="button" className={styles.primaryButton} onClick={() => void saveDetail()} disabled={busy || !detailDirty}>
+                  {busy ? <LoaderCircle className={styles.spinner} size={18} /> : <Save size={18} />}Save changes
+                </button> : <span className={styles.readOnlyLabel}>No editable site fields</span>}
               </div>
-
-              <div className={styles.dangerZone}>
-                {canSchedule && detail.status !== "cancelled" && detail.status !== "completed" ? <button type="button" onClick={() => void runWorkflowAction("cancel", detail.status === "pending_approval" ? "Site visit request cancelled." : "Site visit cancelled.")} disabled={busy}>{detail.status === "pending_approval" ? "Cancel request" : "Cancel visit"}</button> : null}
-                {authenticatedRole === "admin" ? <button type="button" onClick={() => void deleteVisit()} disabled={busy}><Trash2 size={16} />Delete visit</button> : null}
-              </div>
-            </div>
-
-            <div className={styles.stickyFooter}>
-              <div>{detailDirty ? "You have unsaved changes" : requestEditable || visitEditable ? "All changes saved" : "Read only at this stage"}</div>
-              {requestEditable || visitEditable ? <button type="button" className={styles.primaryButton} onClick={() => void saveDetail()} disabled={busy || !detailDirty}>
-                {busy ? <LoaderCircle className={styles.spinner} size={18} /> : <Save size={18} />}Save changes
-              </button> : <span className={styles.readOnlyLabel}>No editable site fields</span>}
             </div>
           </section>
         </div>
@@ -964,23 +961,27 @@ function WorkflowProgress({ status, compact = false }: { status: SiteVisitStatus
   const currentIndex = status === "cancelled"
     ? -1
     : WORKFLOW_STAGES.findIndex((stage) => stage.status === status);
+  const workflowFinished = status === "completed";
   return (
     <ol
       className={`${styles.workflowProgress} ${compact ? styles.compactWorkflow : ""}`}
       aria-label={`Site visit workflow: ${STATUS_LABELS[status]}`}
     >
-      {WORKFLOW_STAGES.map((stage, index) => (
-        <li
-          key={stage.status}
-          className={currentIndex === index
-            ? styles.workflowCurrent
-            : currentIndex > index ? styles.workflowComplete : ""}
-          aria-current={currentIndex === index ? "step" : undefined}
-        >
-          <i aria-hidden="true">{currentIndex > index ? <Check size={11} /> : index + 1}</i>
-          <span>{stage.label}</span>
-        </li>
-      ))}
+      {WORKFLOW_STAGES.map((stage, index) => {
+        const stepComplete = currentIndex > index || (workflowFinished && currentIndex === index);
+        return (
+          <li
+            key={stage.status}
+            className={stepComplete
+              ? styles.workflowComplete
+              : currentIndex === index ? styles.workflowCurrent : ""}
+            aria-current={currentIndex === index ? "step" : undefined}
+          >
+            <i aria-hidden="true">{stepComplete ? <Check size={11} /> : index + 1}</i>
+            <span>{stage.label}</span>
+          </li>
+        );
+      })}
     </ol>
   );
 }
@@ -993,7 +994,7 @@ function VisitCard({ visit, onOpen }: { visit: SiteVisit; onOpen: (trigger: HTML
   const displayDate = actualSchedule ? visit.scheduledDate : visit.requestedDate;
   const displayTime = actualSchedule ? visit.scheduledTime : visit.requestedTime;
   return (
-    <article className={styles.visitCard}>
+    <article className={`${styles.visitCard} ${visit.status === "completed" ? styles.completedVisitCard : ""}`}>
       <div className={styles.cardTop}>
         <StatusBadge status={visit.status} />
         {today && visit.status !== "cancelled" && <span className={styles.todayBadge}>Today</span>}

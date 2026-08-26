@@ -102,7 +102,7 @@ async function createInstallingProject(options: {
     project = await createManualPaymentTrackProject(input);
   }
 
-  project = await uploadPaymentTrackProof(project.id, "deposit", "specialist", {
+  project = await uploadPaymentTrackProof(project.id, "deposit", "sales", {
     bytes: new Uint8Array([0xff, 0xd8, 0xff]),
     originalName: "deposit.jpg",
     contentType: "image/jpeg",
@@ -177,6 +177,341 @@ function createPmNotesProject() {
     solarRebateRequired: false,
   });
 }
+
+test("only an Administrator can skip completed real-world stages without changing payment balances", async () => {
+  let project = await createPmNotesProject();
+  const reason = "Stage was completed and verified before it was entered in ERP.";
+
+  await assert.rejects(
+    transitionPaymentTrackProject(project.id, "skip_stage", {
+      actorRole: "pm",
+      reason,
+      expectedUpdatedAt: project.updatedAt,
+    }),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError && error.code === "role_forbidden",
+  );
+  await assert.rejects(
+    transitionPaymentTrackProject(project.id, "skip_stage", {
+      actorRole: "admin",
+      reason: "   ",
+      expectedUpdatedAt: project.updatedAt,
+    }),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError
+      && error.status === 400
+      && error.code === "invalid_skip_reason",
+  );
+  await assert.rejects(
+    transitionPaymentTrackProject(project.id, "skip_stage", {
+      actorRole: "admin",
+      reason: "x".repeat(501),
+      expectedUpdatedAt: project.updatedAt,
+    }),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError
+      && error.status === 400
+      && error.code === "invalid_skip_reason",
+  );
+  await assert.rejects(
+    transitionPaymentTrackProject(project.id, "skip_stage", { actorRole: "admin", reason }),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError
+      && error.status === 409
+      && error.code === "stale_project",
+  );
+
+  project = await transitionPaymentTrackProject(project.id, "skip_stage", {
+    actorRole: "admin",
+    reason,
+    expectedUpdatedAt: project.updatedAt,
+  });
+  assert.equal(project.stage, "material_delivery");
+  assert.equal(project.deposit.confirmedAmountCents, null);
+  assert.equal(project.outstandingCents, 1_000);
+  let audit = project.history.filter((entry) => entry.action === "stage_skipped").at(-1);
+  assert.match(audit?.note || "", /Transition: deposit_not_paid → material_delivery/);
+  assert.match(audit?.note || "", new RegExp(`Reason: ${reason.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+  assert.match(audit?.note || "", /Fields populated: stage=material_delivery/);
+  assert.match(audit?.note || "", new RegExp(`updatedAt=${project.updatedAt}`));
+
+  project = await transitionPaymentTrackProject(project.id, "skip_stage", {
+    actorRole: "admin",
+    reason,
+    expectedUpdatedAt: project.updatedAt,
+  });
+  assert.equal(project.stage, "installing");
+  assert.ok(project.deliveredAt);
+  assert.equal(project.collection.confirmedAmountCents, null);
+  assert.equal(project.outstandingCents, 1_000);
+  audit = project.history.filter((entry) => entry.action === "stage_skipped").at(-1);
+  assert.match(audit?.note || "", new RegExp(`deliveredAt=${project.deliveredAt}`));
+
+  project = await transitionPaymentTrackProject(project.id, "skip_stage", {
+    actorRole: "admin",
+    reason,
+    expectedUpdatedAt: project.updatedAt,
+  });
+  assert.equal(project.stage, "waiting_coes");
+  assert.ok(project.installedAt);
+  audit = project.history.filter((entry) => entry.action === "stage_skipped").at(-1);
+  assert.match(audit?.note || "", new RegExp(`installedAt=${project.installedAt}`));
+
+  project = await transitionPaymentTrackProject(project.id, "skip_stage", {
+    actorRole: "admin",
+    reason,
+    expectedUpdatedAt: project.updatedAt,
+  });
+  assert.equal(project.stage, "done");
+  assert.ok(project.coesReceivedAt);
+  assert.ok(project.completedAt);
+  assert.equal(project.history.filter((entry) => entry.action === "stage_skipped").length, 4);
+  audit = project.history.filter((entry) => entry.action === "stage_skipped").at(-1);
+  assert.match(audit?.note || "", new RegExp(`coesReceivedAt=${project.coesReceivedAt}`));
+  assert.match(audit?.note || "", new RegExp(`completedAt=${project.completedAt}`));
+
+  await assert.rejects(
+    transitionPaymentTrackProject(project.id, "skip_stage", {
+      actorRole: "admin",
+      reason,
+      expectedUpdatedAt: project.updatedAt,
+    }),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError && error.code === "invalid_transition",
+  );
+});
+
+test("skipping STC Rebate records every required receipt before completion", async () => {
+  const reason = "Receipts were confirmed in the legacy finance system.";
+  let project = await createInstalledProject({
+    stcSolarRequired: true,
+    stcBatteryRequired: true,
+    solarRebateRequired: true,
+  });
+
+  project = await transitionPaymentTrackProject(project.id, "skip_stage", {
+    actorRole: "admin",
+    reason,
+    expectedUpdatedAt: project.updatedAt,
+  });
+  assert.equal(project.stage, "stc_rebate");
+  assert.ok(project.coesReceivedAt);
+
+  project = await transitionPaymentTrackProject(project.id, "skip_stage", {
+    actorRole: "admin",
+    reason,
+    expectedUpdatedAt: project.updatedAt,
+  });
+  assert.equal(project.stage, "done");
+  assert.ok(project.stcSolarReceivedAt);
+  assert.ok(project.stcBatteryReceivedAt);
+  assert.ok(project.solarRebateReceivedAt);
+  assert.ok(project.completedAt);
+  const audit = project.history.filter((entry) => entry.action === "stage_skipped").at(-1);
+  assert.match(audit?.note || "", new RegExp(`stcSolarReceivedAt=${project.stcSolarReceivedAt}`));
+  assert.match(audit?.note || "", new RegExp(`stcBatteryReceivedAt=${project.stcBatteryReceivedAt}`));
+  assert.match(audit?.note || "", new RegExp(`solarRebateReceivedAt=${project.solarRebateReceivedAt}`));
+  assert.match(audit?.note || "", new RegExp(`completedAt=${project.completedAt}`));
+});
+
+test("stage overrides never bypass a pending deposit or collection payment review", async () => {
+  const reason = "Stage was completed outside ERP.";
+  const upload = {
+    bytes: new Uint8Array([0xff, 0xd8, 0xff]),
+    originalName: "deposit.jpg",
+    contentType: "image/jpeg" as const,
+    size: 3,
+  };
+
+  let depositWithProof = await createPmNotesProject();
+  depositWithProof = await uploadPaymentTrackProof(depositWithProof.id, "deposit", "sales", upload);
+  await assert.rejects(
+    transitionPaymentTrackProject(depositWithProof.id, "skip_stage", {
+      actorRole: "admin",
+      reason,
+      expectedUpdatedAt: depositWithProof.updatedAt,
+    }),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError
+      && error.status === 409
+      && error.code === "payment_review_pending",
+  );
+
+  let acknowledgedDeposit = await createPmNotesProject();
+  acknowledgedDeposit = await transitionPaymentTrackProject(acknowledgedDeposit.id, "acknowledge_deposit", {
+    actorRole: "sales",
+  });
+  await assert.rejects(
+    transitionPaymentTrackProject(acknowledgedDeposit.id, "skip_stage", {
+      actorRole: "admin",
+      reason,
+      expectedUpdatedAt: acknowledgedDeposit.updatedAt,
+    }),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError
+      && error.status === 409
+      && error.code === "payment_review_pending",
+  );
+
+  let pendingCollection = await createPmNotesProject();
+  pendingCollection = await transitionPaymentTrackProject(pendingCollection.id, "skip_stage", {
+    actorRole: "admin",
+    reason,
+    expectedUpdatedAt: pendingCollection.updatedAt,
+  });
+  pendingCollection = await transitionPaymentTrackProject(pendingCollection.id, "schedule_delivery", {
+    actorRole: "pm",
+    deliveryDate: "2026-08-21",
+    deliveryTime: "08:30",
+    deliveryAssignee: "Leo",
+  });
+  pendingCollection = await transitionPaymentTrackProject(pendingCollection.id, "mark_delivered", {
+    actorRole: "pm",
+  });
+  pendingCollection = await transitionPaymentTrackProject(pendingCollection.id, "acknowledge_collection", {
+    actorRole: "sales",
+  });
+  await assert.rejects(
+    transitionPaymentTrackProject(pendingCollection.id, "skip_stage", {
+      actorRole: "admin",
+      reason,
+      expectedUpdatedAt: pendingCollection.updatedAt,
+    }),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError
+      && error.status === 409
+      && error.code === "payment_review_pending",
+  );
+});
+
+test("a stale Administrator stage override cannot skip the newly current stage", async () => {
+  const reason = "Stage was completed outside ERP.";
+  let project = await createPmNotesProject();
+  project = await transitionPaymentTrackProject(project.id, "skip_stage", {
+    actorRole: "admin",
+    reason,
+    expectedUpdatedAt: project.updatedAt,
+  });
+  const staleUpdatedAt = project.updatedAt;
+
+  project = await transitionPaymentTrackProject(project.id, "schedule_delivery", {
+    actorRole: "pm",
+    deliveryDate: "2026-08-21",
+    deliveryTime: "08:30",
+    deliveryAssignee: "Leo",
+  });
+  project = await transitionPaymentTrackProject(project.id, "mark_delivered", { actorRole: "pm" });
+  project = await transitionPaymentTrackProject(project.id, "acknowledge_collection", { actorRole: "sales" });
+  project = await transitionPaymentTrackProject(project.id, "confirm_collection", {
+    actorRole: "admin",
+    amountCents: 0,
+  });
+  assert.equal(project.stage, "installing");
+  assert.notEqual(project.updatedAt, staleUpdatedAt);
+
+  await assert.rejects(
+    transitionPaymentTrackProject(project.id, "skip_stage", {
+      actorRole: "admin",
+      reason,
+      expectedUpdatedAt: staleUpdatedAt,
+    }),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError
+      && error.status === 409
+      && error.code === "stale_project",
+  );
+
+  const persisted = (await listPaymentTrackProjects()).find((candidate) => candidate.id === project.id);
+  assert.equal(persisted?.stage, "installing");
+  assert.equal(persisted?.installedAt, null);
+  assert.equal(persisted?.history.filter((entry) => entry.action === "stage_skipped").length, 1);
+});
+
+test("Sales can upload deposit proof and the legacy Specialist role cannot", async () => {
+  const project = await createPmNotesProject();
+  const upload = {
+    bytes: new Uint8Array([0xff, 0xd8, 0xff]),
+    originalName: "deposit.jpg",
+    contentType: "image/jpeg" as const,
+    size: 3,
+  };
+
+  await assert.rejects(
+    uploadPaymentTrackProof(project.id, "deposit", "specialist", upload),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError && error.code === "role_forbidden",
+  );
+
+  const updated = await uploadPaymentTrackProof(project.id, "deposit", "sales", upload);
+  assert.equal(updated.deposit.proof?.uploadedByRole, "sales");
+});
+
+test("manual creation and PDF import reject an existing Proposal Number", async () => {
+  const original = await createPmNotesProject();
+  const duplicateInput = {
+    quoteNumber: `  ${original.quoteNumber.toLocaleLowerCase("en-AU")}  `,
+    specialist: original.specialist,
+    customer: original.customer,
+    items: original.items.map((item) => ({
+      category: item.category,
+      description: item.description,
+      model: item.model,
+      quantity: item.quantity,
+      capacity: item.capacity,
+    })),
+    balanceDueCents: original.balanceDueCents,
+    expectedDepositCents: original.expectedDepositCents,
+    stcSolarRequired: original.stcSolarRequired,
+    stcBatteryRequired: original.stcBatteryRequired,
+    solarRebateRequired: original.solarRebateRequired,
+  };
+
+  await assert.rejects(
+    createManualPaymentTrackProject(duplicateInput),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError
+      && error.status === 409
+      && error.code === "duplicate_quote",
+  );
+  await assert.rejects(
+    createImportedPaymentTrackProject(duplicateInput, {
+      bytes: new Uint8Array([0x25, 0x50, 0x44, 0x46]),
+      originalName: "duplicate.pdf",
+      contentType: "application/pdf",
+      size: 4,
+    }),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError
+      && error.status === 409
+      && error.code === "duplicate_quote",
+  );
+
+  const projects = await listPaymentTrackProjects();
+  assert.equal(projects.filter((project) => (
+    project.quoteNumber.toLocaleLowerCase("en-AU") === original.quoteNumber.toLocaleLowerCase("en-AU")
+  )).length, 1);
+});
+
+test("Sales can confirm a paid deposit without uploading proof before Admin records the amount", async () => {
+  let project = await createPmNotesProject();
+
+  await assert.rejects(
+    transitionPaymentTrackProject(project.id, "confirm_deposit", {
+      actorRole: "admin",
+      amountCents: 1_000,
+    }),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError && error.code === "invalid_transition",
+  );
+  await assert.rejects(
+    transitionPaymentTrackProject(project.id, "acknowledge_deposit", { actorRole: "pm" }),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError && error.code === "role_forbidden",
+  );
+
+  project = await transitionPaymentTrackProject(project.id, "acknowledge_deposit", {
+    actorRole: "sales",
+    actorName: "Ruihan",
+  });
+  assert.equal(project.stage, "deposit_not_paid");
+  assert.equal(project.deposit.proof, null);
+  assert.ok(project.deposit.acknowledgedAt);
+  assert.equal(project.deposit.acknowledgedBy, "Ruihan");
+  assert.equal(project.history.at(-1)?.action, "deposit_acknowledged");
+
+  project = await transitionPaymentTrackProject(project.id, "confirm_deposit", {
+    actorRole: "admin",
+    amountCents: 1_000,
+  });
+  assert.equal(project.stage, "material_delivery");
+  assert.equal(project.deposit.confirmedAmountCents, 1_000);
+});
 
 test("only an Administrator can confirm any customer payment amount", async () => {
   const depositProject = await createPmNotesProject();

@@ -3,9 +3,9 @@ import { buildDashboard, getERPProvider } from "@/lib/erp";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const provider = getERPProvider();
+    const provider = getERPProvider(request);
     const data = await buildDashboard(provider);
 
     return NextResponse.json({

@@ -31,7 +31,7 @@ export async function GET(request: Request) {
       ),
       limit: positiveInteger(url.searchParams.get("limit")),
     };
-    const provider = getERPProvider();
+    const provider = getERPProvider(request);
     const data = await provider.listInventory(query);
 
     return NextResponse.json({

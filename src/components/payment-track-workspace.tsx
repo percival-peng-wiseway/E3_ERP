@@ -7,6 +7,7 @@ import {
   Boxes,
   CalendarDays,
   CheckCircle2,
+  ChevronLeft,
   ChevronRight,
   CircleDollarSign,
   Clock3,
@@ -23,6 +24,7 @@ import {
   RefreshCw,
   Search,
   ShieldCheck,
+  SkipForward,
   Trash2,
   Truck,
   UploadCloud,
@@ -45,10 +47,12 @@ import { readJsonResponse } from "@/lib/client/http";
 import {
   countActivePaymentTrackProjects,
   PAYMENT_TRACK_SCHEDULE_ASSIGNEES,
+  PAYMENT_TRACK_STAGE_SKIP_REASON_MAX_LENGTH,
 } from "@/lib/payment-track/types";
 import type {
   PaymentTrackAction,
   PaymentTrackAdminSession,
+  PaymentTrackHistoryAction,
   PaymentTrackItem,
   PaymentTrackListResponse,
   PaymentTrackMutationResponse,
@@ -67,13 +71,16 @@ type ProjectTrackStageFilter = "all" | PaymentTrackStage;
 type WorkflowConfirmation = {
   action: Extract<
     PaymentTrackAction,
-    "mark_coes_received" | "continue_to_stc" | "confirm_stc_solar" | "confirm_stc_battery" | "confirm_solar_rebate"
+    "acknowledge_deposit" | "mark_coes_received" | "continue_to_stc" | "confirm_stc_solar" | "confirm_stc_battery" | "confirm_solar_rebate" | "skip_stage"
   >;
   title: string;
   description: string;
   confirmLabel: string;
   successMessage: string;
+  requiresReason?: boolean;
+  expectedUpdatedAt?: string;
 };
+
 function announcePaymentTrackUpdate(projects: PaymentTrackProject[]) {
   window.dispatchEvent(new CustomEvent<PaymentTrackUpdatedEventDetail>("erp:payment-track-updated", {
     detail: {
@@ -85,9 +92,36 @@ function announcePaymentTrackUpdate(projects: PaymentTrackProject[]) {
 
 const ROLE_LABELS: Record<PaymentTrackRole, string> = {
   sales: "Sales",
-  specialist: "Specialist",
+  specialist: "Sales",
   pm: "Project Manager",
   admin: "Administrator",
+};
+
+const HISTORY_ACTION_LABELS: Record<PaymentTrackHistoryAction, string> = {
+  created_manually: "Project created manually",
+  contract_imported: "Proposal imported",
+  deposit_proof_uploaded: "Deposit proof uploaded",
+  deposit_acknowledged: "Deposit payment acknowledged",
+  deposit_confirmed: "Deposit confirmed",
+  delivery_scheduled: "Delivery scheduled",
+  marked_delivered: "Materials marked delivered",
+  collection_acknowledged: "Collection payment acknowledged",
+  collection_proof_uploaded: "Collection proof uploaded",
+  collection_confirmed: "Collection confirmed",
+  installation_scheduled: "Installation scheduled",
+  payment_acknowledged: "Payment acknowledged",
+  final_payment_proof_uploaded: "Final payment proof uploaded",
+  final_payment_confirmed: "Final payment confirmed",
+  marked_installed: "Installation completed",
+  coes_received: "COES received",
+  continued_to_stc: "Continued to STC Rebate",
+  stc_solar_confirmed: "Solar STC confirmed",
+  stc_battery_confirmed: "Battery STC confirmed",
+  solar_rebate_requirement_backfilled: "Solar Rebate requirement updated",
+  solar_rebate_confirmed: "Solar Rebate confirmed",
+  stage_skipped: "Administrator stage override",
+  pm_notes_updated: "PM notes updated",
+  completed: "Project completed",
 };
 
 const STAGES: Array<{
@@ -202,6 +236,39 @@ function stageLabel(stage: PaymentTrackStage) {
   return STAGES.find((column) => column.id === stage)?.title ?? stage;
 }
 
+function skipStageDetails(project: PaymentTrackProject) {
+  if (project.stage === "done") return null;
+  if (project.stage === "deposit_not_paid") {
+    return {
+      target: "material_delivery" as const,
+      description: "This advances the project without creating or changing a payment record. The outstanding balance remains unchanged.",
+    };
+  }
+  if (project.stage === "material_delivery") {
+    return {
+      target: "installing" as const,
+      description: "This marks material delivery as already completed and advances the project. Collection and outstanding balances remain unchanged.",
+    };
+  }
+  if (project.stage === "installing") {
+    return {
+      target: "waiting_coes" as const,
+      description: "This marks installation as already completed and advances the project to the COES stage.",
+    };
+  }
+  if (project.stage === "waiting_coes") {
+    const target = pendingRebateReceipts(project).length ? "stc_rebate" as const : "done" as const;
+    return {
+      target,
+      description: `This marks COES as already received and advances the project to ${stageLabel(target)}.`,
+    };
+  }
+  return {
+    target: "done" as const,
+    description: "This marks every required STC and Solar Rebate receipt as already received and completes the project.",
+  };
+}
+
 function pendingLaterPayment(project: PaymentTrackProject) {
   const payment = project.finalPayments.at(-1);
   return project.outstandingCents > 0
@@ -235,9 +302,9 @@ function compareDoneProjects(left: PaymentTrackProject, right: PaymentTrackProje
 
 function projectStatus(project: PaymentTrackProject): { label: string; owner: string; tone: string } {
   if (project.stage === "deposit_not_paid") {
-    return project.deposit.proof
+    return project.deposit.proof || project.deposit.acknowledgedAt
       ? { label: "Awaiting deposit confirmation", owner: "Admin", tone: "blue" }
-      : { label: "Deposit proof required", owner: "Specialist", tone: "amber" };
+      : { label: "Deposit proof required", owner: "Sales", tone: "amber" };
   }
   if (project.stage === "material_delivery") {
     if (!project.deliveredAt) {
@@ -305,9 +372,9 @@ function projectStatus(project: PaymentTrackProject): { label: string; owner: st
 
 function projectNextStep(project: PaymentTrackProject, activeRole: PaymentTrackRole) {
   if (project.stage === "deposit_not_paid") {
-    return project.deposit.proof
+    return project.deposit.proof || project.deposit.acknowledgedAt
       ? { label: "Review Deposit", roles: ["admin"] as PaymentTrackRole[] }
-      : { label: "Upload Deposit Proof", roles: ["specialist"] as PaymentTrackRole[] };
+      : { label: "Upload Deposit Proof", roles: ["sales"] as PaymentTrackRole[] };
   }
   if (project.stage === "material_delivery") {
     if (!project.deliveredAt) {
@@ -387,7 +454,7 @@ function projectNextStep(project: PaymentTrackProject, activeRole: PaymentTrackR
   }
   return {
     label: "View Paid Project",
-    roles: ["sales", "specialist", "pm", "admin"] as PaymentTrackRole[],
+    roles: ["sales", "pm", "admin"] as PaymentTrackRole[],
   };
 }
 
@@ -417,7 +484,7 @@ function parseManualItems(value: string): Array<Omit<PaymentTrackItem, "id">> {
 
 function isAwaitingAdmin(project: PaymentTrackProject) {
   return (
-    project.stage === "deposit_not_paid" && Boolean(project.deposit.proof)
+    project.stage === "deposit_not_paid" && Boolean(project.deposit.proof || project.deposit.acknowledgedAt)
   ) || (
     project.stage === "material_delivery"
     && Boolean(project.deliveredAt)
@@ -469,8 +536,9 @@ function confirmedPaymentRecords(project: PaymentTrackProject): ConfirmedPayment
 }
 
 export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole: ErpRole }) {
+  const paymentTrackRole: PaymentTrackRole = authenticatedRole === "specialist" ? "sales" : authenticatedRole;
   const [projects, setProjects] = useState<PaymentTrackProject[]>([]);
-  const [role, setRole] = useState<PaymentTrackRole>(authenticatedRole);
+  const [role, setRole] = useState<PaymentTrackRole>(paymentTrackRole);
   const [adminSession, setAdminSession] = useState<PaymentTrackAdminSession>(EMPTY_ADMIN_SESSION);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -492,9 +560,13 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
   const [installationTime, setInstallationTime] = useState("");
   const [installationAssignee, setInstallationAssignee] = useState<ScheduleAssignee>("");
   const [workflowConfirmation, setWorkflowConfirmation] = useState<WorkflowConfirmation | null>(null);
+  const [workflowReason, setWorkflowReason] = useState("");
   const [viewMode, setViewMode] = useState<ProjectTrackViewMode>("board");
   const [listStage, setListStage] = useState<ProjectTrackStageFilter>("all");
+  const [boardPosition, setBoardPosition] = useState({ stageIndex: 0, canScrollLeft: false, canScrollRight: false });
   const returnFocusRef = useRef<HTMLElement | null>(null);
+  const boardScrollerRef = useRef<HTMLDivElement | null>(null);
+  const stageJumpListRef = useRef<HTMLDivElement | null>(null);
   const busyRef = useRef(false);
   const loadRequestRef = useRef(0);
   const projectsRef = useRef<PaymentTrackProject[]>([]);
@@ -651,6 +723,58 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
       });
   }, [filtered, listStage]);
 
+  const updateBoardPosition = useCallback(() => {
+    const scroller = boardScrollerRef.current;
+    if (!scroller) return;
+    const columns = [...scroller.querySelectorAll<HTMLElement>("[data-payment-stage]")];
+    const stageIndex = columns.reduce((closest, column, index) => (
+      Math.abs(column.offsetLeft - scroller.scrollLeft)
+        < Math.abs((columns[closest]?.offsetLeft ?? 0) - scroller.scrollLeft)
+        ? index
+        : closest
+    ), 0);
+    setBoardPosition({
+      stageIndex,
+      canScrollLeft: scroller.scrollLeft > 2,
+      canScrollRight: scroller.scrollLeft + scroller.clientWidth < scroller.scrollWidth - 2,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (loading) return;
+    const scroller = boardScrollerRef.current;
+    if (!scroller) return;
+    const frame = window.requestAnimationFrame(updateBoardPosition);
+    const observer = new ResizeObserver(updateBoardPosition);
+    observer.observe(scroller);
+    scroller.addEventListener("scroll", updateBoardPosition, { passive: true });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+      scroller.removeEventListener("scroll", updateBoardPosition);
+    };
+  }, [filtered.length, loading, updateBoardPosition, viewMode]);
+
+  useEffect(() => {
+    const list = stageJumpListRef.current;
+    const target = list?.querySelectorAll<HTMLElement>("[data-stage-jump]")[boardPosition.stageIndex];
+    if (!list || !target) return;
+    list.scrollTo({
+      left: Math.max(0, target.offsetLeft - (list.clientWidth - target.clientWidth) / 2),
+      behavior: "smooth",
+    });
+  }, [boardPosition.stageIndex]);
+
+  const scrollToBoardStage = (index: number) => {
+    const scroller = boardScrollerRef.current;
+    const columns = scroller
+      ? [...scroller.querySelectorAll<HTMLElement>("[data-payment-stage]")]
+      : [];
+    const target = columns[Math.max(0, Math.min(index, columns.length - 1))];
+    if (!scroller || !target) return;
+    scroller.scrollTo({ left: Math.max(0, target.offsetLeft - 1), behavior: "smooth" });
+  };
+
   const updateProject = (project: PaymentTrackProject) => {
     const current = projectsRef.current;
     const exists = current.some((item) => item.id === project.id);
@@ -685,13 +809,13 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
     setInstallationTime(project.installationScheduledTime || "");
     setInstallationAssignee(project.installationAssignee || "");
     setError("");
-    setRole(authenticatedRole);
+    setRole(paymentTrackRole);
     setSelectedId(project.id);
   };
 
   const selectRole = (nextRole: PaymentTrackRole) => {
-    if (authenticatedRole !== "admin" && nextRole !== authenticatedRole) {
-      setNotice(`Your ${ROLE_LABELS[authenticatedRole]} account cannot switch to ${ROLE_LABELS[nextRole]}.`);
+    if (authenticatedRole !== "admin" && nextRole !== paymentTrackRole) {
+      setNotice(`Your ${ROLE_LABELS[paymentTrackRole]} account cannot switch to ${ROLE_LABELS[nextRole]}.`);
       return;
     }
     if (nextRole === "admin" && !adminSession.admin) {
@@ -844,7 +968,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
       const response = await fetch(`/api/payment-track/${selected.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, actorRole: role, ...extra }),
+        body: JSON.stringify({ action, actorRole: action === "skip_stage" ? "admin" : role, ...extra }),
       });
       const result = await readJsonResponse<PaymentTrackMutationResponse & { error?: string }>(response);
       if (!response.ok) throw new Error(apiError(result, "Unable to update this project."));
@@ -857,10 +981,12 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
       setInstallationTime(result.data.installationScheduledTime || installationTime);
       setInstallationAssignee(result.data.installationAssignee || installationAssignee);
       setWorkflowConfirmation(null);
+      setWorkflowReason("");
       setSelectedId(null);
       setNotice(successMessage);
     } catch (actionError) {
       setWorkflowConfirmation(null);
+      setWorkflowReason("");
       setError(actionError instanceof Error ? actionError.message : "Unable to update this project.");
     } finally {
       setBusy(false);
@@ -910,10 +1036,15 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
     setSelectedId(null);
   };
 
+  const closeWorkflowConfirmation = () => {
+    setWorkflowConfirmation(null);
+    setWorkflowReason("");
+  };
+
   const closeFromBackdrop = (event: ReactMouseEvent<HTMLDivElement>) => {
     if (event.target !== event.currentTarget || busy) return;
     if (workflowConfirmation) {
-      setWorkflowConfirmation(null);
+      closeWorkflowConfirmation();
       return;
     }
     setShowAdd(false);
@@ -923,14 +1054,27 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
 
   const requestWorkflowConfirmation = (confirmation: WorkflowConfirmation) => {
     setError("");
+    setWorkflowReason("");
     setWorkflowConfirmation(confirmation);
   };
 
   const confirmWorkflowAction = () => {
     if (!workflowConfirmation) return;
+    const reason = workflowReason.trim();
+    if (workflowConfirmation.requiresReason
+      && (!reason || reason.length > PAYMENT_TRACK_STAGE_SKIP_REASON_MAX_LENGTH)) {
+      setError(`Enter a reason of up to ${PAYMENT_TRACK_STAGE_SKIP_REASON_MAX_LENGTH} characters for this Administrator stage override.`);
+      return;
+    }
+    if (workflowConfirmation.requiresReason && !workflowConfirmation.expectedUpdatedAt) {
+      setError("Reload this project before using the Administrator stage override.");
+      return;
+    }
     void performAction(
       workflowConfirmation.action,
-      {},
+      workflowConfirmation.requiresReason
+        ? { reason, expectedUpdatedAt: workflowConfirmation.expectedUpdatedAt || "" }
+        : {},
       workflowConfirmation.successMessage,
     );
   };
@@ -1083,14 +1227,14 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
       );
     }
 
-    if (project.stage === "deposit_not_paid" && !project.deposit.proof) {
-      if (role !== "specialist") {
+    if (project.stage === "deposit_not_paid" && !project.deposit.proof && !project.deposit.acknowledgedAt) {
+      if (role !== "sales") {
         return (
           <ReadOnlyNextStep
-            owner="Specialist"
+            owner="Sales"
             label="Upload the customer’s deposit payment proof."
-            buttonLabel="Continue as Specialist"
-            onContinue={() => selectRole("specialist")}
+            buttonLabel="Continue as Sales"
+            onContinue={() => selectRole("sales")}
           />
         );
       }
@@ -1099,9 +1243,16 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
           busy={busy}
           file={proofFile}
           label="Deposit payment proof"
-          buttonLabel="Deposit Paid — Upload Proof"
+          buttonLabel="Upload & Submit"
           onFile={setProofFile}
           onSubmit={() => void uploadProof("deposit")}
+          onConfirmPaid={() => requestWorkflowConfirmation({
+            action: "acknowledge_deposit",
+            title: "Confirm deposit paid without proof?",
+            description: "This skips the file upload and sends the deposit to Administrator review. Only continue after confirming the customer has paid.",
+            confirmLabel: "Yes, Confirm Paid",
+            successMessage: "Deposit marked as paid. Administrator can now record the actual amount received.",
+          })}
         />
       );
     }
@@ -1537,7 +1688,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
             aria-label="Search Project Track projects"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search customer, proposal, specialist or item…"
+            placeholder="Search customer, proposal, sales representative or item…"
           />
         </label>
         <div className={styles.toolbarMeta}>
@@ -1630,7 +1781,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                   </span>
                   <span className={styles.listOwner}>
                     <strong>{status.owner}</strong>
-                    <small>Specialist: {project.specialist.name || "—"}</small>
+                    <small>Sales: {project.specialist.name || "—"}</small>
                   </span>
                   <span className={styles.listNextAction}>
                     <strong className={canContinue ? styles.listActionReady : ""}>{nextStep.label}</strong>
@@ -1656,13 +1807,59 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
           </div>
         </section>
       ) : (
-        <div className={styles.boardScroller} tabIndex={0} aria-label="Payment workflow board">
-          <div className={styles.board}>
-            {STAGES.map((column) => {
+        <>
+          {boardPosition.canScrollLeft || boardPosition.canScrollRight ? (
+            <nav className={styles.boardNavigation} aria-label="Move between Project Track stages">
+              <button
+                type="button"
+                disabled={!boardPosition.canScrollLeft}
+                onClick={() => scrollToBoardStage(boardPosition.stageIndex - 1)}
+                aria-label="Previous stage"
+              >
+                <ChevronLeft size={17} />
+              </button>
+              <div ref={stageJumpListRef} className={styles.stageJumpList}>
+                {STAGES.map((stage, index) => (
+                  <button
+                    key={stage.id}
+                    data-stage-jump={stage.id}
+                    type="button"
+                    className={boardPosition.stageIndex === index ? styles.activeStageJump : ""}
+                    aria-current={boardPosition.stageIndex === index ? "true" : undefined}
+                    onClick={() => scrollToBoardStage(index)}
+                  >
+                    {stage.title}
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                disabled={!boardPosition.canScrollRight}
+                onClick={() => scrollToBoardStage(boardPosition.stageIndex + 1)}
+                aria-label="Next stage"
+              >
+                <ChevronRight size={17} />
+              </button>
+            </nav>
+          ) : null}
+          <div
+            ref={boardScrollerRef}
+            className={styles.boardScroller}
+            tabIndex={0}
+            aria-label="Payment workflow board"
+            onKeyDown={(event) => {
+              if (event.target !== event.currentTarget
+                || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) return;
+              event.preventDefault();
+              scrollToBoardStage(boardPosition.stageIndex + (event.key === "ArrowRight" ? 1 : -1));
+            }}
+          >
+            <div className={styles.board}>
+              {STAGES.map((column) => {
               const columnProjects = filtered.filter((project) => project.stage === column.id);
               if (column.id === "done") columnProjects.sort(compareDoneProjects);
               return (
-                <section className={`${styles.column} ${styles[column.tone]}`} key={column.id} aria-labelledby={`column-${column.id}`}>
+                <section data-payment-stage={column.id} className={`${styles.column} ${styles[column.tone]}`} key={column.id} aria-labelledby={`column-${column.id}`}>
                   <header>
                     <span className={styles.columnDot} aria-hidden="true" />
                     <div>
@@ -1741,9 +1938,10 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                   </div>
                 </section>
               );
-            })}
+              })}
+            </div>
           </div>
-        </div>
+        </>
       )}
 
       {workflowConfirmation && selected ? (
@@ -1757,23 +1955,45 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
           >
             <header>
               <div><span>Confirm workflow update</span><h2 id="workflow-confirmation-title">{workflowConfirmation.title}</h2></div>
-              <button type="button" aria-label="Close" disabled={busy} onClick={() => setWorkflowConfirmation(null)}><X size={19} /></button>
+              <button type="button" aria-label="Close" disabled={busy} onClick={closeWorkflowConfirmation}><X size={19} /></button>
             </header>
             <div className={styles.confirmationBody}>
               <span className={styles.confirmationIcon}><BadgeCheck size={24} /></span>
-              <p id="workflow-confirmation-description">{workflowConfirmation.description}</p>
+              <div className={styles.confirmationContent}>
+                <p id="workflow-confirmation-description">{workflowConfirmation.description}</p>
+                {workflowConfirmation.requiresReason ? (
+                  <label className={styles.overrideReasonField}>
+                    Override reason
+                    <textarea
+                      autoFocus
+                      required
+                      maxLength={PAYMENT_TRACK_STAGE_SKIP_REASON_MAX_LENGTH}
+                      rows={3}
+                      value={workflowReason}
+                      onChange={(event) => setWorkflowReason(event.target.value)}
+                      placeholder="Explain why this stage was completed outside ERP"
+                    />
+                    <small>{workflowReason.trim().length} / {PAYMENT_TRACK_STAGE_SKIP_REASON_MAX_LENGTH}</small>
+                  </label>
+                ) : null}
+              </div>
             </div>
             <footer className={styles.confirmationFooter}>
               <button
-                autoFocus
+                autoFocus={!workflowConfirmation.requiresReason}
                 className={styles.secondaryButton}
                 type="button"
                 disabled={busy}
-                onClick={() => setWorkflowConfirmation(null)}
+                onClick={closeWorkflowConfirmation}
               >
                 Cancel
               </button>
-              <button className={styles.primaryButton} type="button" disabled={busy} onClick={confirmWorkflowAction}>
+              <button
+                className={styles.primaryButton}
+                type="button"
+                disabled={busy || Boolean(workflowConfirmation.requiresReason && !workflowReason.trim())}
+                onClick={confirmWorkflowAction}
+              >
                 {busy ? <LoaderCircle className={styles.spinning} size={16} /> : <CheckCircle2 size={16} />}
                 {workflowConfirmation.confirmLabel}
               </button>
@@ -1816,7 +2036,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                   <span><FileCheck2 size={22} /></span>
                   <div>
                     <strong>Import a Solar Proposal</strong>
-                    <p>We will extract the Specialist, Proposal Number, customer, system items, deposit and Balance Due. You can verify everything in Project Details.</p>
+                    <p>We will extract the Sales representative, Proposal Number, customer, system items, deposit and Balance Due. You can verify everything in Project Details.</p>
                   </div>
                 </div>
                 <label className={styles.uploadField}>
@@ -1848,8 +2068,8 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                   <h3>Project ownership</h3>
                   <div className={styles.formGrid}>
                     <label>Proposal number<input autoFocus required name="quoteNumber" placeholder="e.g. CPEC5270" /></label>
-                    <label>Specialist name<input required name="specialistName" placeholder="Project owner" /></label>
-                    <label className={styles.fullField}>Specialist phone<input name="specialistPhone" inputMode="tel" placeholder="Mobile number" /></label>
+                    <label>Sales name<input required name="specialistName" placeholder="Project owner" /></label>
+                    <label className={styles.fullField}>Sales phone<input name="specialistPhone" inputMode="tel" placeholder="Mobile number" /></label>
                   </div>
                 </div>
                 <div className={styles.formSection}>
@@ -1931,20 +2151,24 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
       {selected && !showAdminLogin && !workflowConfirmation ? (
         <div className={styles.backdrop} onMouseDown={closeFromBackdrop}>
           <div className={`${styles.modal} ${styles.detailModal}`} role="dialog" aria-modal="true" aria-labelledby="project-detail-title">
-            <header>
-              <div>
-                <span>{selected.reference} · Proposal {selected.quoteNumber}</span>
-                <h2 id="project-detail-title">{customerName(selected)}</h2>
+            <header className={styles.detailHeader}>
+              <div className={styles.detailHeaderMain}>
+                <div className={styles.detailHeaderTitle}>
+                  <span>{selected.reference} · Proposal {selected.quoteNumber}</span>
+                  <h2 id="project-detail-title">{customerName(selected)}</h2>
+                </div>
+                <div className={styles.detailHeaderMeta}>
+                  <span className={`${styles.stageBadge} ${styles[STAGES.find((item) => item.id === selected.stage)?.tone || "blue"]}`}>
+                    {stageLabel(selected.stage)}
+                  </span>
+                  <span className={styles.detailStatus}>{projectStatus(selected).label}</span>
+                </div>
               </div>
-              <button type="button" aria-label="Close" disabled={busy} onClick={closeProjectDetail}><X size={19} /></button>
+              <div className={styles.detailHeaderActions}>
+                <span className={styles.roleBadge}>Viewing as {ROLE_LABELS[role]}</span>
+                <button type="button" aria-label="Close" disabled={busy} onClick={closeProjectDetail}><X size={19} /></button>
+              </div>
             </header>
-            <div className={styles.detailStageBar}>
-              <span className={`${styles.stageBadge} ${styles[STAGES.find((item) => item.id === selected.stage)?.tone || "blue"]}`}>
-                {stageLabel(selected.stage)}
-              </span>
-              <span className={styles.detailStatus}>{projectStatus(selected).label}</span>
-              <span className={styles.roleBadge}>Viewing as {ROLE_LABELS[role]}</span>
-            </div>
             <div className={styles.detailBody}>
               <section className={styles.detailAmounts} aria-label="Receivable summary">
                 <div><span>Original Balance Due</span><strong>{formatMoney(selected.balanceDueCents)}</strong></div>
@@ -1961,6 +2185,38 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
 
               {renderActionPanel(selected)}
 
+              {authenticatedRole === "admin" && skipStageDetails(selected) ? (() => {
+                const skip = skipStageDetails(selected);
+                if (!skip) return null;
+                return (
+                  <div className={`${styles.actionPanel} ${styles.adminSkipPanel}`}>
+                    <div className={styles.actionHeading}>
+                      <span><SkipForward size={18} /></span>
+                      <div>
+                        <strong>Administrator stage override</strong>
+                        <small>Use only when the current stage was already completed outside ERP. The action is recorded in project history.</small>
+                      </div>
+                    </div>
+                    <button
+                      className={styles.secondaryButton}
+                      type="button"
+                      disabled={busy}
+                      onClick={() => requestWorkflowConfirmation({
+                        action: "skip_stage",
+                        title: `Skip ${stageLabel(selected.stage)}?`,
+                        description: `${skip.description} This Administrator override cannot be automatically undone.`,
+                        confirmLabel: `Skip to ${stageLabel(skip.target)}`,
+                        successMessage: `Current stage skipped. Project moved to ${stageLabel(skip.target)}.`,
+                        requiresReason: true,
+                        expectedUpdatedAt: selected.updatedAt,
+                      })}
+                    >
+                      <SkipForward size={16} /> Skip to {stageLabel(skip.target)}
+                    </button>
+                  </div>
+                );
+              })() : null}
+
               <div className={styles.detailColumns}>
                 <section className={styles.detailSection}>
                   <h3><UserRound size={16} /> Customer</h3>
@@ -1974,8 +2230,8 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                 <section className={styles.detailSection}>
                   <h3><ShieldCheck size={16} /> Ownership</h3>
                   <dl>
-                    <div><dt>Specialist</dt><dd>{selected.specialist.name || "—"}</dd></div>
-                    <div><dt>Specialist phone</dt><dd>{selected.specialist.phone || "—"}</dd></div>
+                    <div><dt>Sales</dt><dd>{selected.specialist.name || "—"}</dd></div>
+                    <div><dt>Sales phone</dt><dd>{selected.specialist.phone || "—"}</dd></div>
                     <div>
                       <dt>Material delivery</dt>
                       <dd>
@@ -2054,6 +2310,23 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                 </section>
               ) : null}
 
+              <section className={styles.detailSection} aria-label="Project activity history">
+                <h3><Clock3 size={16} /> Activity <span>{selected.history.length}</span></h3>
+                <div className={styles.activityList}>
+                  {selected.history.slice().reverse().map((entry) => (
+                    <article className={styles.activityEntry} key={entry.id}>
+                      <div className={styles.activityEntryHeader}>
+                        <strong>{HISTORY_ACTION_LABELS[entry.action]}</strong>
+                        <time dateTime={entry.at}>{formatDate(entry.at, true)}</time>
+                      </div>
+                      <span>{entry.actorName} · {ROLE_LABELS[entry.actorRole]}</span>
+                      {entry.note ? <p>{entry.note}</p> : null}
+                    </article>
+                  ))}
+                  {!selected.history.length ? <p className={styles.emptyActivity}>No project activity recorded yet.</p> : null}
+                </div>
+              </section>
+
               {authenticatedRole === "admin" ? (
                 <div className={styles.dangerZone}>
                   <button className={styles.dangerButton} type="button" disabled={busy} onClick={() => void deleteProject()}>
@@ -2128,6 +2401,7 @@ function ProofAction({
   buttonLabel,
   onFile,
   onSubmit,
+  onConfirmPaid,
 }: {
   busy: boolean;
   file: File | null;
@@ -2135,23 +2409,55 @@ function ProofAction({
   buttonLabel: string;
   onFile: (file: File | null) => void;
   onSubmit: () => void;
+  onConfirmPaid: () => void;
 }) {
   return (
-    <div className={styles.actionPanel}>
-      <div className={styles.actionHeading}>
+    <div className={`${styles.actionPanel} ${styles.proofChoicePanel}`}>
+      <div className={styles.proofChoiceHeader}>
         <span><UploadCloud size={18} /></span>
-        <div><strong>{label}</strong><small>Attach the customer’s screenshot or PDF before submitting.</small></div>
+        <div><strong>{label}</strong><small>Choose one payment confirmation method.</small></div>
       </div>
-      <label className={styles.compactUpload}>
-        <input type="file" accept="application/pdf,image/jpeg,image/png,image/webp,.pdf,.jpg,.jpeg,.png,.webp" onChange={(event) => onFile(event.target.files?.[0] ?? null)} />
-        <Paperclip size={15} />
-        <span>{file?.name || "Choose payment proof"}</span>
-        <small>{file ? fileSize(file.size) : "PDF, JPG, PNG or WebP · max 10 MB"}</small>
-      </label>
-      <button className={styles.primaryButton} type="button" disabled={busy || !file} onClick={onSubmit}>
-        {busy ? <LoaderCircle className={styles.spinning} size={16} /> : <UploadCloud size={16} />}
-        {buttonLabel}
-      </button>
+      <div className={styles.proofChoiceGrid}>
+        <section className={styles.proofChoiceCard} aria-label="Upload payment proof">
+          <div className={styles.proofChoiceCardHeader}>
+            <span className={styles.proofChoiceIcon}><Paperclip size={18} /></span>
+            <div><strong>Upload proof</strong><small>Attach a screenshot or PDF for Administrator review.</small></div>
+          </div>
+          <div className={styles.proofUploadControls}>
+            <label
+              className={`${styles.fileIconButton} ${file ? styles.fileSelected : ""}`}
+              aria-label={file ? `Change payment proof: ${file.name}` : "Choose payment proof"}
+              title={file ? `Change file: ${file.name}` : "Choose payment proof"}
+            >
+              <input
+                type="file"
+                disabled={busy}
+                accept="application/pdf,image/jpeg,image/png,image/webp,.pdf,.jpg,.jpeg,.png,.webp"
+                onChange={(event) => onFile(event.target.files?.[0] ?? null)}
+              />
+              {file ? <FileCheck2 size={18} /> : <Paperclip size={18} />}
+            </label>
+            <div className={styles.fileSelectionMeta} title={file?.name}>
+              <span>{file?.name || "No file selected"}</span>
+              <small>{file ? fileSize(file.size) : "PDF, JPG, PNG or WebP · up to 10 MB"}</small>
+            </div>
+            <button className={styles.primaryButton} type="button" disabled={busy || !file} onClick={onSubmit}>
+              {busy ? <LoaderCircle className={styles.spinning} size={16} /> : <UploadCloud size={16} />}
+              {buttonLabel}
+            </button>
+          </div>
+        </section>
+        <span className={styles.proofChoiceDivider} aria-hidden="true">OR</span>
+        <section className={`${styles.proofChoiceCard} ${styles.confirmPaidChoice}`} aria-label="Confirm paid without proof">
+          <div className={styles.proofChoiceCardHeader}>
+            <span className={styles.proofChoiceIcon}><CheckCircle2 size={18} /></span>
+            <div><strong>Confirm paid</strong><small>No file available? Confirm payment and send it to Administrator review.</small></div>
+          </div>
+          <button className={styles.confirmPaidButton} type="button" disabled={busy} onClick={onConfirmPaid}>
+            <CheckCircle2 size={16} /> Confirm Paid — No Upload
+          </button>
+        </section>
+      </div>
     </div>
   );
 }

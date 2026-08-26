@@ -7,6 +7,7 @@ const serviceModule = "./service.ts";
 const {
   buildOperationalProjectNotifications,
   buildPaymentTrackNotifications,
+  notificationIsVisibleTo,
   normalizeNotificationDateTime,
 } = await import(serviceModule) as typeof import("./service");
 
@@ -135,6 +136,36 @@ test("non-delivery high-priority reminders keep their normal priority badge", ()
   assert.equal(deposit.badgeLabel, undefined);
   assert.equal(deposit.projectCreatedAt, undefined);
   assert.equal(deposit.ownerName, undefined);
+});
+
+test("deposit and collection confirmations are primarily assigned to Jiaqi", () => {
+  const [deposit] = buildPaymentTrackNotifications([project({
+    stage: "deposit_not_paid",
+    deposit: {
+      ...project().deposit,
+      acknowledgedAt: "2026-08-25T01:00:00.000Z",
+      acknowledgedBy: "Sales",
+    },
+  })], NOW);
+  assert.equal(deposit.actionLabel, "Confirm deposit");
+  assert.equal(deposit.ownerName, "Jiaqi");
+  assert.equal(deposit.assigneeUsername, "jiaqi");
+  assert.equal(notificationIsVisibleTo(deposit, "admin", "jiaqi"), true);
+  assert.equal(notificationIsVisibleTo(deposit, "admin", "jerry"), false);
+
+  const [collection] = buildPaymentTrackNotifications([project({
+    deliveredAt: "2026-08-25T01:00:00.000Z",
+    collection: {
+      ...project().collection,
+      acknowledgedAt: "2026-08-25T02:00:00.000Z",
+      acknowledgedBy: "Sales",
+    },
+  })], NOW);
+  assert.equal(collection.actionLabel, "Confirm collection");
+  assert.equal(collection.ownerName, "Jiaqi");
+  assert.equal(collection.assigneeUsername, "jiaqi");
+  assert.equal(notificationIsVisibleTo(collection, "admin", "jiaqi"), true);
+  assert.equal(notificationIsVisibleTo(collection, "admin", "steve"), false);
 });
 
 test("installation reminders use explicit planning status and project metadata", () => {

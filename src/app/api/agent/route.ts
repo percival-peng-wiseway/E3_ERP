@@ -10,6 +10,9 @@ import {
   type ResolvedAgentSettings,
 } from "@/lib/agent/settings";
 import { localWorkspaceAnswer } from "@/lib/agent/tools";
+import { AgentTrace } from "@/lib/agent/trace";
+import { deterministicWorkflowDependencies } from "@/lib/agent/workflow-dependencies";
+import { runDeterministicWorkflow } from "@/lib/agent/workflows";
 import { getERPProvider, type AgentHistoryMessage } from "@/lib/erp";
 import { isAuthorizedMutationRequest } from "@/lib/server/proxy-security";
 
@@ -88,7 +91,8 @@ async function processAgentRequest(request: Request) {
     return error(400, "invalid_request", "Enter a question of up to 2,000 characters with valid conversation history.");
   }
 
-  const provider = getERPProvider();
+  const provider = getERPProvider(request);
+  const trace = new AgentTrace();
   const warnings: string[] = [];
   let settings: ResolvedAgentSettings;
   try {
@@ -107,22 +111,41 @@ async function processAgentRequest(request: Request) {
   }
   let data;
   try {
-    data = await answerWithOpenAICompatible({
-      provider,
-      message: input.message,
-      history: input.history,
-      section: input.section,
-      apiKey: settings.apiKey,
-      baseUrl: settings.baseUrl,
-      model: settings.model,
-    });
-  } catch (modelError) {
-    // Model error messages can contain an upstream response body. Log only the
-    // error class and keep the client warning generic.
-    console.error("Agent model API unavailable; using local fallback", safeErrorKind(modelError));
-    warnings.push("The model API is temporarily unavailable. Local read-only query mode is being used.");
-    data = await localWorkspaceAnswer(provider, input.message);
+    const workflowAnswer = await trace.step(
+      "harness.route",
+      "workflow",
+      () => runDeterministicWorkflow(provider, input.message, trace, deterministicWorkflowDependencies),
+    );
+    if (workflowAnswer) {
+      data = workflowAnswer;
+    } else {
+      data = await trace.step("model.openai_compatible", "model", () => answerWithOpenAICompatible({
+        provider,
+        message: input.message,
+        history: input.history,
+        section: input.section,
+        apiKey: settings.apiKey,
+        baseUrl: settings.baseUrl,
+        model: settings.model,
+      }));
+    }
+  } catch (primaryError) {
+    // Errors can originate from a live deterministic source or from the model.
+    // Their messages may contain upstream response bodies, so log only the class.
+    console.error("Agent primary answer path unavailable; using local fallback", safeErrorKind(primaryError));
+    warnings.push("The primary live answer path is temporarily unavailable. Local read-only query mode is being used.");
+    trace.markOutcome("fallback");
+    try {
+      data = await trace.step("local.fallback", "fallback", () => localWorkspaceAnswer(provider, input.message));
+    } catch (fallbackError) {
+      trace.markOutcome("error");
+      trace.emit();
+      throw fallbackError;
+    }
   }
+
+  const traceSnapshot = trace.snapshot();
+  trace.emit();
 
   return json({
     data,
@@ -131,6 +154,7 @@ async function processAgentRequest(request: Request) {
       generatedAt: new Date().toISOString(),
       configured: true,
       model: settings.model,
+      trace: traceSnapshot,
       ...(warnings.length ? { warning: warnings.join(" ") } : {}),
     },
   });

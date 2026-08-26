@@ -853,9 +853,9 @@
 .announcementFeed {
   min-height: 0;
   overflow-y: auto;
-  padding: 10px;
+  padding: 0 13px;
   flex: 1;
-  background: #f6f8f9;
+  background: #fff;
   overscroll-behavior: contain;
   scrollbar-color: #cbd3d9 transparent;
   scrollbar-width: thin;
@@ -865,24 +865,16 @@
   display: block;
   margin: 0;
   padding: 0;
-  overflow: hidden;
   list-style: none;
-  background: #fff;
-  border: 1px solid #dce3e7;
-  border-left: 4px solid #3d9a79;
-  border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(31, 48, 61, .035);
 }
 
 .announcementCard {
   min-width: 0;
-  padding: 11px 12px;
+  padding: 12px 0 13px;
   color: #34414a;
   background: transparent;
   border: 0;
   border-bottom: 1px solid #e7ecef;
-  border-radius: 0;
-  box-shadow: none;
 }
 
 .announcementCard:last-child {

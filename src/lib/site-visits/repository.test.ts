@@ -122,18 +122,21 @@ test("site visit repository enforces the request-to-completion workflow", async 
     )));
   });
 
-  await t.test("only an admin approves, while PM and admin can schedule and reschedule", async () => {
+  await t.test("PM and admin can approve, schedule and reschedule", async () => {
     await resetRecords();
     const pending = await createSiteVisit(requestInput());
 
     await expectRepositoryError(transitionSiteVisit(pending.id, {
       action: "approve",
       expectedUpdatedAt: pending.updatedAt,
-    }, pm), "role_forbidden", 403);
+    }, sales), "role_forbidden", 403);
 
-    const approved = await approve(pending);
+    const approved = await transitionSiteVisit(pending.id, {
+      action: "approve",
+      expectedUpdatedAt: pending.updatedAt,
+    }, pm);
     assert.equal(approved.status, "approved");
-    assert.equal(approved.approvedBy, admin.name);
+    assert.equal(approved.approvedBy, pm.name);
     assert.ok(approved.approvedAt);
     assert.equal(approved.scheduledDate, null);
     assert.equal(approved.scheduledTime, null);

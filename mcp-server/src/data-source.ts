@@ -1,6 +1,4 @@
 import {
-  inventoryItems as demoInventory,
-  quotations as demoQuotations,
   type InventoryItem,
   type Quotation,
   type QuotationLine,
@@ -14,10 +12,27 @@ function isRecord(value: unknown): value is JsonRecord {
 }
 
 function recordsFromEnvelope(payload: unknown): JsonRecord[] {
-  if (Array.isArray(payload)) return payload.filter(isRecord);
-  if (!isRecord(payload)) return [];
-  const candidate = Array.isArray(payload.data) ? payload.data : payload.items;
-  return Array.isArray(candidate) ? candidate.filter(isRecord) : [];
+  if (Array.isArray(payload)) {
+    if (!payload.every(isRecord)) throw new Error("ERP workspace API returned an invalid record list");
+    return payload;
+  }
+  if (!isRecord(payload)) throw new Error("ERP workspace API returned an invalid record list");
+  const nested = isRecord(payload.data) ? payload.data : undefined;
+  const candidates = [
+    payload.data,
+    payload.inventory,
+    payload.quotations,
+    payload.items,
+    nested?.inventory,
+    nested?.quotations,
+    nested?.items
+  ];
+  for (const candidate of candidates) {
+    if (!Array.isArray(candidate)) continue;
+    if (!candidate.every(isRecord)) throw new Error("ERP workspace API returned an invalid record list");
+    return candidate;
+  }
+  throw new Error("ERP workspace API returned an invalid record list");
 }
 
 function text(record: JsonRecord, key: string, fallback = ""): string {
@@ -28,6 +43,20 @@ function text(record: JsonRecord, key: string, fallback = ""): string {
 function number(record: JsonRecord, key: string, fallback = 0): number {
   const parsed = Number(record[key]);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function hasValue(record: JsonRecord, keys: string[]): boolean {
+  return keys.some((key) => record[key] !== undefined && record[key] !== null && record[key] !== "");
+}
+
+function isInventoryRecord(record: JsonRecord): boolean {
+  return hasValue(record, ["id", "name", "sku"])
+    && hasValue(record, ["onHand", "available", "on_hand", "available_qty"]);
+}
+
+function isQuotationRecord(record: JsonRecord): boolean {
+  return hasValue(record, ["id", "number", "name"])
+    && hasValue(record, ["customer", "customer_name"]);
 }
 
 function quotationStatus(value: unknown): QuotationStatus {
@@ -122,11 +151,19 @@ async function fetchWorkspace(path: string): Promise<JsonRecord[]> {
 }
 
 export async function loadInventoryItems(): Promise<readonly InventoryItem[]> {
-  if (!process.env.ERP_WORKSPACE_API_URL?.trim()) return demoInventory;
-  return (await fetchWorkspace("/api/inventory")).map(mapInventory);
+  if (!process.env.ERP_WORKSPACE_API_URL?.trim()) {
+    throw new Error("ERP_WORKSPACE_API_URL is required; demo inventory fallback is disabled.");
+  }
+  const records = await fetchWorkspace("/api/inventory");
+  if (!records.every(isInventoryRecord)) throw new Error("ERP workspace API returned invalid inventory records");
+  return records.map(mapInventory);
 }
 
 export async function loadQuotations(): Promise<readonly Quotation[]> {
-  if (!process.env.ERP_WORKSPACE_API_URL?.trim()) return demoQuotations;
-  return (await fetchWorkspace("/api/quotations")).map(mapQuotation);
+  if (!process.env.ERP_WORKSPACE_API_URL?.trim()) {
+    throw new Error("ERP_WORKSPACE_API_URL is required; demo quotation fallback is disabled.");
+  }
+  const records = await fetchWorkspace("/api/quotations");
+  if (!records.every(isQuotationRecord)) throw new Error("ERP workspace API returned invalid quotation records");
+  return records.map(mapQuotation);
 }

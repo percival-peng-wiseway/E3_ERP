@@ -163,7 +163,7 @@ export async function POST(request: NextRequest) {
     }
     const input = createInput(body);
     if (!input) {
-      return paymentTrackError(400, "invalid_project", "Complete the Proposal Number, Specialist, customer, item and balance information.");
+      return paymentTrackError(400, "invalid_project", "Complete the Proposal Number, Sales representative, customer, item and balance information.");
     }
     return paymentTrackJson({ data: await createManualPaymentTrackProject(input) }, { status: 201 });
   } catch (error) {
