@@ -20,6 +20,12 @@ type AgentSettings = {
   maskedApiKey: string | null;
   baseUrl: string;
   model: string;
+  deepSeekConfigured: boolean;
+  maskedDeepSeekApiKey: string | null;
+  deepSeekBaseUrl: string;
+  deepSeekFastModel: string;
+  deepSeekComplexModel: string;
+  deepSeekSource: "saved" | "environment" | "default";
 };
 
 type AgentSettingsResponse = {
@@ -33,6 +39,12 @@ const EMPTY_SETTINGS: AgentSettings = {
   maskedApiKey: null,
   baseUrl: "https://navigator-spongy-diagnosis.ngrok-free.dev/v1",
   model: "qwen3.5:9b",
+  deepSeekConfigured: false,
+  maskedDeepSeekApiKey: null,
+  deepSeekBaseUrl: "https://api.deepseek.com/beta",
+  deepSeekFastModel: "deepseek-v4-flash",
+  deepSeekComplexModel: "deepseek-v4-pro",
+  deepSeekSource: "default",
 };
 
 function responseError(body: AgentSettingsResponse, fallback: string) {
@@ -54,6 +66,10 @@ export function AgentSettingsDialog({
   const [apiKey, setApiKey] = useState("");
   const [baseUrl, setBaseUrl] = useState(EMPTY_SETTINGS.baseUrl);
   const [model, setModel] = useState(EMPTY_SETTINGS.model);
+  const [deepSeekApiKey, setDeepSeekApiKey] = useState("");
+  const [deepSeekBaseUrl, setDeepSeekBaseUrl] = useState(EMPTY_SETTINGS.deepSeekBaseUrl);
+  const [deepSeekFastModel, setDeepSeekFastModel] = useState(EMPTY_SETTINGS.deepSeekFastModel);
+  const [deepSeekComplexModel, setDeepSeekComplexModel] = useState(EMPTY_SETTINGS.deepSeekComplexModel);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -76,6 +92,7 @@ export function AgentSettingsDialog({
     setError("");
     setNotice("");
     setApiKey("");
+    setDeepSeekApiKey("");
     void fetch("/api/settings/agent", { cache: "no-store" })
       .then(async (response) => {
         const body = await readJsonResponse<AgentSettingsResponse>(response);
@@ -84,6 +101,9 @@ export function AgentSettingsDialog({
         setSettings(body.data);
         setBaseUrl(body.data.baseUrl);
         setModel(body.data.model);
+        setDeepSeekBaseUrl(body.data.deepSeekBaseUrl);
+        setDeepSeekFastModel(body.data.deepSeekFastModel);
+        setDeepSeekComplexModel(body.data.deepSeekComplexModel);
       })
       .catch((loadError) => {
         if (active) setError(loadError instanceof Error ? loadError.message : "Unable to load Agent settings.");
@@ -149,6 +169,10 @@ export function AgentSettingsDialog({
           ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
           baseUrl: baseUrl.trim(),
           model,
+          ...(deepSeekApiKey.trim() ? { deepSeekApiKey: deepSeekApiKey.trim() } : {}),
+          deepSeekBaseUrl: deepSeekBaseUrl.trim(),
+          deepSeekFastModel,
+          deepSeekComplexModel,
         }),
       });
       const body = await readJsonResponse<AgentSettingsResponse>(response);
@@ -157,7 +181,13 @@ export function AgentSettingsDialog({
       setBaseUrl(body.data.baseUrl);
       setModel(body.data.model);
       setApiKey("");
-      setNotice("Model API settings saved. The E3 Agent is ready.");
+      setDeepSeekApiKey("");
+      setDeepSeekBaseUrl(body.data.deepSeekBaseUrl);
+      setDeepSeekFastModel(body.data.deepSeekFastModel);
+      setDeepSeekComplexModel(body.data.deepSeekComplexModel);
+      setNotice(body.data.deepSeekConfigured
+        ? "Model settings saved. DeepSeek Business Agent is ready."
+        : "Model settings saved. Add a DeepSeek API key to enable the Business Agent.");
       window.dispatchEvent(new CustomEvent("erp:agent-settings-updated"));
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Unable to save Agent settings.");
@@ -178,6 +208,10 @@ export function AgentSettingsDialog({
       setBaseUrl(body.data.baseUrl);
       setModel(body.data.model);
       setApiKey("");
+      setDeepSeekApiKey("");
+      setDeepSeekBaseUrl(body.data.deepSeekBaseUrl);
+      setDeepSeekFastModel(body.data.deepSeekFastModel);
+      setDeepSeekComplexModel(body.data.deepSeekComplexModel);
       setNotice(body.data.source === "environment"
         ? "Saved settings removed. Environment configuration is now active."
         : "Saved settings removed. The default model endpoint is now active.");
@@ -256,9 +290,60 @@ export function AgentSettingsDialog({
               </label>
             </div>
 
+            <section className={styles.providerSection} aria-labelledby="deepseek-settings-title">
+              <div className={styles.sectionHeading}>
+                <div>
+                  <h3 id="deepseek-settings-title">DeepSeek Business Agent</h3>
+                  <p>Used by the strict read-only inventory, knowledge, project and order tools.</p>
+                </div>
+                <span className={settings.deepSeekConfigured ? styles.providerReady : styles.providerMissing}>
+                  {settings.deepSeekConfigured ? "Configured" : "API key required"}
+                </span>
+              </div>
+
+              <label>
+                DeepSeek API key
+                <span className={styles.secretField}>
+                  <KeyRound size={15} />
+                  <input
+                    type="password"
+                    autoComplete="new-password"
+                    value={deepSeekApiKey}
+                    onChange={(event) => setDeepSeekApiKey(event.target.value)}
+                    placeholder={settings.maskedDeepSeekApiKey
+                      ? `Leave blank to keep ${settings.maskedDeepSeekApiKey}`
+                      : "Enter your DeepSeek API key"}
+                  />
+                </span>
+              </label>
+
+              <label>
+                DeepSeek API base URL
+                <input type="url" required value={deepSeekBaseUrl} onChange={(event) => setDeepSeekBaseUrl(event.target.value)} />
+              </label>
+
+              <div className={styles.fieldGrid}>
+                <label>
+                  Fast model
+                  <select value={deepSeekFastModel} onChange={(event) => setDeepSeekFastModel(event.target.value)}>
+                    <option value="deepseek-v4-flash">DeepSeek V4 Flash</option>
+                  </select>
+                </label>
+                <label>
+                  Complex model
+                  <select value={deepSeekComplexModel} onChange={(event) => setDeepSeekComplexModel(event.target.value)}>
+                    <option value="deepseek-v4-pro">DeepSeek V4 Pro</option>
+                  </select>
+                </label>
+              </div>
+              <small className={styles.providerSource}>
+                Active source: {settings.deepSeekSource === "saved" ? "saved settings" : settings.deepSeekSource === "environment" ? "environment" : "not configured"}
+              </small>
+            </section>
+
             <div className={styles.securityNote}>
               <ShieldCheck size={17} />
-              <p><strong>Server-side only.</strong> Any key is never returned to the browser after saving. Questions may send only the business data needed to answer them to the configured model endpoint.</p>
+              <p><strong>Server-side only.</strong> Keys are never returned to the browser after saving. Questions may send only the business data needed to answer them to the configured model endpoint.</p>
             </div>
 
             <footer>

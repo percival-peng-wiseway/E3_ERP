@@ -25,7 +25,12 @@ const {
   AgentSettingsError,
   DEFAULT_AGENT_BASE_URL,
   DEFAULT_AGENT_MODEL,
+  DEFAULT_DEEPSEEK_BASE_URL,
+  DEFAULT_DEEPSEEK_COMPLEX_MODEL,
+  DEFAULT_DEEPSEEK_FAST_MODEL,
   clearAgentSettings,
+  preferredAgentModelSettings,
+  resolveDeepSeekSettings,
   resolveEnvironmentAgentSettings,
   saveAgentSettings,
 } = await import(settingsModule) as typeof import("./settings");
@@ -58,6 +63,38 @@ test("environment resolver uses validated configuration without reading saved se
   delete process.env.AGENT_API_KEY;
   delete process.env.AGENT_BASE_URL;
   delete process.env.AGENT_MODEL;
+});
+
+test("saved DeepSeek key is masked publicly and resolves only on the server", async () => {
+  const secret = "deepseek-test-secret-key";
+  const saved = await saveAgentSettings({
+    baseUrl: DEFAULT_AGENT_BASE_URL,
+    model: DEFAULT_AGENT_MODEL,
+    deepSeekApiKey: secret,
+    deepSeekBaseUrl: DEFAULT_DEEPSEEK_BASE_URL,
+    deepSeekFastModel: DEFAULT_DEEPSEEK_FAST_MODEL,
+    deepSeekComplexModel: DEFAULT_DEEPSEEK_COMPLEX_MODEL,
+  });
+  assert.equal(saved.deepSeekConfigured, true);
+  assert.match(saved.maskedDeepSeekApiKey || "", /-key$/);
+  assert.equal(JSON.stringify(saved).includes(secret), false);
+
+  const resolved = await resolveDeepSeekSettings();
+  assert.equal(resolved.apiKey, secret);
+  assert.equal(resolved.source, "saved");
+  await clearAgentSettings();
+});
+
+test("home Agent prefers configured DeepSeek and otherwise keeps the legacy endpoint", () => {
+  const legacy = { apiKey: null, baseUrl: DEFAULT_AGENT_BASE_URL, model: DEFAULT_AGENT_MODEL, source: "default" as const };
+  const missingDeepSeek = {
+    apiKey: null, baseUrl: DEFAULT_DEEPSEEK_BASE_URL, fastModel: DEFAULT_DEEPSEEK_FAST_MODEL,
+    complexModel: DEFAULT_DEEPSEEK_COMPLEX_MODEL, source: "default" as const,
+  };
+  assert.equal(preferredAgentModelSettings(legacy, missingDeepSeek), legacy);
+  assert.deepEqual(preferredAgentModelSettings(legacy, { ...missingDeepSeek, apiKey: "deepseek-key", source: "saved" }), {
+    apiKey: "deepseek-key", baseUrl: DEFAULT_DEEPSEEK_BASE_URL, model: DEFAULT_DEEPSEEK_FAST_MODEL, source: "saved",
+  });
 });
 
 test("ordinary save rejects a corrupt document while Administrator clear removes it safely", async () => {

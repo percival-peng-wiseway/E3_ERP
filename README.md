@@ -31,6 +31,7 @@ Employee access is protected by a unified ERP sign-in. The server issues a signe
 - The current endpoint does not require an API key; an optional key remains supported for future compatible endpoints
 - If the endpoint is unavailable, deterministic workflows and basic local summaries remain available
 - Payment proof URLs, reimbursement invoice URLs, access tokens, cookies and API keys are never included in model tool results
+- A separately deployable read-only Business Agent endpoint at `POST /api/agent/chat` adds strict inventory, knowledge, project and order-finance tools with deterministic DeepSeek Flash/Pro routing; see [docs/BUSINESS_AGENT.md](./docs/BUSINESS_AGENT.md)
 
 ### Inventory
 
@@ -162,6 +163,10 @@ AGENT_MODEL=qwen3.5:9b
 AGENT_ALLOWED_API_HOSTS=
 AGENT_SETTINGS_DATA_DIR=
 GROUP_CHAT_DATA_DIR=
+DEEPSEEK_API_KEY=
+DEEPSEEK_BASE_URL=https://api.deepseek.com/beta
+DEEPSEEK_MODEL_FAST=deepseek-v4-flash
+DEEPSEEK_MODEL_COMPLEX=deepseek-v4-pro
 ```
 
 - `/api/inventory/operations` accepts only approved Inventory actions and uses a fixed upstream address.
@@ -171,6 +176,7 @@ GROUP_CHAT_DATA_DIR=
 - Browser writes require both a valid employee session and a verifiably same-origin request. Trusted server writes require the `ERP_INTERNAL_API_TOKEN` bearer token.
 - QuoteHelp Excel uploads are limited to 25 MiB; Inventory JSON operations are limited to 512 KiB.
 - Agent and Agent Settings writes are same-origin protected and body-size limited. Local development stores the optional API key in a private `0700` directory using an atomic `0600` file; Cloudflare production stores saved settings in server-side D1. The key is returned only as a masked configured state, and a Cloudflare Secret remains preferred for production credentials.
+- Administrators can add or replace the DeepSeek API key under **Settings → Agent Settings → DeepSeek Business Agent**. Leaving the key blank preserves the saved key; removing saved settings deletes it. The read-only Business Agent uses this saved configuration before environment fallback.
 - The model connection is restricted to approved HTTPS hosts. Model tools strictly validate their arguments and return bounded, sanitised, read-only records.
 
 The unified read-only APIs use the live Inventory Operations service and the authenticated QuoteHelp session. An explicit quotation API can optionally replace the QuoteHelp session source:
@@ -179,6 +185,9 @@ The unified read-only APIs use the live Inventory Operations service and the aut
 ERP_INVENTORY_API_URL=
 ERP_QUOTATION_API_URL=
 ERP_API_TOKEN=
+ERP_KNOWLEDGE_API_URL=
+ERP_PROJECT_API_URL=
+ERP_ORDER_API_URL=
 ```
 
 When these overrides are empty, Inventory uses `INVENTORY_OPERATIONS_API_URL` and Quotations uses `QUOTEHELP_APP_URL`. Live-source failures are fail-closed: demo data is never substituted into Agent, Dashboard, Inventory or Quotations responses. After this change, users with an existing QuoteHelp login may need to sign in to QuoteHelp once more so its namespaced session cookie is available to the unified read-only routes.
@@ -249,6 +258,7 @@ Project Track rejects repeated Proposal Numbers across both PDF imports and manu
 | `GET/POST /api/project-schedule` | List or create custom Weekly Schedule jobs |
 | `PATCH/DELETE /api/project-schedule/:id` | Update a custom job or permanently remove it as Administrator |
 | `POST /api/agent` | OpenAI-compatible model-backed read-only questions across ERP workspaces, with a local fallback |
+| `POST /api/agent/chat` | Strict read-only Business Agent for inventory, cited knowledge, project snapshots and order finance |
 | `GET /api/agent/health` | Verify all seven E3 Agent business data sources without returning business records |
 | `GET/PUT/DELETE /api/settings/agent` | Masked Agent configuration, secure save and environment fallback |
 
