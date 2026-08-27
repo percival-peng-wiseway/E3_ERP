@@ -275,8 +275,10 @@ function displayedProjectStage(project: PaymentTrackProject) {
 
 function displayedProjectStageTone(project: PaymentTrackProject) {
   if (project.stage === "working_in_progress") {
-    if (project.installedAt || (project.deliveredAt && project.workMode === "delivery_only")) return "green";
+    if (project.installedAt) return "green";
+    if (project.deliveredAt && project.workMode === "delivery_only") return "blue";
     if (hasActiveWorkSchedule(project)) return "green";
+    if (project.deliveredAt) return "blue";
     return "red";
   }
   if (projectHasScheduledCurrentStage(project)) return "green";
