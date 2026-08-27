@@ -27,7 +27,27 @@ type StoredAgentSettings = {
   apiKey?: string;
   baseUrl: string;
   model: string;
+  deepSeek?: StoredDeepSeekSettings;
   updatedAt: string;
+};
+
+type StoredDeepSeekSettings = {
+  apiKey?: string;
+  baseUrl: string;
+  fastModel: string;
+  complexModel: string;
+};
+
+export const DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com/beta";
+export const DEFAULT_DEEPSEEK_FAST_MODEL = "deepseek-v4-flash";
+export const DEFAULT_DEEPSEEK_COMPLEX_MODEL = "deepseek-v4-pro";
+
+export type ResolvedDeepSeekSettings = {
+  apiKey: string | null;
+  baseUrl: string;
+  fastModel: string;
+  complexModel: string;
+  source: "saved" | "environment" | "default";
 };
 
 export type ResolvedAgentSettings = {
@@ -40,6 +60,12 @@ export type ResolvedAgentSettings = {
 export type PublicAgentSettings = Omit<ResolvedAgentSettings, "apiKey"> & {
   configured: boolean;
   maskedApiKey: string | null;
+  deepSeekConfigured: boolean;
+  maskedDeepSeekApiKey: string | null;
+  deepSeekBaseUrl: string;
+  deepSeekFastModel: string;
+  deepSeekComplexModel: string;
+  deepSeekSource: "saved" | "environment" | "default";
 };
 
 export class AgentSettingsError extends Error {
@@ -131,16 +157,49 @@ function normalizedApiKey(value: string): string {
   return apiKey;
 }
 
+function normalizedDeepSeekBaseUrl(value: string): string {
+  const text = value.trim();
+  let url: URL;
+  try { url = new URL(text); } catch { throw new AgentSettingsError("Enter a valid DeepSeek API base URL."); }
+  if (url.protocol !== "https:" || url.hostname.toLowerCase() !== "api.deepseek.com"
+    || url.port || url.username || url.password || url.search || url.hash
+    || !["", "/", "/beta", "/beta/"].includes(url.pathname)) {
+    throw new AgentSettingsError("DeepSeek must use https://api.deepseek.com/beta for strict tool calls.");
+  }
+  return DEFAULT_DEEPSEEK_BASE_URL;
+}
+
+function normalizedDeepSeekModel(value: string, expected: string): string {
+  if (value.trim() !== expected) throw new AgentSettingsError(`DeepSeek model must be ${expected}.`);
+  return expected;
+}
+
+function normalizeStoredDeepSeek(value: unknown): StoredDeepSeekSettings | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const candidate = value as Partial<StoredDeepSeekSettings>;
+  try {
+    return {
+      ...(typeof candidate.apiKey === "string" && candidate.apiKey.trim() ? { apiKey: normalizedApiKey(candidate.apiKey) } : {}),
+      baseUrl: normalizedDeepSeekBaseUrl(String(candidate.baseUrl || DEFAULT_DEEPSEEK_BASE_URL)),
+      fastModel: normalizedDeepSeekModel(String(candidate.fastModel || DEFAULT_DEEPSEEK_FAST_MODEL), DEFAULT_DEEPSEEK_FAST_MODEL),
+      complexModel: normalizedDeepSeekModel(String(candidate.complexModel || DEFAULT_DEEPSEEK_COMPLEX_MODEL), DEFAULT_DEEPSEEK_COMPLEX_MODEL),
+    };
+  } catch { return null; }
+}
+
 function normalizeStoredSettings(value: unknown): StoredAgentSettings | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const candidate = value as Partial<StoredAgentSettings>;
   try {
+    const deepSeek = candidate.deepSeek === undefined ? undefined : normalizeStoredDeepSeek(candidate.deepSeek);
+    if (candidate.deepSeek !== undefined && !deepSeek) return null;
     return {
       ...(typeof candidate.apiKey === "string" && candidate.apiKey.trim()
         ? { apiKey: normalizedApiKey(candidate.apiKey) }
         : {}),
       baseUrl: normalizedBaseUrl(String(candidate.baseUrl || DEFAULT_AGENT_BASE_URL)),
       model: normalizedModel(String(candidate.model || DEFAULT_AGENT_MODEL)),
+      ...(deepSeek ? { deepSeek } : {}),
       updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : new Date(0).toISOString(),
     };
   } catch {
@@ -291,6 +350,23 @@ function environmentSettings() {
   return { apiKey, baseUrl, model, explicit };
 }
 
+function environmentDeepSeekSettings(): ResolvedDeepSeekSettings {
+  let apiKey: string | null = null;
+  let baseUrl = DEFAULT_DEEPSEEK_BASE_URL;
+  let fastModel = DEFAULT_DEEPSEEK_FAST_MODEL;
+  let complexModel = DEFAULT_DEEPSEEK_COMPLEX_MODEL;
+  let explicit = false;
+  try {
+    if (process.env.DEEPSEEK_API_KEY?.trim()) { apiKey = normalizedApiKey(process.env.DEEPSEEK_API_KEY); explicit = true; }
+    if (process.env.DEEPSEEK_BASE_URL?.trim()) { baseUrl = normalizedDeepSeekBaseUrl(process.env.DEEPSEEK_BASE_URL); explicit = true; }
+    if (process.env.DEEPSEEK_MODEL_FAST?.trim()) { fastModel = normalizedDeepSeekModel(process.env.DEEPSEEK_MODEL_FAST, DEFAULT_DEEPSEEK_FAST_MODEL); explicit = true; }
+    if (process.env.DEEPSEEK_MODEL_COMPLEX?.trim()) { complexModel = normalizedDeepSeekModel(process.env.DEEPSEEK_MODEL_COMPLEX, DEFAULT_DEEPSEEK_COMPLEX_MODEL); explicit = true; }
+  } catch (error) {
+    console.error("Invalid DeepSeek environment configuration", error instanceof Error ? error.message : error);
+  }
+  return { apiKey, baseUrl, fastModel, complexModel, source: explicit ? "environment" : "default" };
+}
+
 /**
  * Resolves only validated process configuration and built-in defaults. This
  * deliberately avoids persisted storage so Agent requests can still attempt a
@@ -323,6 +399,34 @@ export async function resolveAgentSettings(): Promise<ResolvedAgentSettings> {
   };
 }
 
+export async function resolveDeepSeekSettings(): Promise<ResolvedDeepSeekSettings> {
+  await mutationQueue;
+  const [document, environment] = await Promise.all([
+    readStoredSettingsDocument(),
+    Promise.resolve(environmentDeepSeekSettings()),
+  ]);
+  const saved = document.settings?.deepSeek;
+  return {
+    apiKey: saved?.apiKey || environment.apiKey,
+    baseUrl: saved?.baseUrl || environment.baseUrl,
+    fastModel: saved?.fastModel || environment.fastModel,
+    complexModel: saved?.complexModel || environment.complexModel,
+    source: saved ? "saved" : environment.source,
+  };
+}
+
+export function preferredAgentModelSettings(
+  legacy: ResolvedAgentSettings,
+  deepSeek: ResolvedDeepSeekSettings,
+): ResolvedAgentSettings {
+  return deepSeek.apiKey ? {
+    apiKey: deepSeek.apiKey,
+    baseUrl: deepSeek.baseUrl,
+    model: deepSeek.fastModel,
+    source: deepSeek.source,
+  } : legacy;
+}
+
 function maskedApiKey(apiKey: string | null): string | null {
   if (!apiKey) return null;
   const visible = apiKey.slice(-4);
@@ -330,13 +434,19 @@ function maskedApiKey(apiKey: string | null): string | null {
 }
 
 export async function publicAgentSettings(): Promise<PublicAgentSettings> {
-  const settings = await resolveAgentSettings();
+  const [settings, deepSeek] = await Promise.all([resolveAgentSettings(), resolveDeepSeekSettings()]);
   return {
     configured: true,
     maskedApiKey: maskedApiKey(settings.apiKey),
     baseUrl: settings.baseUrl,
     model: settings.model,
     source: settings.source,
+    deepSeekConfigured: Boolean(deepSeek.apiKey),
+    maskedDeepSeekApiKey: maskedApiKey(deepSeek.apiKey),
+    deepSeekBaseUrl: deepSeek.baseUrl,
+    deepSeekFastModel: deepSeek.fastModel,
+    deepSeekComplexModel: deepSeek.complexModel,
+    deepSeekSource: deepSeek.source,
   };
 }
 
@@ -344,26 +454,49 @@ export function saveAgentSettings(input: {
   apiKey?: string;
   baseUrl: string;
   model: string;
+  deepSeekApiKey?: string;
+  deepSeekBaseUrl?: string;
+  deepSeekFastModel?: string;
+  deepSeekComplexModel?: string;
 }): Promise<PublicAgentSettings> {
   return withMutation(async () => {
     const document = await readStoredSettingsDocument();
     const current = document.settings;
     const suppliedKey = input.apiKey?.trim();
     const apiKey = suppliedKey ? normalizedApiKey(suppliedKey) : current?.apiKey;
+    const suppliedDeepSeekKey = input.deepSeekApiKey?.trim();
+    const deepSeekApiKey = suppliedDeepSeekKey ? normalizedApiKey(suppliedDeepSeekKey) : current?.deepSeek?.apiKey;
+    const saveDeepSeek = input.deepSeekBaseUrl !== undefined || input.deepSeekFastModel !== undefined
+      || input.deepSeekComplexModel !== undefined || suppliedDeepSeekKey !== undefined || current?.deepSeek !== undefined;
+    const deepSeek = saveDeepSeek ? {
+      ...(deepSeekApiKey ? { apiKey: deepSeekApiKey } : {}),
+      baseUrl: normalizedDeepSeekBaseUrl(input.deepSeekBaseUrl || current?.deepSeek?.baseUrl || DEFAULT_DEEPSEEK_BASE_URL),
+      fastModel: normalizedDeepSeekModel(input.deepSeekFastModel || current?.deepSeek?.fastModel || DEFAULT_DEEPSEEK_FAST_MODEL, DEFAULT_DEEPSEEK_FAST_MODEL),
+      complexModel: normalizedDeepSeekModel(input.deepSeekComplexModel || current?.deepSeek?.complexModel || DEFAULT_DEEPSEEK_COMPLEX_MODEL, DEFAULT_DEEPSEEK_COMPLEX_MODEL),
+    } : undefined;
     await writeStoredSettings({
       ...(apiKey ? { apiKey } : {}),
       baseUrl: normalizedBaseUrl(input.baseUrl),
       model: normalizedModel(input.model),
+      ...(deepSeek ? { deepSeek } : {}),
       updatedAt: new Date().toISOString(),
     }, document.version);
     const environment = environmentSettings();
     const resolvedKey = apiKey || environment.apiKey;
+    const environmentDeepSeek = environmentDeepSeekSettings();
+    const resolvedDeepSeekKey = deepSeek?.apiKey || environmentDeepSeek.apiKey;
     return {
       configured: true,
       maskedApiKey: maskedApiKey(resolvedKey),
       baseUrl: normalizedBaseUrl(input.baseUrl),
       model: normalizedModel(input.model),
       source: "saved",
+      deepSeekConfigured: Boolean(resolvedDeepSeekKey),
+      maskedDeepSeekApiKey: maskedApiKey(resolvedDeepSeekKey),
+      deepSeekBaseUrl: deepSeek?.baseUrl || environmentDeepSeek.baseUrl,
+      deepSeekFastModel: deepSeek?.fastModel || environmentDeepSeek.fastModel,
+      deepSeekComplexModel: deepSeek?.complexModel || environmentDeepSeek.complexModel,
+      deepSeekSource: deepSeek ? "saved" : environmentDeepSeek.source,
     };
   });
 }
@@ -372,12 +505,19 @@ export function clearAgentSettings(): Promise<PublicAgentSettings> {
   return withMutation(async () => {
     await clearStoredSettings();
     const environment = environmentSettings();
+    const deepSeek = environmentDeepSeekSettings();
     return {
       configured: true,
       maskedApiKey: maskedApiKey(environment.apiKey),
       baseUrl: environment.baseUrl,
       model: environment.model,
       source: environment.explicit ? "environment" : "default",
+      deepSeekConfigured: Boolean(deepSeek.apiKey),
+      maskedDeepSeekApiKey: maskedApiKey(deepSeek.apiKey),
+      deepSeekBaseUrl: deepSeek.baseUrl,
+      deepSeekFastModel: deepSeek.fastModel,
+      deepSeekComplexModel: deepSeek.complexModel,
+      deepSeekSource: deepSeek.source,
     };
   });
 }

@@ -30,17 +30,36 @@ function safeErrorKind(value: unknown) {
   return value instanceof Error ? value.name : "UnknownError";
 }
 
-function settingsInput(value: unknown): { apiKey?: string; baseUrl: string; model: string } | null {
+function settingsInput(value: unknown): {
+  apiKey?: string;
+  baseUrl: string;
+  model: string;
+  deepSeekApiKey?: string;
+  deepSeekBaseUrl?: string;
+  deepSeekFastModel?: string;
+  deepSeekComplexModel?: string;
+} | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const body = value as Record<string, unknown>;
-  const allowed = new Set(["apiKey", "baseUrl", "model"]);
+  const allowed = new Set([
+    "apiKey", "baseUrl", "model", "deepSeekApiKey", "deepSeekBaseUrl",
+    "deepSeekFastModel", "deepSeekComplexModel",
+  ]);
   if (Object.keys(body).some((key) => !allowed.has(key))) return null;
   if (typeof body.baseUrl !== "string" || typeof body.model !== "string") return null;
   if (body.apiKey !== undefined && typeof body.apiKey !== "string") return null;
+  const deepSeekFields = ["deepSeekApiKey", "deepSeekBaseUrl", "deepSeekFastModel", "deepSeekComplexModel"] as const;
+  if (deepSeekFields.some((key) => body[key] !== undefined && typeof body[key] !== "string")) return null;
+  const hasDeepSeekConfiguration = deepSeekFields.slice(1).some((key) => body[key] !== undefined);
+  if (hasDeepSeekConfiguration && deepSeekFields.slice(1).some((key) => typeof body[key] !== "string")) return null;
   return {
     ...(typeof body.apiKey === "string" ? { apiKey: body.apiKey } : {}),
     baseUrl: body.baseUrl,
     model: body.model,
+    ...(typeof body.deepSeekApiKey === "string" ? { deepSeekApiKey: body.deepSeekApiKey } : {}),
+    ...(typeof body.deepSeekBaseUrl === "string" ? { deepSeekBaseUrl: body.deepSeekBaseUrl } : {}),
+    ...(typeof body.deepSeekFastModel === "string" ? { deepSeekFastModel: body.deepSeekFastModel } : {}),
+    ...(typeof body.deepSeekComplexModel === "string" ? { deepSeekComplexModel: body.deepSeekComplexModel } : {}),
   };
 }
 

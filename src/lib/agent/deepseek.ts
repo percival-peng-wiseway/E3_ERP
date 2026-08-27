@@ -128,6 +128,10 @@ async function createCompletion(options: {
     tools: options.tools,
     tool_choice: "auto",
     stream: false,
+    ...(options.model.startsWith("deepseek-v4-") ? {
+      thinking: { type: "disabled" },
+      reasoning_effort: "low",
+    } : {}),
     temperature: 0.2,
     max_tokens: 800,
   });

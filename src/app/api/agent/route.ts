@@ -6,7 +6,9 @@ import {
 } from "@/lib/agent/request";
 import {
   resolveAgentSettings,
+  resolveDeepSeekSettings,
   resolveEnvironmentAgentSettings,
+  preferredAgentModelSettings,
   type ResolvedAgentSettings,
 } from "@/lib/agent/settings";
 import { localWorkspaceAnswer } from "@/lib/agent/tools";
@@ -96,7 +98,11 @@ async function processAgentRequest(request: Request) {
   const warnings: string[] = [];
   let settings: ResolvedAgentSettings;
   try {
-    settings = await resolveAgentSettings();
+    const [legacySettings, deepSeekSettings] = await Promise.all([
+      resolveAgentSettings(),
+      resolveDeepSeekSettings(),
+    ]);
+    settings = preferredAgentModelSettings(legacySettings, deepSeekSettings);
   } catch (settingsError) {
     // Do not log the exception message: a corrupt JSON document or upstream
     // error can contain saved credentials or response content.

@@ -12,6 +12,8 @@
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test 'src/lib/**/*.test.ts'",
     "eval:agent": "node scripts/run-agent-evals.mjs",
+    "eval:business-agent": "node scripts/run-business-agent-evals.mjs",
+    "spike:deepseek": "node scripts/deepseek-compatibility-spike.mjs",
     "cf:build": "opennextjs-cloudflare build",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "cf:migrate": "wrangler d1 migrations apply e3-erp-prod --remote",
