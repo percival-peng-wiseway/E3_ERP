@@ -50,12 +50,23 @@ export interface InventoryLog {
   created_at: string;
 }
 
+export interface ProjectInventoryConsumptionHistory {
+  id: string;
+  sku: string;
+  quantity: number;
+  customer: string;
+  address: string;
+  actor: string;
+  created_at: string;
+}
+
 /** Composite state returned by GET /api/inventory on the source application. */
 export interface ApiState {
   inventory: InventoryItem[];
   orders: Order[];
   deliveryHistory: Order[];
   lossHistory: InventoryLoss[];
+  projectConsumptionHistory?: ProjectInventoryConsumptionHistory[];
   logs: InventoryLog[];
   admin: boolean;
 }

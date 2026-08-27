@@ -68,7 +68,7 @@ export function isProjectScheduleSourceEntryId(value: unknown): value is string 
     return true;
   }
 
-  for (const prefix of ["payment-delivery:", "payment-installation:"] as const) {
+  for (const prefix of ["payment-delivery:", "payment-installation:", "payment-combined:"] as const) {
     if (value.startsWith(prefix)) return SOURCE_ENTRY_UUID_PATTERN.test(value.slice(prefix.length));
   }
   if (value.startsWith("site-visit:")) {

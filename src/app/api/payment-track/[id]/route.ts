@@ -23,9 +23,11 @@ import {
   PAYMENT_TRACK_ROLES,
   PAYMENT_TRACK_SCHEDULE_ASSIGNEES,
   PAYMENT_TRACK_STAGE_SKIP_REASON_MAX_LENGTH,
+  PAYMENT_TRACK_WORK_MODES,
   type PaymentTrackAction,
   type PaymentTrackRole,
   type PaymentTrackScheduleAssignee,
+  type PaymentTrackWorkMode,
 } from "@/lib/payment-track/types";
 import { isAuthorizedActorRequest, isAuthorizedMutationRequest } from "@/lib/server/proxy-security";
 
@@ -67,6 +69,19 @@ const DELIVERY_PREPARATION_FIELDS = new Set([
   "selections",
   "expectedUpdatedAt",
 ]);
+const WORK_SCHEDULE_FIELDS = new Set([
+  "action",
+  "actorRole",
+  "actorName",
+  "workMode",
+  "deliveryDate",
+  "deliveryTime",
+  "deliveryAssignee",
+  "installationAssignee",
+  "selections",
+  "expectedUpdatedAt",
+]);
+const ACKNOWLEDGE_PAYMENT_FIELDS = new Set(["action", "actorRole", "actorName", "amount"]);
 const DELIVERY_PRE_SCHEDULE_FIELDS = new Set([
   "action",
   "actorRole",
@@ -237,9 +252,13 @@ export async function PATCH(
     }
 
     let amountCents: number | undefined;
-    if (action === "confirm_deposit" || action === "confirm_collection" || action === "confirm_final_payment") {
+    if (action === "confirm_deposit" || action === "confirm_collection" || action === "confirm_final_payment" || action === "acknowledge_payment") {
       const parsed = paymentTrackAmountToCents(body.amount);
-      if (parsed === null) return paymentTrackError(400, "invalid_amount", "Enter a non-negative amount, including 0 if nothing was received.");
+      if (parsed === null || (action === "acknowledge_payment" && parsed <= 0)) {
+        return paymentTrackError(400, "invalid_amount", action === "acknowledge_payment"
+          ? "Enter the positive amount Sales believes was received."
+          : "Enter a non-negative amount, including 0 if nothing was received.");
+      }
       amountCents = parsed;
     }
     let paymentId: string | undefined;
@@ -248,6 +267,14 @@ export async function PATCH(
         return paymentTrackError(400, "invalid_payment_id", "Choose the payment awaiting confirmation.");
       }
       paymentId = body.paymentId;
+    }
+    if (action === "acknowledge_payment") {
+      if (actorRole !== "sales") {
+        return paymentTrackError(403, "role_forbidden", "Only Sales can record a received payment.");
+      }
+      if (!Object.keys(body).every((field) => ACKNOWLEDGE_PAYMENT_FIELDS.has(field))) {
+        return paymentTrackError(400, "invalid_payment_request", "Enter the received amount without extra fields.");
+      }
     }
     let deliveryDate: string | undefined;
     let deliveryTime: string | undefined;
@@ -310,6 +337,35 @@ export async function PATCH(
     let installationDate: string | undefined;
     let installationTime: string | undefined;
     let installationAssignee: PaymentTrackScheduleAssignee | undefined;
+    let workMode: PaymentTrackWorkMode | undefined;
+    if (action === "schedule_work") {
+      const parsedSelections = body.selections === undefined ? undefined : deliverySelections(body.selections);
+      const parsedMode = typeof body.workMode === "string"
+        && PAYMENT_TRACK_WORK_MODES.includes(body.workMode as PaymentTrackWorkMode)
+        ? body.workMode as PaymentTrackWorkMode
+        : null;
+      const includesDelivery = parsedMode === "delivery_only" || parsedMode === "delivery_and_installation";
+      const includesInstallation = parsedMode === "installation_only" || parsedMode === "delivery_and_installation";
+      if (actorRole !== "pm") {
+        return paymentTrackError(403, "role_forbidden", "Only the Project Manager can schedule work.");
+      }
+      if (!Object.keys(body).every((field) => WORK_SCHEDULE_FIELDS.has(field))
+        || !parsedMode
+        || !paymentTrackDateIsValid(body.deliveryDate)
+        || !paymentTrackTimeIsValid(body.deliveryTime)
+        || (includesDelivery && (!parsedSelections || !paymentTrackScheduleAssigneeIsValid(body.deliveryAssignee)))
+        || (includesInstallation && !paymentTrackScheduleAssigneeIsValid(body.installationAssignee))
+        || !paymentTrackUpdatedAtIsValid(body.expectedUpdatedAt)) {
+        return paymentTrackError(400, "invalid_work_schedule", "Choose the work type, date, time, required team members and delivery items.");
+      }
+      workMode = parsedMode;
+      deliveryDate = body.deliveryDate;
+      deliveryTime = body.deliveryTime;
+      deliveryAssignee = includesDelivery ? body.deliveryAssignee as PaymentTrackScheduleAssignee : undefined;
+      installationAssignee = includesInstallation ? body.installationAssignee as PaymentTrackScheduleAssignee : undefined;
+      preparedDeliverySelections = includesDelivery ? parsedSelections || undefined : undefined;
+      expectedUpdatedAt = body.expectedUpdatedAt;
+    }
     if (action === "pre_schedule_installation") {
       const parsedNotes = scheduleRequestNotes(body.notes);
       if (actorRole !== "sales") {
@@ -366,6 +422,7 @@ export async function PATCH(
       installationDate,
       installationTime,
       installationAssignee,
+      workMode,
       reason,
       expectedUpdatedAt,
       notes,

@@ -79,7 +79,10 @@ function apiError(value: unknown, fallback: string) {
   return typeof message === "string" && message.trim() ? message : fallback;
 }
 
-export function ReimbursementWorkspace({ authenticatedRole }: { authenticatedRole: ErpRole }) {
+export function ReimbursementWorkspace({ authenticatedRole, openEntityTarget }: {
+  authenticatedRole: ErpRole;
+  openEntityTarget?: { entityId: string; requestId: number };
+}) {
   const [claims, setClaims] = useState<ReimbursementClaim[]>([]);
   const [view, setView] = useState<WorkspaceView>("mine");
   const [loading, setLoading] = useState(true);
@@ -95,6 +98,7 @@ export function ReimbursementWorkspace({ authenticatedRole }: { authenticatedRol
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const busyRef = useRef(false);
   const claimsRequestIdRef = useRef(0);
+  const handledOpenEntityRequestRef = useRef(0);
   const isAdmin = authenticatedRole === "admin";
 
   useEffect(() => {
@@ -197,12 +201,28 @@ export function ReimbursementWorkspace({ authenticatedRole }: { authenticatedRol
     }
   };
 
-  const openDetail = (claim: ReimbursementClaim, mode: DetailMode, element: HTMLElement) => {
+  const openDetail = useCallback((claim: ReimbursementClaim, mode: DetailMode, element: HTMLElement | null) => {
     openModal(element);
     setReviewNote(claim.reviewNote || "");
     setPaymentReference(claim.paymentReference || "");
     setDetail({ claim, mode });
-  };
+  }, []);
+
+  useEffect(() => {
+    if (!openEntityTarget || loading || handledOpenEntityRequestRef.current === openEntityTarget.requestId) return;
+    handledOpenEntityRequestRef.current = openEntityTarget.requestId;
+    const claim = claims.find((candidate) => candidate.id === openEntityTarget.entityId);
+    if (!claim) {
+      setError("The reimbursement linked to this reminder is no longer available.");
+      return;
+    }
+    const mode: DetailMode = isAdmin && claim.status === "submitted"
+      ? "review"
+      : isAdmin && claim.status === "pending_payment" ? "payment" : "view";
+    setSearch("");
+    setView(mode === "review" ? "review" : mode === "payment" ? "payment" : "mine");
+    openDetail(claim, mode, null);
+  }, [claims, isAdmin, loading, openDetail, openEntityTarget]);
 
   const performAction = async (action: ReimbursementAction) => {
     if (!detail || busy) return;

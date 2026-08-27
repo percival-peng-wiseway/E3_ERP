@@ -533,12 +533,15 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
 
   useEffect(() => {
     void loadNotifications(notificationRole, false);
+    const refreshForPaymentChange = () => void loadNotifications(notificationRole, true);
+    window.addEventListener("erp:payment-track-updated", refreshForPaymentChange);
     const interval = window.setInterval(
       () => void loadNotifications(notificationRole, true),
       NOTIFICATION_REFRESH_INTERVAL_MS,
     );
     return () => {
       window.clearInterval(interval);
+      window.removeEventListener("erp:payment-track-updated", refreshForPaymentChange);
       notificationsAbortRef.current?.abort();
     };
   }, [loadNotifications, notificationRole]);

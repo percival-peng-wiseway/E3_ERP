@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 // @ts-expect-error -- focused Node ESM tests require the explicit extension.
 import { listPaymentTrackProjects } from "../payment-track/repository.ts";
 import type { PaymentTrackProject } from "../payment-track/types";
@@ -29,6 +28,12 @@ const COLLECTION_CONFIRMATION_ASSIGNEE = {
   username: "jiaqi",
   displayName: "Jiaqi",
 } as const;
+const ACCESSORY_STOCK_ASSIGNEE = {
+  username: "kevin",
+  displayName: "Kevin",
+} as const;
+const ACCESSORY_REORDER_THRESHOLD = 3;
+const ACCESSORY_REORDER_SKUS = new Set(["BOLLARD", "CANOPY"]);
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -46,8 +51,18 @@ export type OperationalOrder = {
   scheduleComplete: boolean;
 };
 
+export type OperationalInventoryItem = {
+  sku: string;
+  category: string;
+  onHand: number;
+  reserved: number;
+  pending: number;
+  available: number;
+};
+
 type OperationalSnapshot = {
   orders: OperationalOrder[];
+  inventory: OperationalInventoryItem[];
 };
 
 const priorityOrder: Record<NotificationPriority, number> = {
@@ -94,10 +109,6 @@ export function normalizeNotificationDateTime(value: unknown): string | null {
 
 function notificationId(module: string, entityId: string, action: string) {
   return `${module}:${encodeURIComponent(entityId)}:${action}`.slice(0, 420);
-}
-
-function opaqueLegacyOrderId(value: string) {
-  return `legacy-${createHash("sha256").update(value).digest("hex").slice(0, 24)}`;
 }
 
 function notification(
@@ -249,7 +260,25 @@ async function loadOperationalSnapshot(): Promise<OperationalSnapshot> {
   });
   if (!response.ok) throw new Error("Inventory source unavailable");
   const root = operationalRoot(await limitedJson(response, UPSTREAM_RESPONSE_LIMIT));
-  if (!Array.isArray(root.orders)) throw new Error("Invalid operational response");
+  if (!Array.isArray(root.orders) || !Array.isArray(root.inventory)) throw new Error("Invalid operational response");
+
+  const inventory = root.inventory.slice(0, MAX_SOURCE_RECORDS).flatMap((value): OperationalInventoryItem[] => {
+    if (!isRecord(value)) return [];
+    const sku = cleanText(value.sku, 160);
+    const onHand = finiteNumber(value.on_hand);
+    const reserved = finiteNumber(value.reserved);
+    const pending = finiteNumber(value.pending);
+    const available = finiteNumber(value.available);
+    if (!sku || onHand === null || reserved === null || pending === null || available === null) return [];
+    return [{
+      sku,
+      category: cleanText(value.category, 100),
+      onHand,
+      reserved,
+      pending,
+      available,
+    }];
+  });
 
   const allowedStatuses = new Set<OperationalOrder["status"]>(["pending", "scheduled", "delivered", "cancelled"]);
   const orders = root.orders.slice(0, MAX_SOURCE_RECORDS).flatMap((value): OperationalOrder[] => {
@@ -268,9 +297,7 @@ async function loadOperationalSnapshot(): Promise<OperationalSnapshot> {
       cleanText(value.note, 500),
     ].join(":");
     const group = sourceGroup || legacyGroup;
-    const entityId = sourceGroup && /^[A-Za-z0-9_-]+$/.test(sourceGroup)
-      ? sourceGroup
-      : opaqueLegacyOrderId(group);
+    const entityId = `inventory-order-${numericId}`;
     const plannedDate = cleanText(value.planned_date, 10) || null;
     const deliveryTime = cleanText(value.delivery_time, 5) || null;
     const customer = cleanText(value.customer, 200);
@@ -295,7 +322,7 @@ async function loadOperationalSnapshot(): Promise<OperationalSnapshot> {
     }];
   });
 
-  return { orders };
+  return { orders, inventory };
 }
 
 export function buildPaymentTrackNotifications(projects: PaymentTrackProject[], now: Date) {
@@ -450,6 +477,33 @@ export function buildPaymentTrackNotifications(projects: PaymentTrackProject[], 
           entityId: project.id,
           actionLabel: hasSchedule ? "View installment schedule" : "Arrange installment",
         }));
+      } else if (task.action === "manage_work") {
+        const deliveredAwaitingInstall = Boolean(project.deliveredAt && !project.installedAt && project.workMode === "delivery_only");
+        const scheduledFor = deliveredAwaitingInstall
+          ? project.installationScheduledFor
+          : project.deliveryScheduledFor || project.installationScheduledFor;
+        const daysUntil = daysUntilDate(scheduledFor, now);
+        const hasSchedule = Boolean(project.workMode && scheduledFor && !deliveredAwaitingInstall);
+        let priority: NotificationPriority = "high";
+        if (hasSchedule && daysUntil !== null) {
+          if (daysUntil < -30 || daysUntil > 7) continue;
+          priority = daysUntil <= 0 ? "urgent" : daysUntil <= 3 ? "high" : "normal";
+        }
+        const workLabel = project.workMode === "delivery_only"
+          ? "Delivery"
+          : project.workMode === "installation_only" ? "Installation" : project.workMode === "delivery_and_installation" ? "Delivery & Install" : "Work";
+        items.push(notification({
+          role: task.role,
+          priority,
+          badgeLabel: hasSchedule ? `${workLabel} scheduled` : "WIP unscheduled",
+          projectCreatedAt: project.createdAt,
+          ownerName: project.specialist.name,
+          title: customerName,
+          description: planningDescription(customerAddress, `${workLabel} planning`),
+          module: "payments",
+          entityId: project.id,
+          actionLabel: hasSchedule ? "Open scheduled work" : "Schedule work",
+        }));
       } else if (task.action === "confirm_solar_stc") {
         items.push(notification({
           role: task.role,
@@ -491,12 +545,15 @@ export function buildPaymentTrackNotifications(projects: PaymentTrackProject[], 
           actionLabel: "Record received payment",
         }));
       } else if (task.action === "confirm_final_payment") {
+        const payment = project.finalPayments.find((candidate) => candidate.id === task.paymentId);
         items.push(notification({
           id: notificationId("payments", project.id, `confirm-final-payment:${task.paymentId}`),
           role: task.role,
           priority: "high",
           title: customerName,
-          description: amountAction(project.outstandingCents, "outstanding", "Confirm payment"),
+          description: payment?.reportedAmountCents
+            ? `${aud(payment.reportedAmountCents)} reported by Sales · verify actual receipt.`
+            : amountAction(project.outstandingCents, "outstanding", "Confirm payment"),
           module: "payments",
           entityId: project.id,
           actionLabel: "Confirm payment",
@@ -605,6 +662,34 @@ export function buildOperationalProjectNotifications(orders: OperationalOrder[],
   return items;
 }
 
+export function buildInventoryStockNotifications(inventory: OperationalInventoryItem[]) {
+  const targeted = new Map<string, OperationalInventoryItem>();
+  for (const item of inventory.slice(0, MAX_SOURCE_RECORDS)) {
+    const sku = cleanText(item.sku, 160).toLocaleUpperCase("en-AU");
+    if (!ACCESSORY_REORDER_SKUS.has(sku) || !Number.isFinite(item.available)) continue;
+    const current = targeted.get(sku);
+    if (!current || item.available < current.available) targeted.set(sku, { ...item, sku });
+  }
+
+  return [...targeted.entries()]
+    .sort(([left], [right]) => left.localeCompare(right, "en-AU"))
+    .flatMap(([sku, item]): WorkspaceNotification[] => {
+      if (item.available >= ACCESSORY_REORDER_THRESHOLD) return [];
+      return [notification({
+        role: "pm",
+        priority: "high",
+        badgeLabel: "Low stock",
+        ownerName: ACCESSORY_STOCK_ASSIGNEE.displayName,
+        assigneeUsername: ACCESSORY_STOCK_ASSIGNEE.username,
+        title: `${sku} needs replenishment`,
+        description: `${item.available} available · ${item.pending} pending · purchase more stock.`,
+        module: "inventory",
+        entityId: `inventory-stock-${sku.toLocaleLowerCase("en-AU")}`,
+        actionLabel: "Open inventory",
+      })];
+    });
+}
+
 function sortedUniqueNotifications(items: WorkspaceNotification[]) {
   const unique = new Map<string, WorkspaceNotification>();
   for (const item of items) {
@@ -646,7 +731,10 @@ export async function buildWorkspaceNotifications(
     ? listReimbursements({ includeAll: true }).then(reimbursementNotifications)
     : Promise.resolve<WorkspaceNotification[]>([]);
   const deliveryOperationsTask = role === "all" || role === "pm"
-    ? loadOperationalSnapshot().then((snapshot) => buildOperationalProjectNotifications(snapshot.orders, now))
+    ? loadOperationalSnapshot().then((snapshot) => [
+      ...buildOperationalProjectNotifications(snapshot.orders, now),
+      ...buildInventoryStockNotifications(snapshot.inventory),
+    ])
     : Promise.resolve<WorkspaceNotification[]>([]);
   const [payments, reimbursements, operations] = await Promise.allSettled([
     listPaymentTrackProjects().then((projects) => buildPaymentTrackNotifications(projects, now)),
@@ -663,7 +751,7 @@ export async function buildWorkspaceNotifications(
   if (reimbursements.status === "fulfilled") generated.push(...reimbursements.value);
   else warnings.push("Reimbursement reminders are temporarily unavailable.");
   if (operations.status === "fulfilled") generated.push(...operations.value);
-  else if (role === "all" || role === "pm") warnings.push("Delivery schedule reminders are temporarily unavailable.");
+  else if (role === "all" || role === "pm") warnings.push("Delivery schedule and inventory reminders are temporarily unavailable.");
 
   const allNotifications = sortedUniqueNotifications(generated);
   const counts = notificationCounts(allNotifications);

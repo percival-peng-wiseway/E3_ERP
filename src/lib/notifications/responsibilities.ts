@@ -12,6 +12,7 @@ export type PaymentTrackResponsibilityAction =
   | "pre_schedule_installation"
   | "review_installation_pre_schedule"
   | "manage_installation"
+  | "manage_work"
   | "record_final_payment"
   | "confirm_final_payment"
   | "confirm_solar_stc"
@@ -24,8 +25,8 @@ export type PaymentTrackResponsibility = {
   paymentId?: string;
 };
 
-function pendingFinalPayment(project: PaymentTrackProject) {
-  return project.finalPayments.find((payment) => (
+function pendingFinalPayments(project: PaymentTrackProject) {
+  return project.finalPayments.filter((payment) => (
     Boolean(payment.acknowledgedAt || payment.proof) && !payment.confirmedAt
   ));
 }
@@ -59,6 +60,11 @@ export function paymentTrackResponsibilities(project: PaymentTrackProject): Paym
       : [{ action: "upload_deposit_proof", role: "sales" }];
   }
 
+  const tasks: PaymentTrackResponsibility[] = [];
+  if (project.stage === "working_in_progress" && !project.installedAt) {
+    tasks.push({ action: "manage_work", role: "pm" });
+  }
+
   if (project.stage === "material_delivery") {
     if (!project.deliveredAt) {
       if (deliveryScheduleIsComplete(project)) return [{ action: "manage_delivery", role: "pm" }];
@@ -80,7 +86,6 @@ export function paymentTrackResponsibilities(project: PaymentTrackProject): Paym
       : [{ action: "pre_schedule_installation", role: "sales" }];
   }
 
-  const tasks: PaymentTrackResponsibility[] = [];
   if (project.stage === "stc_rebate") {
     if (project.stcSolarRequired && !project.stcSolarReceivedAt) {
       tasks.push({ action: "confirm_solar_stc", role: "admin" });
@@ -93,11 +98,13 @@ export function paymentTrackResponsibilities(project: PaymentTrackProject): Paym
     }
   }
 
-  if (["waiting_coes", "stc_rebate", "done"].includes(project.stage) && project.outstandingCents > 0) {
-    const pendingPayment = pendingFinalPayment(project);
-    tasks.push(pendingPayment
-      ? { action: "confirm_final_payment", role: "admin", paymentId: pendingPayment.id }
-      : { action: "record_final_payment", role: "sales" });
+  const pendingPayments = pendingFinalPayments(project);
+  pendingPayments.forEach((payment) => tasks.push({ action: "confirm_final_payment", role: "admin", paymentId: payment.id }));
+  if (project.outstandingCents > 0) {
+    const pendingReported = pendingPayments.reduce((total, payment) => total + (payment.reportedAmountCents || 0), 0);
+    if (pendingReported < project.outstandingCents) {
+      tasks.push({ action: "record_final_payment", role: "sales" });
+    }
   }
 
   return tasks;

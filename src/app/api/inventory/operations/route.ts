@@ -3,6 +3,9 @@ import {
   type InventoryOperationAction,
 } from "@/lib/inventory-operations/types";
 import { getErpSession } from "@/lib/auth/session";
+import { applyProjectSolarConsumptionToOperationsState } from "@/lib/inventory-operations/project-consumption";
+import type { ApiState } from "@/lib/inventory-operations/types";
+import { listPaymentTrackProjects } from "@/lib/payment-track/repository";
 import {
   isAuthorizedActorRequest,
   isAuthorizedMutationRequest,
@@ -15,6 +18,7 @@ export const dynamic = "force-dynamic";
 
 const DEFAULT_UPSTREAM_URL = "https://inventory.e3energy.com.au/api/inventory";
 const REQUEST_BODY_LIMIT = 512 * 1024;
+const UPSTREAM_STATE_LIMIT = 4 * 1024 * 1024;
 const UPSTREAM_TIMEOUT_MS = 10_000;
 const COOKIE_NAMESPACE = {
   prefix: "__erp_inventory_",
@@ -58,14 +62,17 @@ function inventoryTarget(request: Request): URL {
   return target;
 }
 
-async function readLimitedBody(request: Request, limit: number): Promise<Uint8Array> {
-  const declaredLength = Number(request.headers.get("content-length"));
+async function readLimitedBody(
+  source: Pick<Request, "headers" | "body">,
+  limit: number,
+): Promise<Uint8Array> {
+  const declaredLength = Number(source.headers.get("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > limit) {
     throw new PayloadTooLargeError();
   }
-  if (!request.body) return new Uint8Array();
+  if (!source.body) return new Uint8Array();
 
-  const reader = request.body.getReader();
+  const reader = source.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
 
@@ -102,6 +109,36 @@ function relay(upstream: Response, request: Request): Response {
     statusText: upstream.statusText,
     headers: proxyResponseHeaders(upstream, request, COOKIE_NAMESPACE),
   });
+}
+
+function isInventoryOperationsState(value: unknown): value is ApiState {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const state = value as Partial<ApiState>;
+  return Array.isArray(state.inventory)
+    && Array.isArray(state.orders)
+    && Array.isArray(state.deliveryHistory)
+    && Array.isArray(state.lossHistory)
+    && Array.isArray(state.logs)
+    && typeof state.admin === "boolean";
+}
+
+async function relayInventoryState(upstream: Response, request: Request) {
+  if (!upstream.ok) return relay(upstream, request);
+  try {
+    const bytes = await readLimitedBody(upstream.clone(), UPSTREAM_STATE_LIMIT);
+    const value: unknown = JSON.parse(new TextDecoder().decode(bytes));
+    if (!isInventoryOperationsState(value)) return relay(upstream, request);
+    const projects = await listPaymentTrackProjects();
+    const state = applyProjectSolarConsumptionToOperationsState(value, projects);
+    return new Response(JSON.stringify(state), {
+      status: upstream.status,
+      statusText: upstream.statusText,
+      headers: proxyResponseHeaders(upstream, request, COOKIE_NAMESPACE),
+    });
+  } catch (error) {
+    console.error("Project installation consumption overlay failed", error);
+    return relay(upstream, request);
+  }
 }
 
 function isTimeout(error: unknown): boolean {
@@ -247,7 +284,7 @@ export async function GET(request: Request): Promise<Response> {
       redirect: "manual",
       signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     });
-    return relay(upstream, request);
+    return relayInventoryState(upstream, request);
   } catch (error) {
     console.error("Inventory operations GET proxy failed", error);
     return isTimeout(error)

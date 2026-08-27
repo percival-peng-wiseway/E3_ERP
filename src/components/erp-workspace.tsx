@@ -55,6 +55,7 @@ import { SiteVisitingWorkspace } from "./site-visiting-workspace";
 import { UserManagementDialog } from "./user-management-dialog";
 
 type ModuleId = "home" | "files" | "inventory" | "quotations" | "projects" | "site-visits" | "payments" | "reimbursements" | "reports" | "finance";
+type EntityNavigationTarget = { module: ModuleId; entityId: string; requestId: number };
 
 const NAVIGATION: Array<{
   group: string;
@@ -107,7 +108,9 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
   const [activeSiteVisitCount, setActiveSiteVisitCount] = useState<number | null>(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const [entityNavigationTarget, setEntityNavigationTarget] = useState<EntityNavigationTarget | null>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
+  const navigationRequestIdRef = useRef(0);
 
   const userInitials = currentUser.displayName
     .split(/\s+/)
@@ -318,8 +321,14 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
     };
   }, []);
 
-  const navigate = (module: ModuleId, enabled = true) => {
+  const navigate = (module: ModuleId, enabled = true, entityId?: string) => {
     if (!enabled) return;
+    const normalizedEntityId = entityId?.trim();
+    setEntityNavigationTarget(normalizedEntityId ? {
+      module,
+      entityId: normalizedEntityId,
+      requestId: ++navigationRequestIdRef.current,
+    } : null);
     setActiveModule(module);
     setSidebarOpen(false);
   };
@@ -463,16 +472,16 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
             <HomeCollaborationWorkspace
               currentUser={currentUser}
               onOpenSettings={currentUser.role === "admin" ? () => setAgentSettingsOpen(true) : undefined}
-              onNavigate={(module) => navigate(module)}
+              onNavigate={(module, entityId) => navigate(module, true, entityId)}
             />
           </div>
           {activeModule === "files" && <FilesWorkspace currentUser={currentUser} />}
           {activeModule === "inventory" && <InventoryOperationsWorkspace currentUser={currentUser} />}
           {activeModule === "quotations" && <QuoteHelpWorkspace />}
-          {activeModule === "projects" && <ProjectDeliveryBoard authenticatedRole={currentUser.role} />}
+          {activeModule === "projects" && <ProjectDeliveryBoard authenticatedRole={currentUser.role} openEntityTarget={entityNavigationTarget?.module === "projects" ? entityNavigationTarget : undefined} />}
           {activeModule === "site-visits" && <SiteVisitingWorkspace authenticatedRole={currentUser.role} />}
-          {activeModule === "payments" && <PaymentTrackWorkspace authenticatedRole={currentUser.role} />}
-          {activeModule === "reimbursements" && <ReimbursementWorkspace authenticatedRole={currentUser.role} />}
+          {activeModule === "payments" && <PaymentTrackWorkspace authenticatedRole={currentUser.role} openEntityTarget={entityNavigationTarget?.module === "payments" ? entityNavigationTarget : undefined} />}
+          {activeModule === "reimbursements" && <ReimbursementWorkspace authenticatedRole={currentUser.role} openEntityTarget={entityNavigationTarget?.module === "reimbursements" ? entityNavigationTarget : undefined} />}
           {activeModule === "reports" && <ReportsWorkspace />}
           {activeModule === "finance" && <ComingSoon />}
         </main>

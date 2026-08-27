@@ -11,3 +11,7 @@ test("accepts canonical Site Visit schedule source IDs", () => {
   assert.equal(isProjectScheduleSourceEntryId(`site-visit:${id.toUpperCase()}`), false);
   assert.equal(isProjectScheduleSourceEntryId("site-visit:not-a-uuid"), false);
 });
+
+test("accepts canonical combined WIP schedule source IDs", () => {
+  assert.equal(isProjectScheduleSourceEntryId(`payment-combined:${randomUUID()}`), true);
+});

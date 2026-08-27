@@ -1,5 +1,7 @@
 export const PAYMENT_TRACK_STAGES = [
   "deposit_not_paid",
+  "working_in_progress",
+  // Legacy values remain readable while stored projects are migrated to WIP.
   "material_delivery",
   "installing",
   "waiting_coes",
@@ -17,6 +19,14 @@ export const PAYMENT_TRACK_SCHEDULE_ASSIGNEES = ["Leo", "Daniel"] as const;
 
 export type PaymentTrackScheduleAssignee = (typeof PAYMENT_TRACK_SCHEDULE_ASSIGNEES)[number];
 
+export const PAYMENT_TRACK_WORK_MODES = [
+  "delivery_only",
+  "installation_only",
+  "delivery_and_installation",
+] as const;
+
+export type PaymentTrackWorkMode = (typeof PAYMENT_TRACK_WORK_MODES)[number];
+
 export const PAYMENT_TRACK_ACTIONS = [
   "acknowledge_deposit",
   "confirm_deposit",
@@ -28,6 +38,8 @@ export const PAYMENT_TRACK_ACTIONS = [
   "confirm_collection",
   "pre_schedule_installation",
   "schedule_installation",
+  "schedule_work",
+  "mark_work_completed",
   "acknowledge_payment",
   "confirm_final_payment",
   "mark_installed",
@@ -97,6 +109,23 @@ export interface PaymentTrackDeliverySelection {
   quantity: number;
 }
 
+export interface PaymentTrackSolarPanelConsumptionItem {
+  sku: string;
+  quantity: number;
+  sourceItemIds: string[];
+}
+
+/**
+ * Immutable Inventory consumption captured atomically when installation is
+ * completed. Inventory projects this single marker into its stock balance and
+ * consumption history, so retrying a completion can never deduct twice.
+ */
+export interface PaymentTrackSolarPanelConsumption {
+  recordedAt: string;
+  recordedBy: string;
+  items: PaymentTrackSolarPanelConsumptionItem[];
+}
+
 export interface PaymentTrackScheduleRequest {
   preferredDate: string;
   preferredTime: string;
@@ -109,6 +138,7 @@ export interface PaymentTrackReceipt {
   proof: PaymentTrackFile | null;
   acknowledgedAt: string | null;
   acknowledgedBy: string | null;
+  reportedAmountCents: number | null;
   confirmedAmountCents: number | null;
   confirmedAt: string | null;
   confirmedBy: string | null;
@@ -134,10 +164,13 @@ export type PaymentTrackHistoryAction =
   | "collection_confirmed"
   | "installation_pre_scheduled"
   | "installation_scheduled"
+  | "work_scheduled"
+  | "work_completed"
   | "payment_acknowledged"
   | "final_payment_proof_uploaded"
   | "final_payment_confirmed"
   | "marked_installed"
+  | "solar_panel_consumption_recorded"
   | "coes_received"
   | "continued_to_stc"
   | "stc_solar_confirmed"
@@ -170,6 +203,7 @@ export interface PaymentTrackProject {
   overpaymentCents: number;
   expectedDepositCents: number | null;
   stage: PaymentTrackStage;
+  workMode: PaymentTrackWorkMode | null;
   contract: PaymentTrackFile | null;
   deposit: PaymentTrackReceipt;
   deliverySelections: PaymentTrackDeliverySelection[];
@@ -187,6 +221,9 @@ export interface PaymentTrackProject {
   installationAssignee: PaymentTrackScheduleAssignee | null;
   finalPayments: PaymentTrackFinalPayment[];
   installedAt: string | null;
+  // Optional for callers that still hold a pre-integration project snapshot;
+  // repository responses always normalize this to a record or null.
+  solarPanelConsumption?: PaymentTrackSolarPanelConsumption | null;
   coesReceivedAt: string | null;
   stcSolarRequired: boolean;
   stcBatteryRequired: boolean;
@@ -284,6 +321,7 @@ export type PaymentTrackActionRequest = {
   installationDate?: string;
   installationTime?: string;
   installationAssignee?: PaymentTrackScheduleAssignee;
+  workMode?: PaymentTrackWorkMode;
   actorName?: string;
   notes?: string;
   expectedPmNotesUpdatedAt?: string | null;

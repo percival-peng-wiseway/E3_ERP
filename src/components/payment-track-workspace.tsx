@@ -63,6 +63,7 @@ import type {
   PaymentTrackScheduleAssignee,
   PaymentTrackStage,
   PaymentTrackUpdatedEventDetail,
+  PaymentTrackWorkMode,
 } from "@/lib/payment-track/types";
 import styles from "./payment-track-workspace.module.css";
 import { MaterialDeliveryPicker } from "./material-delivery-picker";
@@ -111,11 +112,10 @@ const STAGES: Array<{
     tone: "amber",
   },
   {
-    id: "material_delivery",
-    title: "Material Delivery",
+    id: "working_in_progress",
+    title: "Working in Progress",
     tone: "blue",
   },
-  { id: "installing", title: "Installment", tone: "violet" },
   {
     id: "waiting_coes",
     title: "Installed / Waiting COES",
@@ -173,6 +173,21 @@ function hasInstallationSchedule(project: PaymentTrackProject) {
   );
 }
 
+function hasWorkSchedule(project: PaymentTrackProject) {
+  if (project.workMode === "delivery_only") return hasDeliverySchedule(project);
+  if (project.workMode === "installation_only") return hasInstallationSchedule(project);
+  return project.workMode === "delivery_and_installation"
+    && hasDeliverySchedule(project)
+    && hasInstallationSchedule(project)
+    && project.deliveryScheduledFor === project.installationScheduledFor
+    && project.deliveryScheduledTime === project.installationScheduledTime;
+}
+
+function hasActiveWorkSchedule(project: PaymentTrackProject) {
+  return hasWorkSchedule(project)
+    && !(project.deliveredAt && !project.installedAt && project.workMode === "delivery_only");
+}
+
 function hasDeliveryScheduleRequest(project: PaymentTrackProject) {
   return Boolean(project.deliveryScheduleRequest && project.deliverySelections.length);
 }
@@ -217,6 +232,7 @@ function stageLabel(stage: PaymentTrackStage) {
 }
 
 function projectHasScheduledCurrentStage(project: PaymentTrackProject) {
+  if (project.stage === "working_in_progress") return hasActiveWorkSchedule(project) && !project.installedAt;
   return (project.stage === "material_delivery" && !project.deliveredAt && hasDeliverySchedule(project))
     || (project.stage === "installing" && !project.installedAt && hasInstallationSchedule(project));
 }
@@ -233,6 +249,7 @@ function projectHasPreScheduledCurrentStage(project: PaymentTrackProject) {
 }
 
 function projectHasUnscheduledCurrentStage(project: PaymentTrackProject) {
+  if (project.stage === "working_in_progress") return !hasActiveWorkSchedule(project) && !project.installedAt;
   return (project.stage === "material_delivery"
     && !project.deliveredAt
     && !hasDeliveryScheduleRequest(project)
@@ -244,12 +261,24 @@ function projectHasUnscheduledCurrentStage(project: PaymentTrackProject) {
 }
 
 function displayedProjectStage(project: PaymentTrackProject) {
+  if (project.stage === "working_in_progress") {
+    if (project.installedAt) return "Installed";
+    if (project.deliveredAt && project.workMode === "delivery_only") return "Delivered";
+    if (hasActiveWorkSchedule(project)) return "Scheduled";
+    if (project.deliveredAt) return "Delivered";
+    return "Unscheduled";
+  }
   if (projectHasScheduledCurrentStage(project)) return "Scheduled";
   if (projectHasPreScheduledCurrentStage(project)) return "Pre-scheduled";
   return projectHasUnscheduledCurrentStage(project) ? "Unscheduled" : stageLabel(project.stage);
 }
 
 function displayedProjectStageTone(project: PaymentTrackProject) {
+  if (project.stage === "working_in_progress") {
+    if (project.installedAt || (project.deliveredAt && project.workMode === "delivery_only")) return "green";
+    if (hasActiveWorkSchedule(project)) return "green";
+    return "red";
+  }
   if (projectHasScheduledCurrentStage(project)) return "green";
   if (projectHasPreScheduledCurrentStage(project)) return "amber";
   if (projectHasUnscheduledCurrentStage(project)) return "red";
@@ -262,6 +291,12 @@ function skipStageDetails(project: PaymentTrackProject) {
     return {
       target: "material_delivery" as const,
       description: "This advances the project without creating or changing a payment record. The outstanding balance remains unchanged.",
+    };
+  }
+  if (project.stage === "working_in_progress") {
+    return {
+      target: "waiting_coes" as const,
+      description: "This marks delivery and installation as already completed and advances the project to the COES stage.",
     };
   }
   if (project.stage === "material_delivery") {
@@ -289,13 +324,20 @@ function skipStageDetails(project: PaymentTrackProject) {
   };
 }
 
-function pendingLaterPayment(project: PaymentTrackProject) {
-  const payment = project.finalPayments.at(-1);
-  return project.outstandingCents > 0
-    && payment?.confirmedAmountCents === null
-    && Boolean(payment.acknowledgedAt || payment.proof)
-    ? payment
-    : null;
+function paymentsAwaitingAdmin(project: PaymentTrackProject) {
+  return project.finalPayments.filter((payment) => (
+    payment.confirmedAmountCents === null && Boolean(payment.acknowledgedAt || payment.proof)
+  ));
+}
+
+function pendingPaymentReviewCount(project: PaymentTrackProject) {
+  return paymentsAwaitingAdmin(project).length;
+}
+
+function pendingReportedPaymentTotal(project: PaymentTrackProject) {
+  return project.finalPayments.reduce((total, payment) => (
+    payment.confirmedAt ? total : total + (payment.reportedAmountCents || 0)
+  ), 0);
 }
 
 function pendingRebateReceipts(project: PaymentTrackProject) {
@@ -326,6 +368,17 @@ function projectStatus(project: PaymentTrackProject): { label: string; owner: st
       ? { label: "Awaiting deposit confirmation", owner: "Admin", tone: "blue" }
       : { label: "Deposit proof required", owner: "Sales", tone: "amber" };
   }
+  if (project.stage === "working_in_progress") {
+    if (project.installedAt) return { label: "Installed", owner: "PM", tone: "green" };
+    if (project.deliveredAt && project.workMode === "delivery_only") return { label: "Delivered · installation unscheduled", owner: "PM", tone: "blue" };
+    if (hasActiveWorkSchedule(project)) {
+      const label = project.workMode === "delivery_only"
+        ? "Delivery scheduled"
+        : project.workMode === "installation_only" ? "Installation scheduled" : "Delivery & installation scheduled";
+      return { label, owner: "PM", tone: "green" };
+    }
+    return { label: "Work unscheduled", owner: "PM", tone: "amber" };
+  }
   if (project.stage === "material_delivery") {
     if (!project.deliveredAt) {
       if (hasDeliverySchedule(project)) {
@@ -348,59 +401,33 @@ function projectStatus(project: PaymentTrackProject): { label: string; owner: st
       : { label: "Installment preference required", owner: "Sales", tone: "amber" };
   }
   if (project.stage === "waiting_coes") {
-    const pendingPayment = pendingLaterPayment(project);
-    if (!project.coesReceivedAt && pendingPayment) {
-      return { label: "COES + payment review pending", owner: "PM / Admin", tone: "cyan" };
-    }
-    if (!project.coesReceivedAt && project.outstandingCents > 0) {
-      return { label: "COES + final payment open", owner: "PM / Sales", tone: "cyan" };
-    }
     if (!project.coesReceivedAt) {
       return { label: "COES confirmation required", owner: "PM", tone: "cyan" };
     }
-    if (pendingPayment) {
-      return { label: "Payment review pending", owner: "Admin", tone: "blue" };
-    }
-    return project.outstandingCents > 0
-      ? { label: "Final payment open", owner: "Sales", tone: "amber" }
-      : { label: "Ready for STC Rebate", owner: "Admin", tone: "cyan" };
+    return { label: "Ready for STC Rebate", owner: "Admin", tone: "cyan" };
   }
   if (project.stage === "stc_rebate") {
     const pending = pendingRebateReceipts(project).join(" + ");
-    const pendingPayment = pendingLaterPayment(project);
-    if (pendingPayment) {
-      return {
-        label: `${pending ? `${pending} + ` : ""}payment review pending`,
-        owner: "Admin",
-        tone: "teal",
-      };
-    }
-    if (project.outstandingCents > 0) {
-      return {
-        label: `${pending ? `${pending} + ` : ""}final payment open`,
-        owner: pending ? "Admin / Sales" : "Sales",
-        tone: "teal",
-      };
-    }
     return {
       label: pending ? `${pending} confirmation required` : "Finalising rebate receipts",
       owner: "Admin",
       tone: "teal",
     };
   }
-  if (project.outstandingCents <= 0) {
-    return { label: "Paid in full", owner: "Complete", tone: "green" };
-  }
-  return pendingLaterPayment(project)
-    ? { label: "Awaiting final payment confirmation", owner: "Admin", tone: "blue" }
-    : { label: "Final payment acknowledgement required", owner: "Sales", tone: "amber" };
+  return { label: "Project complete", owner: "Complete", tone: "green" };
 }
 
-function projectNextStep(project: PaymentTrackProject, activeRole: PaymentTrackRole) {
+function projectNextStep(project: PaymentTrackProject) {
   if (project.stage === "deposit_not_paid") {
     return project.deposit.proof || project.deposit.acknowledgedAt
       ? { label: "Review Deposit", roles: ["admin"] as PaymentTrackRole[] }
       : { label: "Upload Deposit Proof", roles: ["sales"] as PaymentTrackRole[] };
+  }
+  if (project.stage === "working_in_progress") {
+    return {
+      label: hasActiveWorkSchedule(project) ? "Complete Scheduled Work" : "Schedule Work",
+      roles: ["pm"] as PaymentTrackRole[],
+    };
   }
   if (project.stage === "material_delivery") {
     if (!project.deliveredAt) {
@@ -424,39 +451,14 @@ function projectNextStep(project: PaymentTrackProject, activeRole: PaymentTrackR
       : { label: "Submit Installment Preference", roles: ["sales"] as PaymentTrackRole[] };
   }
   if (project.stage === "waiting_coes") {
-    const pendingPayment = pendingLaterPayment(project);
-    const canAcknowledgePayment = project.outstandingCents > 0 && !pendingPayment;
-    if (activeRole === "admin" && pendingPayment) {
-      return { label: "Review Final Payment", roles: ["admin"] as PaymentTrackRole[] };
-    }
-    if (activeRole === "sales" && canAcknowledgePayment) {
-      return { label: "Record Final Payment", roles: ["sales"] as PaymentTrackRole[] };
-    }
-    if (activeRole === "pm" && !project.coesReceivedAt) {
-      return { label: "Confirm COES", roles: ["pm"] as PaymentTrackRole[] };
-    }
-    const roles: PaymentTrackRole[] = [];
-    if (!project.coesReceivedAt) roles.push("pm");
-    if (pendingPayment) roles.push("admin");
-    else if (canAcknowledgePayment) roles.push("sales");
-    return {
-      label: !project.coesReceivedAt ? "Open COES & Payment Tasks" : "Open Payment Task",
-      roles: roles.length ? roles : ["admin"],
-    };
+    return project.coesReceivedAt
+      ? { label: "Open Rebate Stage", roles: ["admin"] as PaymentTrackRole[] }
+      : { label: "Confirm COES", roles: ["pm"] as PaymentTrackRole[] };
   }
   if (project.stage === "stc_rebate") {
     const solarPending = project.stcSolarRequired && !project.stcSolarReceivedAt;
     const batteryPending = project.stcBatteryRequired && !project.stcBatteryReceivedAt;
     const solarRebatePending = project.solarRebateRequired && !project.solarRebateReceivedAt;
-    const rebateReceiptPending = solarPending || batteryPending || solarRebatePending;
-    const pendingPayment = pendingLaterPayment(project);
-    const canAcknowledgePayment = project.outstandingCents > 0 && !pendingPayment;
-    if (activeRole === "admin" && pendingPayment) {
-      return { label: "Review Final Payment", roles: ["admin"] as PaymentTrackRole[] };
-    }
-    if (activeRole === "sales" && canAcknowledgePayment) {
-      return { label: "Record Final Payment", roles: ["sales"] as PaymentTrackRole[] };
-    }
     const pendingReceiptCount = Number(solarPending) + Number(batteryPending) + Number(solarRebatePending);
     const label = pendingReceiptCount > 1
       ? "Review Rebate Receipts"
@@ -467,25 +469,13 @@ function projectNextStep(project: PaymentTrackProject, activeRole: PaymentTrackR
           : solarRebatePending
             ? "Confirm Solar Rebate"
             : "Finalise Rebate Receipts";
-    if (activeRole === "admin" && rebateReceiptPending) {
-      return { label, roles: ["admin"] as PaymentTrackRole[] };
-    }
-    const roles: PaymentTrackRole[] = [];
-    if (rebateReceiptPending) roles.push("admin");
-    if (pendingPayment && !roles.includes("admin")) roles.push("admin");
-    else if (canAcknowledgePayment) roles.push("sales");
     return {
-      label: project.outstandingCents > 0 ? "Open Rebate & Payment Tasks" : label,
-      roles: roles.length ? roles : ["admin"],
+      label,
+      roles: ["admin"] as PaymentTrackRole[],
     };
   }
-  if (project.outstandingCents > 0) {
-    return pendingLaterPayment(project)
-      ? { label: "Review Final Payment", roles: ["admin"] as PaymentTrackRole[] }
-      : { label: "Payment Received", roles: ["sales"] as PaymentTrackRole[] };
-  }
   return {
-    label: "View Paid Project",
+    label: "View Completed Project",
     roles: ["sales", "pm", "admin"] as PaymentTrackRole[],
   };
 }
@@ -514,17 +504,16 @@ function parseManualItems(value: string): Array<Omit<PaymentTrackItem, "id">> {
   });
 }
 
-function isAwaitingAdmin(project: PaymentTrackProject) {
-  return (
+function adminReviewCount(project: PaymentTrackProject) {
+  const depositReview = (
     project.stage === "deposit_not_paid" && Boolean(project.deposit.proof || project.deposit.acknowledgedAt)
-  ) || (
+  ) ? 1 : 0;
+  const legacyCollectionReview = (
     project.stage === "material_delivery"
     && Boolean(project.deliveredAt)
     && Boolean(project.collection.acknowledgedAt || project.collection.proof)
-  ) || (
-    (project.stage === "waiting_coes" || project.stage === "stc_rebate" || project.stage === "done")
-    && Boolean(pendingLaterPayment(project))
-  );
+  ) ? 1 : 0;
+  return depositReview + legacyCollectionReview + pendingPaymentReviewCount(project);
 }
 
 function finalPaymentTotal(project: PaymentTrackProject) {
@@ -567,7 +556,10 @@ function confirmedPaymentRecords(project: PaymentTrackProject): ConfirmedPayment
   return records.sort((left, right) => left.confirmedAt.localeCompare(right.confirmedAt));
 }
 
-export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole: ErpRole }) {
+export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
+  authenticatedRole: ErpRole;
+  openEntityTarget?: { entityId: string; requestId: number };
+}) {
   const paymentTrackRole: PaymentTrackRole = authenticatedRole === "specialist" ? "sales" : authenticatedRole;
   const [projects, setProjects] = useState<PaymentTrackProject[]>([]);
   const [role, setRole] = useState<PaymentTrackRole>(paymentTrackRole);
@@ -595,6 +587,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
   const [installationTime, setInstallationTime] = useState("");
   const [installationNotes, setInstallationNotes] = useState("");
   const [installationAssignee, setInstallationAssignee] = useState<ScheduleAssignee>("");
+  const [workMode, setWorkMode] = useState<PaymentTrackWorkMode>("delivery_only");
   const [workflowConfirmation, setWorkflowConfirmation] = useState<WorkflowConfirmation | null>(null);
   const [workflowReason, setWorkflowReason] = useState("");
   const [viewMode, setViewMode] = useState<ProjectTrackViewMode>("board");
@@ -611,6 +604,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
   const busyRef = useRef(false);
   const loadRequestRef = useRef(0);
   const projectsRef = useRef<PaymentTrackProject[]>([]);
+  const handledOpenEntityRequestRef = useRef(0);
 
   const selected = useMemo(
     () => projects.find((project) => project.id === selectedId) ?? null,
@@ -762,7 +756,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
   const metrics = useMemo(() => ({
     receivable: projects.reduce((sum, project) => sum + project.balanceDueCents, 0),
     outstanding: projects.reduce((sum, project) => sum + project.outstandingCents, 0),
-    adminReview: projects.filter(isAwaitingAdmin).length,
+    adminReview: projects.reduce((sum, project) => sum + adminReviewCount(project), 0),
     active: countActivePaymentTrackProjects(projects),
   }), [projects]);
 
@@ -862,12 +856,17 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
     setShowAdd(true);
   };
 
-  const openProject = (project: PaymentTrackProject, element: HTMLElement) => {
-    returnFocusRef.current = element;
+  const openProject = useCallback((project: PaymentTrackProject, element?: HTMLElement) => {
+    returnFocusRef.current = element ?? null;
     setProofFile(null);
     setActionAmount("");
-    setDeliveryDate(project.deliveryScheduledFor || project.deliveryScheduleRequest?.preferredDate || "");
-    setDeliveryTime(project.deliveryScheduledTime || project.deliveryScheduleRequest?.preferredTime || "");
+    const currentWorkMode = project.deliveredAt && !project.installedAt && project.workMode === "delivery_only"
+      ? "installation_only"
+      : project.workMode || (project.deliveredAt ? "installation_only" : "delivery_only");
+    setWorkMode(currentWorkMode);
+    const currentWorkUsesInstallation = currentWorkMode === "installation_only";
+    setDeliveryDate((currentWorkUsesInstallation ? project.installationScheduledFor : project.deliveryScheduledFor) || project.deliveryScheduleRequest?.preferredDate || "");
+    setDeliveryTime((currentWorkUsesInstallation ? project.installationScheduledTime : project.deliveryScheduledTime) || project.deliveryScheduleRequest?.preferredTime || "");
     setDeliveryNotes(project.deliveryScheduleRequest?.notes || "");
     setDeliveryAssignee(project.deliveryAssignee || "");
     setDeliverySelectionDraft(project.deliverySelections);
@@ -881,7 +880,18 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
     setShowDeliveryPicker(false);
     setRole(paymentTrackRole);
     setSelectedId(project.id);
-  };
+  }, [paymentTrackRole]);
+
+  useEffect(() => {
+    if (!openEntityTarget || loading || handledOpenEntityRequestRef.current === openEntityTarget.requestId) return;
+    handledOpenEntityRequestRef.current = openEntityTarget.requestId;
+    const project = projects.find((candidate) => candidate.id === openEntityTarget.entityId);
+    if (!project) {
+      setError("The project linked to this reminder is no longer available.");
+      return;
+    }
+    openProject(project);
+  }, [loading, openEntityTarget, openProject, projects]);
 
   const selectRole = (nextRole: PaymentTrackRole) => {
     if (authenticatedRole !== "admin" && nextRole !== paymentTrackRole) {
@@ -939,7 +949,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
       updateProject(result.data);
       setShowAdd(false);
       setAgreement(null);
-      setNotice(`${result.data.reference} was imported and added to Deposit Not Paid.`);
+      setNotice(`${customerName(result.data)} was imported and added to Deposit Not Paid.`);
     } catch (importError) {
       setError(importError instanceof Error ? importError.message : "Unable to import this proposal.");
     } finally {
@@ -991,7 +1001,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
       if (!response.ok) throw new Error(apiError(result, "Unable to create this project."));
       updateProject(result.data);
       setShowAdd(false);
-      setNotice(`${result.data.reference} was added to Deposit Not Paid.`);
+      setNotice(`${customerName(result.data)} was added to Deposit Not Paid.`);
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : "Unable to create this project.");
     } finally {
@@ -1055,7 +1065,11 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
       setInstallationAssignee(result.data.installationAssignee || installationAssignee);
       setWorkflowConfirmation(null);
       setWorkflowReason("");
-      setSelectedId(null);
+      if (action === "acknowledge_payment" || action === "confirm_final_payment") {
+        setSelectedId(result.data.id);
+      } else {
+        setSelectedId(null);
+      }
       setNotice(successMessage);
     } catch (actionError) {
       setWorkflowConfirmation(null);
@@ -1069,7 +1083,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
   const deleteProject = async () => {
     if (!selected || busy || authenticatedRole !== "admin") return;
     const project = selected;
-    if (!window.confirm(`Delete ${project.reference} for “${customerName(project)}”? Files and schedule entries will also be removed.`)) return;
+    if (!window.confirm(`Delete “${customerName(project)}”? Files and schedule entries will also be removed.`)) return;
     setBusy(true);
     setError("");
     try {
@@ -1080,7 +1094,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
       projectsRef.current = nextProjects;
       setProjects(nextProjects);
       setSelectedId(null);
-      setNotice(`${project.reference} deleted.`);
+      setNotice(`${customerName(project)} deleted.`);
       announcePaymentTrackUpdate(nextProjects);
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : "Unable to delete the project.");
@@ -1102,6 +1116,20 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
       action,
       { amount: actionAmount, ...(paymentId ? { paymentId } : {}) },
       `${label} confirmed.`,
+    );
+  };
+
+  const recordReceivedPayment = (project: PaymentTrackProject) => {
+    const amount = Number(actionAmount);
+    const available = Math.max(0, project.outstandingCents - pendingReportedPaymentTotal(project));
+    if (!Number.isFinite(amount) || amount <= 0 || Math.round(amount * 100) > available) {
+      setError(`Enter a received amount between $0.01 and ${formatMoney(available)}.`);
+      return;
+    }
+    void performAction(
+      "acknowledge_payment",
+      { amount: actionAmount },
+      "Payment recorded. Awaiting Administrator confirmation.",
     );
   };
 
@@ -1165,152 +1193,110 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
     );
   };
 
-  const renderFinalPaymentTask = (project: PaymentTrackProject) => {
-    const pendingPayment = pendingLaterPayment(project);
-    if (project.outstandingCents <= 0 && !pendingPayment) {
-      return (
-        <ParallelActionCard
-          icon={<Banknote size={18} />}
-          owner="Sales / Administrator"
-          title="Customer final payment"
-        >
-          <div className={styles.parallelComplete}><CheckCircle2 size={15} /> Balance paid in full</div>
-        </ParallelActionCard>
-      );
+  const renderPaymentRecorder = (project: PaymentTrackProject) => {
+    if (project.stage === "deposit_not_paid" || project.outstandingCents <= 0) return null;
+    const available = Math.max(0, project.outstandingCents - pendingReportedPaymentTotal(project));
+    if (available <= 0) return null;
+    if (role !== "sales") {
+      return authenticatedRole === "admin" ? (
+        <button className={styles.addPaymentRecordButton} type="button" disabled={busy} onClick={() => selectRole("sales")}>
+          <Plus size={15} /> Add payment record
+        </button>
+      ) : null;
     }
+    const enteredAmount = Number(actionAmount);
+    const validAmount = actionAmount !== ""
+      && Number.isFinite(enteredAmount)
+      && enteredAmount > 0
+      && Math.round(enteredAmount * 100) <= available;
+    return (
+      <form className={styles.paymentRecorder} onSubmit={(event) => {
+        event.preventDefault();
+        if (validAmount) recordReceivedPayment(project);
+      }}>
+        <div className={styles.paymentRecorderHeading}>
+          <span><Banknote size={17} /></span>
+          <strong>Record received payment</strong>
+        </div>
+        <label className={styles.paymentRecorderAmount}>
+          Amount received · up to {formatMoney(available)}
+          <span className={styles.moneyField}>
+            <b aria-hidden="true">$</b>
+            <input
+              aria-label="Payment amount received in AUD"
+              value={actionAmount}
+              onChange={(event) => setActionAmount(event.target.value)}
+              type="number"
+              inputMode="decimal"
+              min="0.01"
+              max={(available / 100).toFixed(2)}
+              step="0.01"
+              aria-invalid={actionAmount !== "" && !validAmount}
+            />
+          </span>
+        </label>
+        <button className={styles.primaryButton} type="submit" disabled={busy || !validAmount}>
+          {busy ? <LoaderCircle className={styles.spinning} size={16} /> : <Plus size={16} />} Record payment
+        </button>
+      </form>
+    );
+  };
 
-    if (pendingPayment) {
-      return (
-        <ParallelActionCard
-          icon={<ShieldCheck size={18} />}
-          owner="Administrator"
-          title="Confirm customer payment"
-        >
-          {role === "admin" ? (
-            <>
-              <label className={styles.parallelAmountField}>
-                Actual amount received (AUD)
-                <span className={styles.moneyField}>
-                  <b>$</b>
-                  <input
-                    aria-label="Actual final payment received in AUD"
-                    value={actionAmount}
-                    onChange={(event) => setActionAmount(event.target.value)}
-                    type="number"
-                    min="0"
-                    step="0.01"
-                  />
-                </span>
-              </label>
-              <button
-                className={styles.primaryButton}
-                type="button"
-                disabled={busy || actionAmount === ""}
-                onClick={() => confirmAmount("confirm_final_payment", "Final payment", pendingPayment.id)}
-              >
-                {busy ? <LoaderCircle className={styles.spinning} size={16} /> : <ShieldCheck size={16} />}
-                Confirm Actual Amount
-              </button>
-            </>
-          ) : authenticatedRole === "admin" ? (
-            <button className={styles.secondaryButton} type="button" onClick={() => selectRole("admin")}>
-              Continue as Administrator <ChevronRight size={15} />
-            </button>
-          ) : (
-            <span className={styles.roleWaitHint}>Waiting for Administrator confirmation.</span>
-          )}
-        </ParallelActionCard>
-      );
-    }
+  const renderPaymentCollection = (project: PaymentTrackProject) => {
+    if (project.stage === "deposit_not_paid") return null;
+    const pendingPayments = paymentsAwaitingAdmin(project);
+    const pendingPayment = pendingPayments[0] || null;
+    const recorder = renderPaymentRecorder(project);
+    if (!pendingPayments.length && !recorder) return null;
 
     return (
-      <ParallelActionCard
-        icon={<Banknote size={18} />}
-        owner="Sales"
-        title="Customer final payment"
-      >
-        {role === "sales" ? (
-          <button
-            className={styles.primaryButton}
-            type="button"
-            disabled={busy}
-            onClick={() => void performAction(
-              "acknowledge_payment",
-              {},
-              "Payment marked as received. Administrator can now record the actual amount.",
-            )}
-          >
-            {busy ? <LoaderCircle className={styles.spinning} size={16} /> : <Banknote size={16} />}
-            Payment Received
-          </button>
-        ) : authenticatedRole === "admin" ? (
-          <button className={styles.secondaryButton} type="button" onClick={() => selectRole("sales")}>
-            Continue as Sales <ChevronRight size={15} />
-          </button>
-        ) : (
-          <span className={styles.roleWaitHint}>Waiting for Sales acknowledgement.</span>
-        )}
-      </ParallelActionCard>
+      <section className={styles.paymentCollection} aria-label="Payment collection">
+        <header className={styles.paymentCollectionHeader}>
+          <div><span><Banknote size={17} /></span><strong>Payment collection</strong></div>
+          {pendingPayments.length ? (
+            <em><Clock3 size={13} /> Awaiting Admin confirmation{pendingPayments.length > 1 ? ` · ${pendingPayments.length}` : ""}</em>
+          ) : null}
+        </header>
+
+        {pendingPayments.length ? (
+          <div className={styles.pendingPaymentQueue} aria-label="Payments awaiting Administrator confirmation">
+            {pendingPayments.map((payment, index) => (
+              <article key={payment.id}>
+                <div>
+                  <strong>{formatMoney(payment.reportedAmountCents || 0)}</strong>
+                  <small>Payment {index + 1}</small>
+                </div>
+                <span><Clock3 size={13} /> Awaiting Admin confirmation</span>
+              </article>
+            ))}
+          </div>
+        ) : null}
+
+        {role === "admin" && pendingPayment ? (
+          <div className={styles.paymentCollectionAdminAction}>
+            <AmountAction
+              amount={actionAmount}
+              busy={busy}
+              label={`Sales recorded ${formatMoney(pendingPayment.reportedAmountCents || 0)} · actual amount received`}
+              buttonLabel="Confirm Actual Amount"
+              onAmount={setActionAmount}
+              onSubmit={() => confirmAmount("confirm_final_payment", "Payment", pendingPayment.id)}
+            />
+          </div>
+        ) : null}
+
+        {recorder}
+      </section>
     );
   };
 
   const renderActionPanel = (project: PaymentTrackProject) => {
     const status = projectStatus(project);
     if (project.stage === "done") {
-      if (project.outstandingCents > 0) {
-        const pendingFinalPayment = pendingLaterPayment(project);
-        if (pendingFinalPayment) {
-          if (role !== "admin") {
-            return (
-              <ReadOnlyNextStep
-                owner="Administrator"
-                label="Confirm the final payment and record the actual amount received."
-                allowContinue={authenticatedRole === "admin"}
-                buttonLabel="Continue as Administrator"
-                onContinue={() => selectRole("admin")}
-              />
-            );
-          }
-          return (
-            <AmountAction
-              amount={actionAmount}
-              busy={busy}
-              label="Actual final payment received"
-              buttonLabel="Final Payment Confirmed"
-              onAmount={setActionAmount}
-              onSubmit={() => confirmAmount("confirm_final_payment", "Final payment", pendingFinalPayment.id)}
-            />
-          );
-        }
-        if (role !== "sales") {
-          return (
-            <ReadOnlyNextStep
-              owner="Sales"
-              label={`Acknowledge receipt of the remaining ${formatMoney(project.outstandingCents)}.`}
-              allowContinue={authenticatedRole === "admin"}
-              buttonLabel="Continue as Sales"
-              onContinue={() => selectRole("sales")}
-            />
-          );
-        }
-        return (
-          <SimpleAction
-            icon={<Banknote size={18} />}
-            title="Customer payment received"
-            button="Payment Received"
-            busy={busy}
-            onClick={() => void performAction(
-              "acknowledge_payment",
-              {},
-              "Payment marked as received. Administrator can now record the actual amount.",
-            )}
-          />
-        );
-      }
       return (
         <div className={`${styles.actionPanel} ${styles.completedPanel}`}>
           <CheckCircle2 size={20} />
-          <strong>Paid in full</strong>
+          <strong>Project complete</strong>
         </div>
       );
     }
@@ -1367,6 +1353,84 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
           onAmount={setActionAmount}
           onSubmit={() => confirmAmount("confirm_deposit", "Deposit")}
         />
+      );
+    }
+
+    if (project.stage === "working_in_progress") {
+      if (role !== "pm") {
+        return (
+          <ReadOnlyNextStep
+            owner="Project Manager"
+            label={hasActiveWorkSchedule(project) ? "Complete or update the scheduled work." : "Choose the work type, items, time and team."}
+            allowContinue={authenticatedRole === "admin"}
+            buttonLabel="Continue as Project Manager"
+            onContinue={() => selectRole("pm")}
+          />
+        );
+      }
+      const includesDelivery = workMode === "delivery_only" || workMode === "delivery_and_installation";
+      const includesInstallation = workMode === "installation_only" || workMode === "delivery_and_installation";
+      const scheduleReady = Boolean(
+        deliveryDate
+        && deliveryTime
+        && (!includesDelivery || (deliveryAssignee && deliverySelectionDraft.length))
+        && (!includesInstallation || installationAssignee),
+      );
+      const savedScheduleMatches = hasWorkSchedule(project)
+        && project.workMode === workMode
+        && (project.deliveryScheduledFor || project.installationScheduledFor) === deliveryDate
+        && (project.deliveryScheduledTime || project.installationScheduledTime) === deliveryTime
+        && (!includesDelivery || project.deliveryAssignee === deliveryAssignee)
+        && (!includesInstallation || project.installationAssignee === installationAssignee);
+      return (
+        <div className={`${styles.actionPanel} ${styles.scheduleActionPanel}`}>
+          <div className={styles.scheduleActionHeader}>
+            <div className={styles.actionHeading}><span><Wrench size={17} /></span><strong>Working in Progress</strong></div>
+            <span className={hasActiveWorkSchedule(project) ? styles.scheduleSyncBadge : styles.unscheduledBadge}>
+              <CalendarDays size={14} /> {hasActiveWorkSchedule(project) ? "Scheduled" : project.deliveredAt ? "Delivered" : "Unscheduled"}
+            </span>
+          </div>
+          <div className={styles.scheduleFields}>
+            <label className={styles.actionField}>
+              Work type
+              <select value={workMode} disabled={busy} onChange={(event) => setWorkMode(event.target.value as PaymentTrackWorkMode)}>
+                {!project.deliveredAt ? <option value="delivery_only">Delivery only</option> : null}
+                <option value="installation_only">Install only</option>
+                {!project.deliveredAt ? <option value="delivery_and_installation">Delivery &amp; Install</option> : null}
+              </select>
+            </label>
+            <label className={styles.actionField}>Date<input type="date" value={deliveryDate} disabled={busy} onChange={(event) => setDeliveryDate(event.target.value)} /></label>
+            <label className={styles.actionField}>Time<input type="time" value={deliveryTime} disabled={busy} onChange={(event) => setDeliveryTime(event.target.value)} /></label>
+            {includesDelivery ? (
+              <label className={styles.actionField}>Delivery person<select value={deliveryAssignee} disabled={busy} onChange={(event) => setDeliveryAssignee(event.target.value as ScheduleAssignee)}><option value="">Select a person</option>{PAYMENT_TRACK_SCHEDULE_ASSIGNEES.map((assignee) => <option key={assignee} value={assignee}>{assignee}</option>)}</select></label>
+            ) : null}
+            {includesInstallation ? (
+              <label className={styles.actionField}>Installer<select value={installationAssignee} disabled={busy} onChange={(event) => setInstallationAssignee(event.target.value as ScheduleAssignee)}><option value="">Select a person</option>{PAYMENT_TRACK_SCHEDULE_ASSIGNEES.map((assignee) => <option key={assignee} value={assignee}>{assignee}</option>)}</select></label>
+            ) : null}
+          </div>
+          {includesDelivery ? (
+            <div className={`${styles.deliveryPreparationRow} ${deliverySelectionDraft.length ? styles.deliveryPrepared : ""}`}>
+              <span><Warehouse size={17} /></span>
+              <strong>{deliverySelectionDraft.length ? `${deliverySelectionDraft.length} warehouse items chosen` : "Choose warehouse items"}</strong>
+              <button className={styles.secondaryButton} type="button" disabled={busy} onClick={(event) => openDeliveryPicker(event.currentTarget)}><Warehouse size={14} /> {deliverySelectionDraft.length ? "Edit items" : "Choose items"}</button>
+            </div>
+          ) : null}
+          <div className={`${styles.actionButtons} ${styles.scheduleActionButtons}`}>
+            <button className={styles.secondaryButton} type="button" disabled={busy || !scheduleReady} onClick={() => void performAction("schedule_work", {
+              workMode,
+              deliveryDate,
+              deliveryTime,
+              ...(includesDelivery ? { deliveryAssignee, selections: deliverySelectionDraft } : {}),
+              ...(includesInstallation ? { installationAssignee } : {}),
+              expectedUpdatedAt: project.updatedAt,
+            }, "Work scheduled and added to Weekly Schedule.")}>
+              <CalendarDays size={15} /> {hasActiveWorkSchedule(project) ? "Update Schedule" : "Schedule Work"}
+            </button>
+            <button className={styles.primaryButton} type="button" disabled={busy || !savedScheduleMatches} onClick={() => void performAction("mark_work_completed", {}, workMode === "delivery_only" ? "Delivery marked complete." : "Installation marked complete.")}>
+              <CheckCircle2 size={15} /> {workMode === "delivery_only" ? "Mark Delivered" : workMode === "installation_only" ? "Mark Installed" : "Mark Delivered & Installed"}
+            </button>
+          </div>
+        </div>
       );
     }
 
@@ -1785,7 +1849,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
         <div className={styles.parallelWorkflow}>
           <div className={styles.parallelWorkflowIntro}>
             <div>
-              <strong>COES and final payment</strong>
+              <strong>COES workflow</strong>
             </div>
           </div>
           <div className={styles.parallelWorkflowGrid}>
@@ -1819,7 +1883,6 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                 <span className={styles.roleWaitHint}>Waiting for Project Manager confirmation.</span>
               )}
             </ParallelActionCard>
-            {renderFinalPaymentTask(project)}
           </div>
         </div>
       );
@@ -1827,20 +1890,19 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
 
     if (project.stage === "stc_rebate") {
       const canConfirmStc = role === "admin";
-      const showPaymentTask = project.outstandingCents > 0 || Boolean(pendingLaterPayment(project));
       return (
         <div className={styles.parallelWorkflow}>
           <div className={styles.parallelWorkflowIntro}>
             <div>
-              <strong>Rebate receipts and final payment</strong>
+              <strong>Rebate receipts</strong>
             </div>
           </div>
-          <div className={`${styles.parallelWorkflowGrid} ${showPaymentTask ? styles.rebateWorkflowGrid : styles.singleParallelTask}`}>
+          <div className={`${styles.parallelWorkflowGrid} ${styles.singleParallelTask}`}>
             <ParallelActionCard
               icon={<BadgeCheck size={18} />}
               owner="Administrator"
               title="Rebate receipts"
-              wide={!showPaymentTask}
+              wide
             >
               <div className={styles.stcActions}>
                 <StcAction
@@ -1893,7 +1955,6 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                 />
               </div>
             </ParallelActionCard>
-            {showPaymentTask ? renderFinalPaymentTask(project) : null}
           </div>
         </div>
       );
@@ -1935,7 +1996,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
         </article>
       </div>
 
-      {notice ? (
+      {notice && !selected ? (
         <div className={styles.notice} role="status">
           <CheckCircle2 size={16} /><span>{notice}</span>
           <button type="button" aria-label="Dismiss notification" onClick={() => setNotice("")}><X size={14} /></button>
@@ -2022,9 +2083,12 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
           <div className={styles.projectList}>
             {listProjects.map((project) => {
               const status = projectStatus(project);
-              const nextStep = projectNextStep(project, role);
+              const nextStep = projectNextStep(project);
               const canContinue = nextStep.roles.includes(role);
-              const isSettledDone = project.stage === "done" && project.outstandingCents === 0;
+              const pendingPaymentCount = pendingPaymentReviewCount(project);
+              const isSettledDone = project.stage === "done"
+                && project.outstandingCents === 0
+                && pendingPaymentCount === 0;
               const finalPaymentOverdue = isFinalPaymentOverdue(project, finalPaymentStatusNow);
               return (
                 <button
@@ -2032,11 +2096,11 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                   type="button"
                   className={`${styles.projectListRow} ${isSettledDone ? styles.settledListRow : ""} ${finalPaymentOverdue ? styles.overdueFinalPaymentListRow : ""}`}
                   onClick={(event) => openProject(project, event.currentTarget)}
-                  aria-label={`Open ${customerName(project)}, ${displayedProjectStage(project)}, ${formatMoney(project.outstandingCents)} due${finalPaymentOverdue ? ", final payment overdue" : ""}, next owner ${status.owner}, next action ${nextStep.label}`}
+                  aria-label={`Open ${customerName(project)}, ${displayedProjectStage(project)}, ${formatMoney(project.outstandingCents)} due${pendingPaymentCount ? `, ${pendingPaymentCount} payment${pendingPaymentCount === 1 ? "" : "s"} awaiting Admin` : ""}${finalPaymentOverdue ? ", final payment overdue" : ""}, next owner ${status.owner}, next action ${nextStep.label}`}
                 >
                   <span className={styles.listProjectIdentity}>
                     <strong>{customerName(project)}</strong>
-                    <small>{project.reference} · Proposal {project.quoteNumber}</small>
+                    <small>Proposal {project.quoteNumber}</small>
                     <small><MapPin size={12} /> {customerAddress(project)}</small>
                   </span>
                   <span className={`${styles.listStageBadge} ${styles[displayedProjectStageTone(project)]}`}>
@@ -2045,6 +2109,9 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                   <span className={styles.listAmount}>
                     <strong>{formatMoney(project.outstandingCents)}</strong>
                     {project.overpaymentCents > 0 ? <small>{formatMoney(project.overpaymentCents)} overpaid</small> : null}
+                    {pendingPaymentCount ? (
+                      <span className={styles.listPaymentReview}><Banknote size={12} /> Payment · Awaiting Admin{pendingPaymentCount > 1 ? ` · ${pendingPaymentCount}` : ""}</span>
+                    ) : null}
                   </span>
                   <span className={styles.listOwner}>
                     <strong>{status.owner}</strong>
@@ -2144,9 +2211,12 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                       const scheduleWorkflowStatus = hasCurrentScheduleStatus
                         ? { label: displayedProjectStage(project), tone: displayedProjectStageTone(project) }
                         : null;
-                      const nextStep = projectNextStep(project, role);
+                      const nextStep = projectNextStep(project);
                       const canContinue = nextStep.roles.includes(role);
-                      const isSettledDone = project.stage === "done" && project.outstandingCents === 0;
+                      const pendingPaymentCount = pendingPaymentReviewCount(project);
+                      const isSettledDone = project.stage === "done"
+                        && project.outstandingCents === 0
+                        && pendingPaymentCount === 0;
                       const finalPaymentOverdue = isFinalPaymentOverdue(project, finalPaymentStatusNow);
                       return (
                         <button
@@ -2154,17 +2224,19 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                           key={project.id}
                           type="button"
                           onClick={(event) => openProject(project, event.currentTarget)}
-                          aria-label={`Open ${customerName(project)}, proposal ${project.quoteNumber}${finalPaymentOverdue ? ", final payment overdue" : ""}`}
+                          aria-label={`Open ${customerName(project)}, proposal ${project.quoteNumber}${pendingPaymentCount ? `, ${pendingPaymentCount} payment${pendingPaymentCount === 1 ? "" : "s"} awaiting Admin` : ""}${finalPaymentOverdue ? ", final payment overdue" : ""}`}
                         >
                           {isSettledDone ? (
                             <>
                               <h3>{customerName(project)}</h3>
                               <p className={styles.cardAddress}><MapPin size={13} /> {customerAddress(project)}</p>
+                              <div className={styles.settledCardStatus}>
+                                <span className={`${styles.substatus} ${styles.green}`}>Project complete</span>
+                              </div>
                             </>
                           ) : (
                             <>
                               <div className={styles.cardTopline}>
-                                <span>{project.reference}</span>
                                 <span>Proposal {project.quoteNumber}</span>
                               </div>
                               <h3>{customerName(project)}</h3>
@@ -2178,6 +2250,13 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                                 <span><UserRound size={13} /> {project.specialist.name}</span>
                                 <span><Boxes size={13} /> {project.items.length} {project.items.length === 1 ? "item" : "items"}</span>
                               </div>
+                              {pendingPaymentCount ? (
+                                <div className={styles.cardPaymentReview}>
+                                  <Banknote size={13} />
+                                  <span>Payment · Awaiting Admin</span>
+                                  {pendingPaymentCount > 1 ? <b>{pendingPaymentCount}</b> : null}
+                                </div>
+                              ) : null}
                               {project.stage === "material_delivery" && (project.deliveryScheduledFor || project.deliveryScheduleRequest) ? (
                                 <div className={styles.cardSchedule}>
                                   <span><CalendarDays size={13} /> {formatScheduledAt(
@@ -2437,7 +2516,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
             <header className={styles.detailHeader}>
               <div className={styles.detailHeaderMain}>
                 <div className={styles.detailHeaderTitle}>
-                  <span>{selected.reference} · Proposal {selected.quoteNumber}</span>
+                  <span>Proposal {selected.quoteNumber}</span>
                   <h2 id="project-detail-title">{customerName(selected)}</h2>
                 </div>
                 <div className={styles.detailHeaderMeta}>
@@ -2465,6 +2544,12 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                   </div>
                 </div>
               ) : null}
+              {notice ? (
+                <div className={styles.notice} role="status">
+                  <CheckCircle2 size={16} /><span>{notice}</span>
+                  <button type="button" aria-label="Dismiss notification" onClick={() => setNotice("")}><X size={14} /></button>
+                </div>
+              ) : null}
               <section className={styles.detailAmounts} aria-label="Receivable summary">
                 <div><span>Original Balance Due</span><strong>{formatMoney(selected.balanceDueCents)}</strong></div>
                 <div><span>Expected Deposit</span><strong>{selected.expectedDepositCents === null ? "—" : formatMoney(selected.expectedDepositCents)}</strong></div>
@@ -2479,6 +2564,8 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
               </section>
 
               {renderActionPanel(selected)}
+
+              {renderPaymentCollection(selected)}
 
               {authenticatedRole === "admin" && skipStageDetails(selected) ? (() => {
                 const skip = skipStageDetails(selected);
@@ -2577,10 +2664,8 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                 <section className={`${styles.detailSection} ${styles.chosenItemsSection}`}>
                   <h3>
                     <PackageCheck size={16} /> Chosen Items <span>{deliverySelectionDraft.length}</span>
-                    {role === "sales"
-                      && selected.stage === "material_delivery"
-                      && !selected.deliveredAt
-                      && !hasDeliverySchedule(selected) ? (
+                    {((role === "pm" && selected.stage === "working_in_progress" && !selected.deliveredAt)
+                      || (role === "sales" && selected.stage === "material_delivery" && !selected.deliveredAt && !hasDeliverySchedule(selected))) ? (
                       <button type="button" onClick={(event) => openDeliveryPicker(event.currentTarget)}>{deliverySelectionDraft.length ? "Edit" : "Choose items"}</button>
                     ) : null}
                   </h3>
@@ -2621,9 +2706,9 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                 </div>
               </section>
 
-              {paymentRecords.length ? (
+              {selected.stage !== "deposit_not_paid" || paymentRecords.length || selected.finalPayments.length ? (
                 <section className={styles.detailSection}>
-                  <h3><Banknote size={16} /> Payment Records <span>{paymentRecords.length}</span></h3>
+                  <h3><Banknote size={16} /> Payment Records <span>{paymentRecords.length + selected.finalPayments.filter((payment) => !payment.confirmedAt).length}</span></h3>
                   <div className={styles.paymentLedger}>
                     {paymentRecords.map((payment, index) => (
                       <article key={payment.id}>
@@ -2637,6 +2722,21 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                         </div>
                       </article>
                     ))}
+                    {selected.finalPayments.filter((payment) => !payment.confirmedAt).map((payment, index) => (
+                      <article key={payment.id} className={styles.pendingPaymentRecord}>
+                        <div>
+                          <strong>Pending payment #{index + 1}</strong>
+                          <small>Sales reported {formatMoney(payment.reportedAmountCents || 0)}</small>
+                        </div>
+                        <div className={styles.pendingPaymentStatus}>
+                          <strong>Awaiting Admin confirmation</strong>
+                          <small>{formatDate(payment.acknowledgedAt || payment.createdAt, true)}</small>
+                        </div>
+                      </article>
+                    ))}
+                    {!paymentRecords.length && !selected.finalPayments.some((payment) => !payment.confirmedAt) ? (
+                      <div className={styles.emptyPaymentRecords}>No payments recorded</div>
+                    ) : null}
                   </div>
                 </section>
               ) : null}
@@ -2667,7 +2767,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                 onSaved={(selections) => {
                   setDeliverySelectionDraft(selections);
                   closeDeliveryPicker();
-                  setNotice("Chosen warehouse items are ready. Submit the delivery preference to save them.");
+                  setNotice("Chosen warehouse items are ready. Save the WIP schedule to confirm them.");
                 }}
               />
             </aside>

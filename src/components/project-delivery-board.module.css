@@ -867,6 +867,11 @@
   color: #315fa8;
 }
 
+.combinedBadge {
+  background: #eee9ff;
+  color: #6546a5;
+}
+
 .siteVisitBadge {
   background: #fff1c7;
   color: #8a5b00;

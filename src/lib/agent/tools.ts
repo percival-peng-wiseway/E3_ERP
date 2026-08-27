@@ -110,7 +110,7 @@ export const DEEPSEEK_TOOLS = [
         type: "object",
         properties: {
           query: { type: "string", description: "Project search text, a receipt phrase such as 'solar rebate', or an empty string when filters are sufficient." },
-          stage: { type: "string", enum: ["all", "deposit_not_paid", "material_delivery", "installing", "waiting_coes", "stc_rebate", "done"] },
+          stage: { type: "string", enum: ["all", "deposit_not_paid", "working_in_progress", "waiting_coes", "stc_rebate", "done"] },
           receipt: { type: "string", enum: ["all", "solar_stc", "battery_stc", "solar_rebate"], description: "Select one rebate receipt type, or all. A selected receipt with status all returns projects where that receipt applies." },
           receipt_status: { type: "string", enum: ["all", "pending", "received", "not_applicable"], description: "Filter the selected receipt state. With receipt all, pending/received means any matching rebate receipt; not_applicable means no rebate receipts apply." },
           limit: { type: "integer", minimum: 1, maximum: 20 },
@@ -473,6 +473,7 @@ function safePaymentProject(
     reference: project.reference,
     proposalNumber: project.quoteNumber,
     stage: project.stage,
+    workMode: project.workMode,
     customer: {
       name: `${project.customer.firstName} ${project.customer.lastName}`.trim(),
       ...(includeContactDetails ? {
@@ -498,6 +499,9 @@ function safePaymentProject(
       ...project.finalPayments.map((receipt) => ({ type: "later_payment", receipt })),
     ].filter(({ receipt }) => receipt.confirmedAt && receipt.confirmedAmountCents !== null)
       .map(({ type, receipt }) => ({ type, amount: (receipt.confirmedAmountCents || 0) / 100, confirmedAt: receipt.confirmedAt })),
+    pendingReportedPayments: project.finalPayments
+      .filter((receipt) => !receipt.confirmedAt && receipt.reportedAmountCents)
+      .map((receipt) => ({ id: receipt.id, reportedAmount: (receipt.reportedAmountCents || 0) / 100, reportedAt: receipt.acknowledgedAt })),
     deliveryScheduledFor: project.deliveryScheduledFor,
     deliveredAt: project.deliveredAt,
     installationScheduledFor: project.installationScheduledFor,
@@ -577,7 +581,7 @@ function normalizedPaymentProjectArgs(args: UnknownRecord): {
 } | null {
   const allowedKeys = new Set(["query", "stage", "receipt", "receipt_status", "limit", "include_contact_details", "include_pm_notes"]);
   if (Object.keys(args).some((key) => !allowedKeys.has(key))) return null;
-  const stages = ["all", "deposit_not_paid", "material_delivery", "installing", "waiting_coes", "stc_rebate", "done"];
+  const stages = ["all", "deposit_not_paid", "working_in_progress", "waiting_coes", "stc_rebate", "done"];
   const query = args.query ?? "";
   const stage = args.stage ?? "all";
   const receipt = args.receipt ?? "all";
@@ -775,7 +779,7 @@ async function overview(provider: ERPProvider) {
       total: paymentItems.length,
       outstanding: paymentItems.reduce((sum, item) => sum + item.outstandingCents, 0) / 100,
       currency: "AUD",
-      byStage: Object.fromEntries(["deposit_not_paid", "material_delivery", "installing", "waiting_coes", "stc_rebate", "done"].map((stage) => [stage, paymentItems.filter((item) => item.stage === stage).length])),
+      byStage: Object.fromEntries(["deposit_not_paid", "working_in_progress", "waiting_coes", "stc_rebate", "done"].map((stage) => [stage, paymentItems.filter((item) => item.stage === stage).length])),
       pendingRebateReceipts: pendingRebateReceiptCounts(paymentItems),
     } : { available: false },
     reimbursements: reimbursements.status === "fulfilled" ? {

@@ -47,15 +47,30 @@ type StockLoss = {
   actor: string;
   created_at: string;
 };
+type ProjectConsumption = {
+  id: string;
+  sku: string;
+  quantity: number;
+  customer: string;
+  address: string;
+  actor: string;
+  created_at: string;
+};
 type SkuHistoryEntry = {
   key: string;
-  kind: "delivered" | "loss";
+  kind: "delivered" | "installed" | "loss";
   createdAt: string;
   title: string;
   detail: string;
   quantity: number;
 };
-type ApiState = { inventory: InventoryItem[]; deliveryHistory: Order[]; lossHistory: StockLoss[]; admin: boolean };
+type ApiState = {
+  inventory: InventoryItem[];
+  deliveryHistory: Order[];
+  lossHistory: StockLoss[];
+  projectConsumptionHistory?: ProjectConsumption[];
+  admin: boolean;
+};
 type View = "overview" | "sale" | "arrival" | "history";
 type ArrivalMode = "received" | "ordered";
 
@@ -189,8 +204,18 @@ export function InventoryOperationsWorkspace({ currentUser }: { currentUser: Erp
           detail: loss.actor,
           quantity: loss.quantity,
         })),
+      ...(data.projectConsumptionHistory || [])
+        .filter((entry) => entry.sku === consumptionSku)
+        .map((entry) => ({
+          key: `project-installation-${entry.id}`,
+          kind: "installed" as const,
+          createdAt: entry.created_at,
+          title: entry.customer,
+          detail: entry.address,
+          quantity: entry.quantity,
+        })),
     ].sort((a, b) => databaseTimestamp(b.createdAt).getTime() - databaseTimestamp(a.createdAt).getTime()) : [],
-    [consumptionSku, data.deliveryHistory, data.lossHistory],
+    [consumptionSku, data.deliveryHistory, data.lossHistory, data.projectConsumptionHistory],
   );
   const filteredInventory = useMemo(() => {
     const keyword = search.trim().toLowerCase();
@@ -767,7 +792,7 @@ export function InventoryOperationsWorkspace({ currentUser }: { currentUser: Erp
             <div className="consumption-summary-grid">
               <div className="consumption-summary">
                 <span>{"Total consumption"}</span>
-                <strong>{skuHistoryEntries.filter((entry) => entry.kind === "delivered").reduce((total, entry) => total + entry.quantity, 0)}</strong>
+                <strong>{skuHistoryEntries.filter((entry) => entry.kind !== "loss").reduce((total, entry) => total + entry.quantity, 0)}</strong>
               </div>
               <div className="consumption-summary loss-summary">
                 <span>{"Total damaged"}</span>
@@ -793,7 +818,7 @@ export function InventoryOperationsWorkspace({ currentUser }: { currentUser: Erp
                       {skuHistoryEntries.map((entry) => (
                         <tr key={entry.key}>
                           <td><span className={`history-type ${entry.kind === "loss" ? "loss-type" : "delivery-type"}`}>
-                            {entry.kind === "loss" ? "Damaged" : "Delivered"}
+                            {entry.kind === "loss" ? "Damaged" : entry.kind === "installed" ? "Installed" : "Delivered"}
                           </span></td>
                           <td className="log-time">{formatDateTime(entry.createdAt)}</td>
                           <td><b>{entry.title}</b></td>

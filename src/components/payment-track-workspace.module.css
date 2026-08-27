@@ -361,6 +361,25 @@
 .listStageBadge.green { --tone: #1f6d4e; }
 .listAmount strong { color: #26313a; font-size: 15px; }
 .listAmount small { color: #9b5e22; font-size: 11px; }
+.listPaymentReview {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 23px;
+  align-items: center;
+  padding: 0 6px;
+  gap: 4px;
+  overflow: hidden;
+  color: #8a601d;
+  background: #fff4dc;
+  border: 1px solid #ecd5a3;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 720;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.listPaymentReview svg { flex: 0 0 auto; }
 .listOwner strong,
 .listNextAction strong { overflow: hidden; color: #46535d; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .listOwner small,
@@ -568,6 +587,7 @@
 
 .settledDoneCard { padding: 11px 12px; }
 .settledDoneCard h3 { margin: 0 0 4px; font-size: 14px; }
+.settledCardStatus { display: flex; margin-top: 8px; justify-content: flex-start; }
 
 .cardAddress {
   display: flex;
@@ -609,6 +629,25 @@
 
 .cardMeta span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cardMeta svg { flex: 0 0 auto; }
+
+.cardPaymentReview {
+  display: flex;
+  min-width: 0;
+  min-height: 28px;
+  align-items: center;
+  margin-top: 8px;
+  padding: 5px 7px;
+  gap: 5px;
+  color: #8a601d;
+  background: #fff4dc;
+  border: 1px solid #ecd5a3;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 720;
+}
+.cardPaymentReview svg { flex: 0 0 auto; }
+.cardPaymentReview span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cardPaymentReview b { display: grid; min-width: 19px; height: 19px; margin-left: auto; padding: 0 4px; flex: 0 0 auto; place-items: center; color: #805719; background: #ffe8b7; border-radius: 999px; font-size: 10px; }
 
 .cardSchedule {
   display: flex;
@@ -1149,6 +1188,113 @@
 .actionField select { min-height: 38px; }
 .actionPanel > .primaryButton { min-height: 38px; }
 
+.paymentCollection {
+  display: grid;
+  padding: 12px;
+  gap: 10px;
+  background: #fff;
+  border: 1px solid #dfe4e8;
+  border-radius: 8px;
+}
+.paymentCollectionHeader {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.paymentCollectionHeader > div { display: flex; min-width: 0; align-items: center; gap: 9px; }
+.paymentCollectionHeader > div > span { display: grid; width: 32px; height: 32px; flex: 0 0 auto; place-items: center; color: #5264cb; background: #eef0ff; border-radius: 7px; }
+.paymentCollectionHeader strong { color: #3f4c56; font-size: 13px; }
+.paymentCollectionHeader em {
+  display: inline-flex;
+  min-height: 27px;
+  align-items: center;
+  padding: 0 8px;
+  gap: 5px;
+  color: #8a601d;
+  background: #fff4dc;
+  border: 1px solid #ecd5a3;
+  border-radius: 6px;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 720;
+  white-space: nowrap;
+}
+.pendingPaymentQueue { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 7px; }
+.pendingPaymentQueue article {
+  display: flex;
+  min-width: 0;
+  min-height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  gap: 10px;
+  background: #fffaf0;
+  border: 1px solid #ead8ad;
+  border-radius: 7px;
+}
+.pendingPaymentQueue article > div { min-width: 0; }
+.pendingPaymentQueue strong,
+.pendingPaymentQueue small { display: block; }
+.pendingPaymentQueue strong { color: #4a555d; font-size: 13px; }
+.pendingPaymentQueue small { margin-top: 2px; color: #8d969d; font-size: 10px; }
+.pendingPaymentQueue article > span { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 4px; color: #8d611d; font-size: 11px; font-weight: 720; }
+.paymentCollectionAdminAction > .actionPanel { background: #fffaf0; border-color: #ead8ad; }
+
+.paymentRecorder {
+  display: grid;
+  grid-template-columns: minmax(230px, 1fr) minmax(220px, 260px) auto;
+  align-items: end;
+  padding: 10px 12px;
+  gap: 10px;
+  background: #f3f8ff;
+  border: 1px solid #d7e2f2;
+  border-radius: 8px;
+}
+.paymentRecorderHeading { display: flex; min-width: 0; min-height: 40px; align-items: center; gap: 9px; }
+.paymentRecorderHeading > span { display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; color: #5264cb; background: #e6eaff; border-radius: 7px; }
+.paymentRecorderHeading strong { overflow: hidden; color: #40505b; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.paymentRecorder label { color: #58656f; font-size: 12px; font-weight: 680; }
+.paymentRecorder .moneyField { margin-top: 5px; }
+.paymentRecorder .moneyField input {
+  width: 100%;
+  height: 40px;
+  min-height: 40px;
+  padding: 8px 34px 8px 27px;
+  color: #29343d;
+  background: #fff;
+  border: 1px solid #cfd9e2;
+  border-radius: 7px;
+  outline: 0;
+  appearance: textfield;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 650;
+}
+.paymentRecorder .moneyField input::-webkit-inner-spin-button,
+.paymentRecorder .moneyField input::-webkit-outer-spin-button { margin: 0; appearance: none; }
+.paymentRecorder .moneyField input:focus { border-color: #6574d9; box-shadow: 0 0 0 3px rgba(92, 108, 216, .12); }
+.paymentRecorder > button { min-width: 190px; min-height: 40px; white-space: nowrap; }
+.addPaymentRecordButton {
+  display: inline-flex;
+  min-height: 36px;
+  align-self: flex-end;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  gap: 6px;
+  color: #4d5fc3;
+  background: #f4f6ff;
+  border: 1px solid #d2d8f3;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 720;
+  cursor: pointer;
+}
+.addPaymentRecordButton:disabled { opacity: .55; cursor: wait; }
+
 .adminSkipPanel { align-items: center; background: #fffaf0; border-color: #ead8ad; }
 .adminSkipPanel .actionHeading > span { color: #8a641e; background: #fff0cc; }
 .adminSkipPanel > .secondaryButton { min-height: 38px; flex: 0 0 auto; color: #74571e; background: #fff; border-color: #dfc994; }
@@ -1189,7 +1335,8 @@
 }
 
 .salesRequestBadge,
-.preScheduledBadge {
+.preScheduledBadge,
+.unscheduledBadge {
   display: inline-flex;
   min-height: 29px;
   flex: 0 0 auto;
@@ -1203,6 +1350,7 @@
 
 .salesRequestBadge { color: #28735b; background: #e8f5ef; border: 1px solid #cbe5da; }
 .preScheduledBadge { color: #89621e; background: #fff4df; border: 1px solid #edd5a8; }
+.unscheduledBadge { color: #a33b3b; background: #fff0f0; border: 1px solid #efcaca; }
 
 .scheduleFields {
   display: grid;
@@ -1888,6 +2036,11 @@
 }
 .confirmedPayment { flex: 0 0 auto; text-align: right; }
 .confirmedPayment strong { color: #237158; font-size: 14px; }
+.paymentLedger .pendingPaymentRecord { background: #fffaf0; border-color: #ead8ad; }
+.pendingPaymentStatus { flex: 0 0 auto; text-align: right; }
+.pendingPaymentStatus strong { color: #906119; font-size: 12px; }
+.pendingPaymentStatus small { margin-top: 3px; color: #9a7b4b; font-size: 12px; }
+.emptyPaymentRecords { padding: 10px; color: #89949d; background: #f8f9fb; border-radius: 7px; font-size: 12px; text-align: center; }
 
 .spinning { animation: spin 800ms linear infinite; }
 
@@ -1974,6 +2127,15 @@
   .deliveryPickerFooter { flex-wrap: wrap; }
   .deliveryPickerFooter > div { width: 100%; margin: 0; }
   .deliveryPickerFooter > button { flex: 1; }
+  .paymentCollectionHeader { align-items: flex-start; flex-direction: column; }
+  .paymentCollectionHeader em { align-self: flex-start; }
+  .pendingPaymentQueue { grid-template-columns: 1fr; }
+  .pendingPaymentQueue article { align-items: flex-start; flex-direction: column; }
+  .paymentRecorder { grid-template-columns: 1fr; align-items: stretch; }
+  .paymentRecorder label,
+  .paymentRecorder > button,
+  .addPaymentRecordButton { width: 100%; }
+  .paymentRecorder > button { min-width: 0; }
   .deliveryPreparationRow { grid-template-columns: 32px minmax(0, 1fr); }
   .deliveryPreparationRow > button { grid-column: 1 / -1; width: 100%; }
   .formGrid,

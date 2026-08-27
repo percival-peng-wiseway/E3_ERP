@@ -51,7 +51,7 @@ export function amountAction(
 
 export function planningDescription(
   address: string,
-  action: "Delivery planning" | "Installation planning" | "Installment planning",
+  action: "Delivery planning" | "Installation planning" | "Installment planning" | "Delivery & Install planning" | "Work planning",
 ) {
   const suffix = ` · ${action}`;
   const addressLabel = cleanText(address, 360 - suffix.length) || "Address required";

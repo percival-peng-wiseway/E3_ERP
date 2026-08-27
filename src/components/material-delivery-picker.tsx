@@ -13,6 +13,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { readJsonResponse } from "@/lib/client/http";
 import type { ApiState, InventoryItem } from "@/lib/inventory-operations/types";
+import { inventoryItemCanFulfilSelection } from "@/lib/inventory-operations/stock-policy";
 import type {
   PaymentTrackDeliverySelection,
   PaymentTrackProject,
@@ -101,7 +102,7 @@ export function MaterialDeliveryPicker({
     return [...repeated];
   }, [rows]);
   const shortages = [...selectedTotals].filter(([sku, quantity]) => (
-    quantity > (inventoryBySku.get(sku)?.available ?? -1)
+    !inventoryItemCanFulfilSelection(inventoryBySku.get(sku), quantity)
   ));
   const incomplete = rows.some((row) => !row.sku || !Number.isInteger(row.quantity) || row.quantity < 1);
   const canSave = !loading && !incomplete && !duplicates.length && !shortages.length;

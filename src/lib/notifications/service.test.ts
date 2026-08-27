@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { PaymentTrackProject } from "../payment-track/types";
-import type { OperationalOrder } from "./service";
+import type { OperationalInventoryItem, OperationalOrder } from "./service";
 
 const serviceModule = "./service.ts";
 const {
+  buildInventoryStockNotifications,
   buildOperationalProjectNotifications,
   buildPaymentTrackNotifications,
   notificationIsVisibleTo,
@@ -36,11 +37,13 @@ function project(overrides: Partial<PaymentTrackProject> = {}): PaymentTrackProj
     overpaymentCents: 0,
     expectedDepositCents: 2_000,
     stage: "material_delivery",
+    workMode: null,
     contract: null,
     deposit: {
       proof: null,
       acknowledgedAt: null,
       acknowledgedBy: null,
+      reportedAmountCents: null,
       confirmedAmountCents: null,
       confirmedAt: null,
       confirmedBy: null,
@@ -57,6 +60,7 @@ function project(overrides: Partial<PaymentTrackProject> = {}): PaymentTrackProj
       proof: null,
       acknowledgedAt: null,
       acknowledgedBy: null,
+      reportedAmountCents: null,
       confirmedAmountCents: null,
       confirmedAt: null,
       confirmedBy: null,
@@ -89,7 +93,7 @@ function order(overrides: Partial<OperationalOrder> = {}): OperationalOrder {
   return {
     id: 1,
     group: "ORDER-1",
-    entityId: "ORDER-1",
+    entityId: "inventory-order-1",
     customer: "Inventory Customer",
     address: "2 Test Street, Melbourne VIC 3000",
     createdAt: "2026-08-21T03:00:00.000Z",
@@ -98,6 +102,18 @@ function order(overrides: Partial<OperationalOrder> = {}): OperationalOrder {
     plannedDate: null,
     deliveryTime: null,
     scheduleComplete: false,
+    ...overrides,
+  };
+}
+
+function stock(overrides: Partial<OperationalInventoryItem> = {}): OperationalInventoryItem {
+  return {
+    sku: "BOLLARD",
+    category: "其他",
+    onHand: 3,
+    reserved: 0,
+    pending: 0,
+    available: 3,
     ...overrides,
   };
 }
@@ -161,6 +177,7 @@ test("a complete Project Track delivery plan requires date, time and assignee", 
 test("non-delivery high-priority reminders keep their normal priority badge", () => {
   const [deposit] = buildPaymentTrackNotifications([project({
     stage: "deposit_not_paid",
+    workMode: null,
   })], NOW);
   assert.equal(deposit.priority, "high");
   assert.equal(deposit.badgeLabel, undefined);
@@ -196,6 +213,69 @@ test("deposit and collection confirmations are primarily assigned to Jiaqi", () 
   assert.equal(collection.assigneeUsername, "jiaqi");
   assert.equal(notificationIsVisibleTo(collection, "admin", "jiaqi"), true);
   assert.equal(notificationIsVisibleTo(collection, "admin", "steve"), false);
+});
+
+test("each Sales-recorded payment creates an Administrator reminder until it is confirmed", () => {
+  const baseReceipt = project().deposit;
+  const first = {
+    ...baseReceipt,
+    id: "payment-1",
+    createdAt: "2026-08-24T04:00:00.000Z",
+    acknowledgedAt: "2026-08-24T04:00:00.000Z",
+    acknowledgedBy: "Sales",
+    reportedAmountCents: 2_000,
+  };
+  const second = {
+    ...baseReceipt,
+    id: "payment-2",
+    createdAt: "2026-08-24T05:00:00.000Z",
+    acknowledgedAt: "2026-08-24T05:00:00.000Z",
+    acknowledgedBy: "Sales",
+    reportedAmountCents: 1_500,
+  };
+  const notifications = buildPaymentTrackNotifications([project({
+    stage: "working_in_progress",
+    finalPayments: [first, second],
+  })], NOW);
+  const adminReminders = notifications.filter((item) => item.role === "admin");
+  assert.equal(adminReminders.length, 2);
+  assert.equal(new Set(adminReminders.map((item) => item.id)).size, 2);
+  assert.deepEqual(adminReminders.map((item) => item.description), [
+    "$20.00 reported by Sales · verify actual receipt.",
+    "$15.00 reported by Sales · verify actual receipt.",
+  ]);
+  adminReminders.forEach((item) => {
+    assert.equal(item.module, "payments");
+    assert.equal(item.entityId, "PAY-TEST-1");
+    assert.equal(item.actionLabel, "Confirm payment");
+    assert.equal(notificationIsVisibleTo(item, "admin", "jerry"), true);
+  });
+
+  const afterFirstConfirmation = buildPaymentTrackNotifications([project({
+    stage: "working_in_progress",
+    outstandingCents: 6_000,
+    finalPayments: [{
+      ...first,
+      confirmedAmountCents: 2_000,
+      confirmedAt: "2026-08-24T06:00:00.000Z",
+      confirmedBy: "Administrator",
+    }, second],
+  })], NOW).filter((item) => item.role === "admin");
+  assert.equal(afterFirstConfirmation.length, 1);
+  assert.match(afterFirstConfirmation[0].id, /payment-2/);
+
+  const zeroBalanceStillPending = buildPaymentTrackNotifications([project({
+    stage: "done",
+    outstandingCents: 0,
+    finalPayments: [{
+      ...first,
+      confirmedAmountCents: 8_000,
+      confirmedAt: "2026-08-24T06:00:00.000Z",
+      confirmedBy: "Administrator",
+    }, second],
+  })], NOW).filter((item) => item.role === "admin");
+  assert.equal(zeroBalanceStillPending.length, 1);
+  assert.match(zeroBalanceStillPending[0].id, /payment-2/);
 });
 
 test("installment notifications move from Sales preference to PM review and scheduled reminder", () => {
@@ -237,6 +317,7 @@ test("Inventory delivery reminders use the earliest creation time and a consiste
   assert.equal(notifications[0].badgeLabel, "Delivery plan needed");
   assert.equal(notifications[0].projectCreatedAt, "2026-08-20T03:00:00.000Z");
   assert.equal(notifications[0].ownerName, "Sales Owner");
+  assert.equal(notifications[0].entityId, "inventory-order-1");
 });
 
 test("Inventory database timestamps without an offset are consistently treated as UTC", () => {
@@ -269,4 +350,41 @@ test("complete Inventory delivery schedules keep urgency sorting with an explici
   assert.equal(notification.priority, "high");
   assert.equal(notification.projectCreatedAt, "2026-08-21T03:00:00.000Z");
   assert.equal(notification.ownerName, "Sales Owner");
+});
+
+test("Bollard and Canopy at the threshold do not create a stock reminder", () => {
+  assert.deepEqual(buildInventoryStockNotifications([
+    stock({ sku: "BOLLARD", available: 3 }),
+    stock({ sku: "CANOPY", available: 3 }),
+  ]), []);
+});
+
+test("Bollard below three creates one stable reminder assigned only to Kevin", () => {
+  const notifications = buildInventoryStockNotifications([
+    stock({ sku: "bollard", onHand: 8, reserved: 6, pending: 4, available: 2 }),
+    stock({ sku: "BOLLARD", onHand: 8, reserved: 5, pending: 4, available: 3 }),
+  ]);
+
+  assert.equal(notifications.length, 1);
+  const [reminder] = notifications;
+  assert.equal(reminder.id, "inventory:inventory-stock-bollard:Open inventory");
+  assert.equal(reminder.title, "BOLLARD needs replenishment");
+  assert.equal(reminder.description, "2 available · 4 pending · purchase more stock.");
+  assert.equal(reminder.ownerName, "Kevin");
+  assert.equal(reminder.assigneeUsername, "kevin");
+  assert.equal(reminder.module, "inventory");
+  assert.equal(notificationIsVisibleTo(reminder, "pm", "kevin"), true);
+  assert.equal(notificationIsVisibleTo(reminder, "pm", "wendy"), false);
+});
+
+test("negative Canopy stock creates a reminder and replenishing to three removes it", () => {
+  const [reminder] = buildInventoryStockNotifications([
+    stock({ sku: "CANOPY", onHand: 0, reserved: 1, available: -1 }),
+  ]);
+  assert.equal(reminder.title, "CANOPY needs replenishment");
+  assert.match(reminder.description, /^-1 available/);
+
+  assert.deepEqual(buildInventoryStockNotifications([
+    stock({ sku: "CANOPY", onHand: 3, reserved: 0, available: 3 }),
+  ]), []);
 });

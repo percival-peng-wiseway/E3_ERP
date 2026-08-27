@@ -89,9 +89,9 @@ type ProjectScheduleSourceOverride = {
   updatedBy: string;
 };
 
-type ScheduleFilter = "all" | "material_delivery" | "installing" | "site_visit" | "custom";
+type ScheduleFilter = "all" | "material_delivery" | "installing" | "combined" | "site_visit" | "custom";
 type ScheduleView = "calendar" | "list";
-type PaymentScheduleKind = "delivery" | "installation";
+type PaymentScheduleKind = "delivery" | "installation" | "combined";
 type InventoryEditorState = {
   group: DeliveryGroup;
   customer: string;
@@ -110,6 +110,7 @@ type PaymentEditorState = {
   date: string;
   time: string;
   assignee: PaymentTrackScheduleAssignee | "";
+  installationAssignee: PaymentTrackScheduleAssignee | "";
 };
 type CustomEditorState = {
   job: ProjectScheduleJob | null;
@@ -124,14 +125,14 @@ type CustomEditorState = {
 
 type CalendarEntry = (
   | { id: string; source: "inventory"; date: string; time: string | null; title: string; location: string; assignee: string; detail: string; completed: boolean; group: DeliveryGroup }
-  | { id: string; source: "material_delivery" | "installing"; date: string; time: string | null; title: string; location: string; assignee: string; detail: string; completed: boolean; project: ScheduledPaymentProject }
+  | { id: string; source: "material_delivery" | "installing" | "combined"; date: string; time: string | null; title: string; location: string; assignee: string; detail: string; completed: boolean; project: ScheduledPaymentProject }
   | { id: string; source: "site_visit"; date: string; time: string; title: string; location: string; assignee: string; detail: string; completed: boolean; visit: SiteVisit }
   | { id: string; source: "custom"; date: string; time: string | null; title: string; location: string; assignee: string; detail: string; completed: boolean; job: ProjectScheduleJob }
 ) & { overrideKey: string | null; cancelled: boolean };
 
 type UnscheduledEntry = {
   id: string;
-  source: "material_delivery" | "installing";
+  source: "material_delivery" | "installing" | "combined";
   pendingStatus: "unscheduled" | "pre_scheduled";
   title: string;
   location: string;
@@ -150,6 +151,7 @@ const FILTERS: Array<{ id: ScheduleFilter; label: string }> = [
   { id: "all", label: "All" },
   { id: "material_delivery", label: "Material Delivery" },
   { id: "installing", label: "Installment" },
+  { id: "combined", label: "WIP / Combined" },
   { id: "site_visit", label: "Site Visit" },
   { id: "custom", label: "Custom" },
 ];
@@ -248,7 +250,7 @@ function timeLabel(value: string | null) {
 }
 
 function customerName(project: ScheduledPaymentProject) {
-  return `${project.customer.firstName} ${project.customer.lastName}`.trim() || project.reference;
+  return `${project.customer.firstName} ${project.customer.lastName}`.trim() || "Customer";
 }
 
 function customerAddress(project: ScheduledPaymentProject) {
@@ -271,25 +273,34 @@ function paymentItemsSummary(project: ScheduledPaymentProject) {
     const visibleItems = prepared.slice(0, 3);
     const remainingCount = prepared.length - visibleItems.length;
     const summary = visibleItems.map((item) => `${item.quantity}× ${item.sku}`).join(", ");
-    return `${project.reference} · ${summary}${remainingCount ? `, +${remainingCount} more` : ""}`;
+    return `${summary}${remainingCount ? `, +${remainingCount} more` : ""}`;
   }
-  if (!project.items.length) return `${project.reference} · No items listed`;
+  if (!project.items.length) return "No items listed";
   const visibleItems = project.items.slice(0, 3);
   const remainingCount = project.items.length - visibleItems.length;
   const summary = visibleItems
     .map((item, index) => `${item.quantity}× ${paymentItemLabel(project, index)}`)
     .join(", ");
-  return `${project.reference} · ${summary}${remainingCount ? `, +${remainingCount} more` : ""}`;
+  return `${summary}${remainingCount ? `, +${remainingCount} more` : ""}`;
 }
 
 function hasCompletePaymentSchedule(project: ScheduledPaymentProject, kind: PaymentScheduleKind) {
-  return kind === "delivery"
-    ? Boolean(project.deliveryScheduledFor && project.deliveryScheduledTime && project.deliveryAssignee)
-    : Boolean(project.installationScheduledFor && project.installationScheduledTime && project.installationAssignee);
+  if (kind === "delivery") return Boolean(project.deliveryScheduledFor && project.deliveryScheduledTime && project.deliveryAssignee);
+  if (kind === "installation") return Boolean(project.installationScheduledFor && project.installationScheduledTime && project.installationAssignee);
+  return Boolean(
+    project.deliveryScheduledFor
+    && project.deliveryScheduledTime
+    && project.deliveryAssignee
+    && project.installationScheduledFor === project.deliveryScheduledFor
+    && project.installationScheduledTime === project.deliveryScheduledTime
+    && project.installationAssignee,
+  );
 }
 
 function paymentScheduleRequest(project: ScheduledPaymentProject, kind: PaymentScheduleKind) {
-  return kind === "delivery" ? project.deliveryScheduleRequest : project.installationScheduleRequest;
+  if (kind === "delivery") return project.deliveryScheduleRequest;
+  if (kind === "installation") return project.installationScheduleRequest;
+  return null;
 }
 
 function hasCompletePaymentScheduleRequest(project: ScheduledPaymentProject, kind: PaymentScheduleKind) {
@@ -299,7 +310,7 @@ function hasCompletePaymentScheduleRequest(project: ScheduledPaymentProject, kin
     && request.preferredTime
     && request.submittedAt
     && request.submittedBy
-    && (kind !== "delivery" || project.deliverySelections.length),
+    && (kind === "installation" || project.deliverySelections.length),
   );
 }
 
@@ -347,6 +358,7 @@ function groupOrders(orders: InventoryOrder[]) {
 function isScheduleFilterMatch(source: CalendarEntry["source"] | UnscheduledEntry["source"], filter: ScheduleFilter) {
   if (filter === "all") return true;
   if (filter === "material_delivery") return source === "material_delivery" || source === "inventory";
+  if (filter === "combined") return source === "combined";
   return source === filter;
 }
 
@@ -354,7 +366,10 @@ function emptyCustomEditor(date: string): CustomEditorState {
   return { job: null, title: "", scheduledDate: date, startTime: "09:00", endTime: "10:00", assignee: "", location: "", notes: "" };
 }
 
-export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole: ErpRole }) {
+export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget }: {
+  authenticatedRole: ErpRole;
+  openEntityTarget?: { entityId: string; requestId: number };
+}) {
   const [weekStart, setWeekStart] = useState(() => weekStartFor(melbourneToday()));
   const [operations, setOperations] = useState<OperationsState>(EMPTY_OPERATIONS);
   const [projects, setProjects] = useState<ScheduledPaymentProject[]>([]);
@@ -378,6 +393,7 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
   const modalRef = useRef<HTMLFormElement | null>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const scheduleHeadingRef = useRef<HTMLHeadingElement | null>(null);
+  const handledOpenEntityRequestRef = useRef(0);
   const canManageSchedule = authenticatedRole === "pm" || authenticatedRole === "admin";
 
   const weekEnd = addIsoDays(weekStart, 6);
@@ -555,10 +571,13 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
     const paymentEntries: CalendarEntry[] = [];
     for (const project of sourceOverridesReady ? projects : []) {
       const deliveryDate = project.deliveryScheduledFor || melbourneDateFromTimestamp(project.deliveredAt);
-      const isActiveDelivery = project.stage === "material_delivery" && !project.deliveredAt;
+      const isWip = project.stage === "working_in_progress";
+      const isCombined = project.workMode === "delivery_and_installation";
+      const isActiveDelivery = (isWip && (project.workMode === "delivery_only" || isCombined) && !project.deliveredAt)
+        || (project.stage === "material_delivery" && !project.deliveredAt);
       const deliveryOverrideKey = `payment-delivery:${project.id.toLowerCase()}`;
       const deliveryOverrideState = sourceOverrideState.get(deliveryOverrideKey);
-      if (deliveryOverrideState !== "deleted"
+      if (!isCombined && deliveryOverrideState !== "deleted"
         && deliveryDate
         && (project.deliveredAt || (isActiveDelivery && hasCompletePaymentSchedule(project, "delivery")))) {
         paymentEntries.push({
@@ -577,7 +596,8 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
         });
       }
       const installationDate = project.installationScheduledFor || melbourneDateFromTimestamp(project.installedAt);
-      const isActiveInstallation = project.stage === "installing" && !project.installedAt;
+      const isActiveInstallation = (isWip && project.workMode === "installation_only" && !project.installedAt)
+        || (project.stage === "installing" && !project.installedAt);
       const installationOverrideKey = `payment-installation:${project.id.toLowerCase()}`;
       const installationOverrideState = sourceOverrideState.get(installationOverrideKey);
       if (installationOverrideState !== "deleted"
@@ -597,6 +617,29 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
           overrideKey: installationOverrideKey,
           cancelled: installationOverrideState === "cancelled",
         });
+      }
+      if (isCombined) {
+        const combinedDate = project.deliveryScheduledFor || project.installationScheduledFor || melbourneDateFromTimestamp(project.installedAt);
+        const combinedOverrideKey = `payment-combined:${project.id.toLowerCase()}`;
+        const combinedOverrideState = sourceOverrideState.get(combinedOverrideKey);
+        if (combinedOverrideState !== "deleted"
+          && combinedDate
+          && (project.installedAt || (isWip && hasCompletePaymentSchedule(project, "combined")))) {
+          paymentEntries.push({
+            id: `payment-combined:${project.id}`,
+            source: "combined",
+            date: combinedDate,
+            time: project.deliveryScheduledTime || project.installationScheduledTime,
+            title: customerName(project),
+            location: customerAddress(project) || "Address required",
+            assignee: `Delivery: ${project.deliveryAssignee || "—"} · Install: ${project.installationAssignee || "—"}`,
+            detail: paymentItemsSummary(project),
+            completed: Boolean(project.installedAt),
+            project,
+            overrideKey: combinedOverrideKey,
+            cancelled: combinedOverrideState === "cancelled",
+          });
+        }
       }
     }
     const customEntries: CalendarEntry[] = customJobs.map((job) => ({
@@ -660,6 +703,29 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
   const unscheduledEntries = useMemo<UnscheduledEntry[]>(() => {
     const payment: UnscheduledEntry[] = [];
     for (const project of projects) {
+      const currentWorkKind: PaymentScheduleKind = project.deliveredAt && !project.installedAt && project.workMode === "delivery_only"
+        ? "installation"
+        : project.workMode === "delivery_only"
+        ? "delivery"
+        : project.workMode === "installation_only" ? "installation" : "combined";
+      if (project.stage === "working_in_progress"
+        && !project.installedAt
+        && !hasCompletePaymentSchedule(project, currentWorkKind)) {
+        const pendingSource: UnscheduledEntry["source"] = project.deliveredAt || project.workMode === "installation_only"
+          ? "installing"
+          : project.workMode === "delivery_only" ? "material_delivery" : "combined";
+        payment.push({
+          id: `pending-payment-work:${project.id}`,
+          source: pendingSource,
+          pendingStatus: "unscheduled",
+          title: customerName(project),
+          location: customerAddress(project) || "Address required",
+          detail: project.deliveredAt ? `${paymentItemsSummary(project)} · Delivery complete` : paymentItemsSummary(project),
+          project,
+          overrideKey: null,
+          cancelled: false,
+        });
+      }
       const deliveryRequest = project.deliveryScheduleRequest;
       if (project.stage === "material_delivery"
         && !project.deliveredAt
@@ -738,8 +804,9 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
 
   const openPaymentEditor = (project: ScheduledPaymentProject, kind: PaymentScheduleKind, date?: string) => {
     if (!canManageSchedule) return;
-    const hasLegacyFinalSchedule = kind === "delivery" && hasCompletePaymentSchedule(project, "delivery");
-    if (kind === "delivery" && !project.deliverySelections.length && !hasLegacyFinalSchedule) {
+    const includesDelivery = kind === "delivery" || kind === "combined";
+    const hasLegacyFinalSchedule = includesDelivery && hasCompletePaymentSchedule(project, kind);
+    if (includesDelivery && !project.deliverySelections.length && !hasLegacyFinalSchedule) {
       setError("Prepare this project's warehouse items in Project Track before scheduling material delivery.");
       return;
     }
@@ -749,9 +816,10 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
     setPaymentEditor({
       project,
       kind,
-      date: date || (kind === "delivery" ? project.deliveryScheduledFor : project.installationScheduledFor) || request?.preferredDate || today,
-      time: (kind === "delivery" ? project.deliveryScheduledTime : project.installationScheduledTime) || request?.preferredTime || "09:00",
-      assignee: (kind === "delivery" ? project.deliveryAssignee : project.installationAssignee) || "",
+      date: date || (kind === "installation" ? project.installationScheduledFor : project.deliveryScheduledFor) || request?.preferredDate || today,
+      time: (kind === "installation" ? project.installationScheduledTime : project.deliveryScheduledTime) || request?.preferredTime || "09:00",
+      assignee: (kind === "installation" ? project.installationAssignee : project.deliveryAssignee) || "",
+      installationAssignee: project.installationAssignee || "",
     });
   };
 
@@ -769,6 +837,43 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
       notes: job.notes || "",
     } : emptyCustomEditor(date));
   };
+
+  useEffect(() => {
+    if (!openEntityTarget || loading || handledOpenEntityRequestRef.current === openEntityTarget.requestId) return;
+    handledOpenEntityRequestRef.current = openEntityTarget.requestId;
+
+    const project = projects.find((candidate) => candidate.id === openEntityTarget.entityId);
+    if (project && (project.stage === "working_in_progress" || project.stage === "material_delivery" || project.stage === "installing")) {
+      const kind: PaymentScheduleKind = project.stage === "working_in_progress"
+        ? project.deliveredAt && !project.installedAt ? "installation" : project.workMode === "installation_only" ? "installation" : project.workMode === "delivery_and_installation" ? "combined" : "delivery"
+        : project.stage === "installing" ? "installation" : "delivery";
+      const request = paymentScheduleRequest(project, kind);
+      const targetDate = (kind === "delivery" ? project.deliveryScheduledFor : project.installationScheduledFor)
+        || request?.preferredDate;
+      if (targetDate) setWeekStart(weekStartFor(targetDate));
+      setFilter(kind === "delivery" ? "material_delivery" : kind === "installation" ? "installing" : "combined");
+      setView("calendar");
+      openPaymentEditor(project, kind);
+      returnFocusRef.current = scheduleHeadingRef.current;
+      return;
+    }
+
+    const inventoryMatch = /^inventory-order-(\d+)$/.exec(openEntityTarget.entityId);
+    const inventoryOrderId = inventoryMatch ? Number(inventoryMatch[1]) : null;
+    const group = inventoryOrderId === null
+      ? null
+      : groupOrders(operations.orders).find((candidate) => candidate.orders.some((order) => order.id === inventoryOrderId)) ?? null;
+    if (group) {
+      if (group.primary.planned_date) setWeekStart(weekStartFor(group.primary.planned_date));
+      setFilter("material_delivery");
+      setView("calendar");
+      openInventoryEditor(group);
+      returnFocusRef.current = scheduleHeadingRef.current;
+      return;
+    }
+
+    setError("The schedule item linked to this reminder is no longer available.");
+  }, [loading, openEntityTarget, operations.orders, projects]);
 
   const refreshAll = async (message?: string) => {
     await load(true);
@@ -792,9 +897,10 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
       setPaymentEditor({
         project: refreshedProject,
         kind: currentEditor.kind,
-        date: (currentEditor.kind === "delivery" ? refreshedProject.deliveryScheduledFor : refreshedProject.installationScheduledFor) || request?.preferredDate || today,
-        time: (currentEditor.kind === "delivery" ? refreshedProject.deliveryScheduledTime : refreshedProject.installationScheduledTime) || request?.preferredTime || "09:00",
-        assignee: (currentEditor.kind === "delivery" ? refreshedProject.deliveryAssignee : refreshedProject.installationAssignee) || "",
+        date: (currentEditor.kind === "installation" ? refreshedProject.installationScheduledFor : refreshedProject.deliveryScheduledFor) || request?.preferredDate || today,
+        time: (currentEditor.kind === "installation" ? refreshedProject.installationScheduledTime : refreshedProject.deliveryScheduledTime) || request?.preferredTime || "09:00",
+        assignee: (currentEditor.kind === "installation" ? refreshedProject.installationAssignee : refreshedProject.deliveryAssignee) || "",
+        installationAssignee: refreshedProject.installationAssignee || "",
       });
       setNotice("Latest Project Track data loaded. Review the schedule and try again.");
     } catch (reloadError) {
@@ -886,7 +992,8 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
     if (!paymentEditor || !canManageSchedule) return;
     setBusy(true);
     setError("");
-    const action = paymentEditor.kind === "delivery" ? "schedule_delivery" : "schedule_installation";
+    const isWip = paymentEditor.project.stage === "working_in_progress";
+    const action = isWip ? "schedule_work" : paymentEditor.kind === "delivery" ? "schedule_delivery" : "schedule_installation";
     const dateField = paymentEditor.kind === "delivery" ? "deliveryDate" : "installationDate";
     const timeField = paymentEditor.kind === "delivery" ? "deliveryTime" : "installationTime";
     const assigneeField = paymentEditor.kind === "delivery" ? "deliveryAssignee" : "installationAssignee";
@@ -894,7 +1001,21 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
       const response = await fetch(`/api/payment-track/${paymentEditor.project.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        body: JSON.stringify(isWip ? {
+          action,
+          actorRole: "pm",
+          expectedUpdatedAt: paymentEditor.project.updatedAt,
+          workMode: paymentEditor.kind === "delivery" ? "delivery_only" : paymentEditor.kind === "installation" ? "installation_only" : "delivery_and_installation",
+          deliveryDate: paymentEditor.date,
+          deliveryTime: paymentEditor.time,
+          ...(paymentEditor.kind !== "installation" ? {
+            deliveryAssignee: paymentEditor.assignee,
+            selections: paymentEditor.project.deliverySelections,
+          } : {}),
+          ...(paymentEditor.kind !== "delivery" ? {
+            installationAssignee: paymentEditor.kind === "combined" ? paymentEditor.installationAssignee : paymentEditor.assignee,
+          } : {}),
+        } : {
           action,
           actorRole: "pm",
           expectedUpdatedAt: paymentEditor.project.updatedAt,
@@ -906,7 +1027,7 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
       const body = await readJsonResponse<{ error?: string }>(response);
       if (!response.ok) throw new Error(apiMessage(body.error, `Unable to schedule ${paymentEditor.kind}.`));
       closeModalAfterSuccess();
-      await refreshAll(paymentEditor.kind === "delivery" ? "Material delivery scheduled." : "Installment scheduled.");
+      await refreshAll(paymentEditor.kind === "delivery" ? "Material delivery scheduled." : paymentEditor.kind === "installation" ? "Installment scheduled." : "Delivery and installation scheduled.");
       window.dispatchEvent(new CustomEvent("erp:payment-track-updated", { detail: { source: "project-management" } }));
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : `Unable to schedule ${paymentEditor.kind}.`);
@@ -915,21 +1036,25 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
     }
   }
 
-  async function completePaymentEntry(entry: Extract<CalendarEntry, { source: "material_delivery" | "installing" }>) {
+  async function completePaymentEntry(entry: Extract<CalendarEntry, { source: "material_delivery" | "installing" | "combined" }>) {
     if (!canManageSchedule || busy) return;
     const installation = entry.source === "installing";
-    if (!window.confirm(`Confirm ${installation ? "installation" : "material delivery"} completion for ${entry.title}?`)) return;
+    const combined = entry.source === "combined";
+    if (!window.confirm(`Confirm ${combined ? "delivery and installation" : installation ? "installation" : "material delivery"} completion for ${entry.title}?`)) return;
     setBusy(true);
     setError("");
     try {
       const response = await fetch(`/api/payment-track/${entry.project.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: installation ? "mark_installed" : "mark_delivered", actorRole: "pm" }),
+        body: JSON.stringify({
+          action: entry.project.stage === "working_in_progress" ? "mark_work_completed" : installation ? "mark_installed" : "mark_delivered",
+          actorRole: "pm",
+        }),
       });
       const body = await readJsonResponse<{ error?: string }>(response);
       if (!response.ok) throw new Error(apiMessage(body.error, `Unable to complete ${installation ? "installation" : "delivery"}.`));
-      await refreshAll(installation ? "Installment marked complete." : "Material delivery marked complete.");
+      await refreshAll(combined ? "Delivery and installation marked complete." : installation ? "Installment marked complete." : "Material delivery marked complete.");
       window.dispatchEvent(new CustomEvent("erp:payment-track-updated", { detail: { source: "project-management" } }));
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Unable to update the Project Track entry.");
@@ -1022,13 +1147,16 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
   const sourceLabel = (source: CalendarEntry["source"] | UnscheduledEntry["source"]) => {
     if (source === "material_delivery") return "Material Delivery";
     if (source === "installing") return "Installment";
+    if (source === "combined") return "Delivery & Install";
     if (source === "inventory") return "Material Delivery";
     if (source === "site_visit") return "Site Visit";
     return "Custom";
   };
 
   const sourceBadgeClass = (source: CalendarEntry["source"] | UnscheduledEntry["source"]) => {
-    const tone = source === "installing"
+    const tone = source === "combined"
+      ? styles.combinedBadge
+      : source === "installing"
       ? styles.installingBadge
       : source === "inventory" || source === "material_delivery"
         ? styles.materialDeliveryBadge
@@ -1103,10 +1231,10 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
           <button type="button" className={styles.primaryInline} onClick={() => void inventoryAction(entry.group, "deliver")} disabled={busy}><CheckCircle2 size={13} /> Delivered</button>
         </>
       ) : null}
-      {canManageSchedule && (entry.source === "material_delivery" || entry.source === "installing") && !entry.completed && !entry.cancelled ? (
+      {canManageSchedule && (entry.source === "material_delivery" || entry.source === "installing" || entry.source === "combined") && !entry.completed && !entry.cancelled ? (
         <>
-          <button type="button" onClick={() => openPaymentEditor(entry.project, entry.source === "installing" ? "installation" : "delivery")} disabled={busy}><Pencil size={13} /> Reschedule</button>
-          <button type="button" className={styles.primaryInline} onClick={() => void completePaymentEntry(entry)} disabled={busy}><CheckCircle2 size={13} /> {entry.source === "installing" ? "Installed" : "Delivered"}</button>
+          <button type="button" onClick={() => openPaymentEditor(entry.project, entry.source === "installing" ? "installation" : entry.source === "combined" ? "combined" : "delivery")} disabled={busy}><Pencil size={13} /> Reschedule</button>
+          <button type="button" className={styles.primaryInline} onClick={() => void completePaymentEntry(entry)} disabled={busy}><CheckCircle2 size={13} /> {entry.source === "material_delivery" ? "Delivered" : entry.source === "installing" ? "Installed" : "Delivered & Installed"}</button>
         </>
       ) : null}
       {canManageSchedule && entry.source === "custom" ? <button type="button" onClick={() => openCustomEditor(entry.job)} disabled={busy}><Pencil size={13} /> Details</button> : null}
@@ -1122,7 +1250,7 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
       <article key={entry.id} className={`${styles.unscheduledCard} ${entry.cancelled ? styles.cancelledCard : ""}`}>
         <div>
           <div className={styles.cardTopline}>
-            <span className={sourceBadgeClass(entry.source)}>{sourceLabel(entry.source)}</span>
+            <span className={sourceBadgeClass(entry.source)}>{entry.project.stage === "working_in_progress" && !entry.project.workMode ? "Working in Progress" : sourceLabel(entry.source)}</span>
             {entry.cancelled
               ? <span className={styles.cancelledBadge}><X size={12} /> Cancelled</span>
               : canReview
@@ -1140,7 +1268,7 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
           ) : (
             <div className={styles.awaitingSales}>
               <AlertCircle size={14} />
-              <strong>Waiting for Sales</strong>
+              <strong>{entry.project.stage === "working_in_progress" ? "Waiting for PM scheduling" : "Waiting for Sales"}</strong>
             </div>
           )}
           <small>{entry.detail}</small>
@@ -1393,13 +1521,13 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
 
       {paymentEditor ? (() => {
         const request = paymentScheduleRequest(paymentEditor.project, paymentEditor.kind);
-        const scheduleLabel = paymentEditor.kind === "delivery" ? "Material Delivery" : "Installment";
+        const scheduleLabel = paymentEditor.kind === "delivery" ? "Material Delivery" : paymentEditor.kind === "installation" ? "Installment" : "Delivery & Install";
         const finalScheduleComplete = hasCompletePaymentSchedule(paymentEditor.project, paymentEditor.kind);
         return (
         <div className={styles.modalBackdrop} role="presentation" onMouseDown={modalBackdropClick}>
           <form ref={modalRef} className={`${styles.modal} ${styles.compactModal}`} onSubmit={savePaymentSchedule} role="dialog" aria-modal="true" aria-labelledby="payment-editor-title">
             <header>
-              <div><span>Project Track · {paymentEditor.project.reference}</span><h2 id="payment-editor-title">Review &amp; Schedule {scheduleLabel}</h2></div>
+              <div><span>Project Track</span><h2 id="payment-editor-title">Review &amp; Schedule {scheduleLabel}</h2></div>
               <button type="button" onClick={closeModal} disabled={busy} aria-label="Close"><X size={19} /></button>
             </header>
             <div className={styles.modalBody}>
@@ -1448,7 +1576,7 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
                   <p className={styles.legacyScheduleNotice}>No Sales preference was recorded for this existing schedule.</p>
                 )}
               </section>
-              {paymentEditor.kind === "delivery" ? (
+              {paymentEditor.kind !== "installation" ? (
                 <div className={styles.scheduleItemComparison}>
                   <div className={styles.itemSummary}>
                     <strong>Chosen warehouse SKUs</strong>
@@ -1475,21 +1603,24 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
                 <strong>PM confirmation</strong>
               </div>
               <div className={styles.paymentScheduleFields}>
-                <label className={styles.singleField}>{paymentEditor.kind === "delivery" ? "Delivery date" : "Installment date"}<input type="date" value={paymentEditor.date} onChange={(event) => setPaymentEditor({ ...paymentEditor, date: event.target.value })} required /></label>
-                <label className={styles.singleField}>{paymentEditor.kind === "delivery" ? "Delivery time" : "Installment time"}<input type="time" value={paymentEditor.time} onChange={(event) => setPaymentEditor({ ...paymentEditor, time: event.target.value })} required /></label>
+                <label className={styles.singleField}>{paymentEditor.kind === "delivery" ? "Delivery date" : paymentEditor.kind === "installation" ? "Installment date" : "Work date"}<input type="date" value={paymentEditor.date} onChange={(event) => setPaymentEditor({ ...paymentEditor, date: event.target.value })} required /></label>
+                <label className={styles.singleField}>{paymentEditor.kind === "delivery" ? "Delivery time" : paymentEditor.kind === "installation" ? "Installment time" : "Work time"}<input type="time" value={paymentEditor.time} onChange={(event) => setPaymentEditor({ ...paymentEditor, time: event.target.value })} required /></label>
                 <label className={`${styles.singleField} ${styles.paymentAssigneeField}`}>
-                  {paymentEditor.kind === "delivery" ? "Delivery person" : "Installer"}
+                  {paymentEditor.kind === "installation" ? "Installer" : "Delivery person"}
                   <select value={paymentEditor.assignee} onChange={(event) => setPaymentEditor({ ...paymentEditor, assignee: event.target.value as PaymentTrackScheduleAssignee | "" })} required>
                     <option value="">Choose Leo or Daniel</option>
                     {PAYMENT_TRACK_SCHEDULE_ASSIGNEES.map((assignee) => <option key={assignee} value={assignee}>{assignee}</option>)}
                   </select>
                 </label>
+                {paymentEditor.kind === "combined" ? (
+                  <label className={`${styles.singleField} ${styles.paymentAssigneeField}`}>Installer<select value={paymentEditor.installationAssignee} onChange={(event) => setPaymentEditor({ ...paymentEditor, installationAssignee: event.target.value as PaymentTrackScheduleAssignee | "" })} required><option value="">Choose Leo or Daniel</option>{PAYMENT_TRACK_SCHEDULE_ASSIGNEES.map((assignee) => <option key={assignee} value={assignee}>{assignee}</option>)}</select></label>
+                ) : null}
               </div>
             </div>
             <footer>
               <span /><span />
               <button type="button" className={styles.secondaryButton} onClick={closeModal} disabled={busy}>Cancel</button>
-              <button type="submit" className={styles.addButton} disabled={busy || !paymentEditor.date || !paymentEditor.time || !paymentEditor.assignee}>{busy ? <LoaderCircle size={16} className={styles.spinning} /> : <CalendarCheck2 size={16} />} Save Schedule</button>
+              <button type="submit" className={styles.addButton} disabled={busy || !paymentEditor.date || !paymentEditor.time || !paymentEditor.assignee || (paymentEditor.kind === "combined" && !paymentEditor.installationAssignee)}>{busy ? <LoaderCircle size={16} className={styles.spinning} /> : <CalendarCheck2 size={16} />} Save Schedule</button>
             </footer>
           </form>
         </div>

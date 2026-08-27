@@ -4,6 +4,7 @@ import type { AppSettings, QuoteRecord } from "@/lib/quotehelp/model";
 import { proxyRequestHeaders } from "@/lib/server/proxy-cookie";
 import { HttpProvider } from "./http-provider";
 import { LiveERPProviderCore } from "./live-provider-core";
+import { ProjectConsumptionInventorySource } from "./project-consumption-source";
 import type { Quotation } from "./types";
 
 const DEFAULT_INVENTORY_URL = "https://inventory.e3energy.com.au/api/inventory";
@@ -72,11 +73,12 @@ async function quoteHelpQuotations(request?: Request): Promise<Quotation[]> {
 
 export class LiveERPProvider extends LiveERPProviderCore {
   constructor(request?: Request) {
-    const inventory = new HttpProvider({
+    const upstreamInventory = new HttpProvider({
       inventoryUrl: process.env.ERP_INVENTORY_API_URL?.trim()
         || process.env.INVENTORY_OPERATIONS_API_URL?.trim()
         || DEFAULT_INVENTORY_URL,
     });
+    const inventory = new ProjectConsumptionInventorySource(upstreamInventory);
     const quotationUrl = process.env.ERP_QUOTATION_API_URL?.trim();
     const quotationApi = quotationUrl
       ? new HttpProvider({ quotationUrl, token: process.env.ERP_API_TOKEN })

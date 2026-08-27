@@ -63,8 +63,15 @@ async function createInstallingProject(options: {
   stcBatteryRequired: boolean;
   solarRebateRequired?: boolean;
   contractLines?: string[];
+  items?: Array<{
+    category: string;
+    description: string;
+    model: string;
+    quantity: number;
+    capacity: string;
+  }>;
 }) {
-  const { contractLines, ...requirements } = options;
+  const { contractLines, items, ...requirements } = options;
   const input = {
     quoteNumber: `TEST-${randomUUID()}`,
     specialist: { name: "Test Specialist", phone: "0400000000" },
@@ -78,7 +85,7 @@ async function createInstallingProject(options: {
       state: "VIC",
       postcode: "3000",
     },
-    items: [{
+    items: items || [{
       category: "Battery",
       description: "Test battery",
       model: "TEST-1",
@@ -138,6 +145,13 @@ async function createInstalledProject(options: {
   stcBatteryRequired: boolean;
   solarRebateRequired?: boolean;
   contractLines?: string[];
+  items?: Array<{
+    category: string;
+    description: string;
+    model: string;
+    quantity: number;
+    capacity: string;
+  }>;
 }) {
   let project = await createInstallingProject(options);
   project = await preScheduleInstallation(project);
@@ -153,7 +167,13 @@ async function createInstalledProject(options: {
   });
 }
 
-function createPmNotesProject() {
+function createPmNotesProject(items = [{
+  category: "Service",
+  description: "Project service",
+  model: "",
+  quantity: 1,
+  capacity: "",
+}]) {
   return createManualPaymentTrackProject({
     quoteNumber: `NOTES-${randomUUID()}`,
     specialist: { name: "Notes Specialist", phone: "0400000000" },
@@ -167,13 +187,7 @@ function createPmNotesProject() {
       state: "VIC",
       postcode: "3000",
     },
-    items: [{
-      category: "Service",
-      description: "Project service",
-      model: "",
-      quantity: 1,
-      capacity: "",
-    }],
+    items,
     balanceDueCents: 1_000,
     expectedDepositCents: null,
     stcSolarRequired: false,
@@ -249,13 +263,13 @@ test("only an Administrator can skip completed real-world stages without changin
     reason,
     expectedUpdatedAt: project.updatedAt,
   });
-  assert.equal(project.stage, "material_delivery");
+  assert.equal(project.stage, "working_in_progress");
   assert.equal(project.deposit.confirmedAmountCents, null);
   assert.equal(project.outstandingCents, 1_000);
   let audit = project.history.filter((entry) => entry.action === "stage_skipped").at(-1);
-  assert.match(audit?.note || "", /Transition: deposit_not_paid → material_delivery/);
+  assert.match(audit?.note || "", /Transition: deposit_not_paid → working_in_progress/);
   assert.match(audit?.note || "", new RegExp(`Reason: ${reason.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
-  assert.match(audit?.note || "", /Fields populated: stage=material_delivery/);
+  assert.match(audit?.note || "", /Fields populated: stage=working_in_progress/);
   assert.match(audit?.note || "", new RegExp(`updatedAt=${project.updatedAt}`));
 
   project = await transitionPaymentTrackProject(project.id, "skip_stage", {
@@ -263,21 +277,13 @@ test("only an Administrator can skip completed real-world stages without changin
     reason,
     expectedUpdatedAt: project.updatedAt,
   });
-  assert.equal(project.stage, "installing");
+  assert.equal(project.stage, "waiting_coes");
   assert.ok(project.deliveredAt);
+  assert.ok(project.installedAt);
   assert.equal(project.collection.confirmedAmountCents, null);
   assert.equal(project.outstandingCents, 1_000);
   audit = project.history.filter((entry) => entry.action === "stage_skipped").at(-1);
   assert.match(audit?.note || "", new RegExp(`deliveredAt=${project.deliveredAt}`));
-
-  project = await transitionPaymentTrackProject(project.id, "skip_stage", {
-    actorRole: "admin",
-    reason,
-    expectedUpdatedAt: project.updatedAt,
-  });
-  assert.equal(project.stage, "waiting_coes");
-  assert.ok(project.installedAt);
-  audit = project.history.filter((entry) => entry.action === "stage_skipped").at(-1);
   assert.match(audit?.note || "", new RegExp(`installedAt=${project.installedAt}`));
 
   project = await transitionPaymentTrackProject(project.id, "skip_stage", {
@@ -288,7 +294,7 @@ test("only an Administrator can skip completed real-world stages without changin
   assert.equal(project.stage, "done");
   assert.ok(project.coesReceivedAt);
   assert.ok(project.completedAt);
-  assert.equal(project.history.filter((entry) => entry.action === "stage_skipped").length, 4);
+  assert.equal(project.history.filter((entry) => entry.action === "stage_skipped").length, 3);
   audit = project.history.filter((entry) => entry.action === "stage_skipped").at(-1);
   assert.match(audit?.note || "", new RegExp(`coesReceivedAt=${project.coesReceivedAt}`));
   assert.match(audit?.note || "", new RegExp(`completedAt=${project.completedAt}`));
@@ -393,16 +399,12 @@ test("stage overrides never bypass a pending deposit or collection payment revie
   pendingCollection = await transitionPaymentTrackProject(pendingCollection.id, "acknowledge_collection", {
     actorRole: "sales",
   });
-  await assert.rejects(
-    transitionPaymentTrackProject(pendingCollection.id, "skip_stage", {
-      actorRole: "admin",
-      reason,
-      expectedUpdatedAt: pendingCollection.updatedAt,
-    }),
-    (error: unknown) => error instanceof PaymentTrackRepositoryError
-      && error.status === 409
-      && error.code === "payment_review_pending",
-  );
+  pendingCollection = await transitionPaymentTrackProject(pendingCollection.id, "skip_stage", {
+    actorRole: "admin",
+    reason,
+    expectedUpdatedAt: pendingCollection.updatedAt,
+  });
+  assert.equal(pendingCollection.stage, "waiting_coes");
 });
 
 test("a stale Administrator stage override cannot skip the newly current stage", async () => {
@@ -429,7 +431,7 @@ test("a stale Administrator stage override cannot skip the newly current stage",
     actorRole: "admin",
     amountCents: 0,
   });
-  assert.equal(project.stage, "installing");
+  assert.equal(project.stage, "working_in_progress");
   assert.notEqual(project.updatedAt, staleUpdatedAt);
 
   await assert.rejects(
@@ -444,7 +446,7 @@ test("a stale Administrator stage override cannot skip the newly current stage",
   );
 
   const persisted = (await listPaymentTrackProjects()).find((candidate) => candidate.id === project.id);
-  assert.equal(persisted?.stage, "installing");
+  assert.equal(persisted?.stage, "working_in_progress");
   assert.equal(persisted?.installedAt, null);
   assert.equal(persisted?.history.filter((entry) => entry.action === "stage_skipped").length, 1);
 });
@@ -540,7 +542,7 @@ test("Sales can confirm a paid deposit without uploading proof before Admin reco
     actorRole: "admin",
     amountCents: 1_000,
   });
-  assert.equal(project.stage, "material_delivery");
+  assert.equal(project.stage, "working_in_progress");
   assert.equal(project.deposit.confirmedAmountCents, 1_000);
 });
 
@@ -582,7 +584,7 @@ test("PM installation scheduling saves date, time and assignee without advancing
     stcSolarRequired: false,
     stcBatteryRequired: false,
   });
-  assert.equal(installing.stage, "installing");
+  assert.equal(installing.stage, "working_in_progress");
   assert.equal(installing.installationScheduleRequest, null);
   assert.equal(installing.installationScheduledFor, null);
   assert.equal(installing.installationScheduledTime, null);
@@ -604,7 +606,7 @@ test("PM installation scheduling saves date, time and assignee without advancing
     installationTime: "09:15",
     installationAssignee: "Leo",
   });
-  assert.equal(scheduled.stage, "installing");
+  assert.equal(scheduled.stage, "working_in_progress");
   assert.equal(scheduled.installedAt, null);
   assert.equal(scheduled.installationScheduledFor, "2026-09-03");
   assert.equal(scheduled.installationScheduledTime, "09:15");
@@ -620,7 +622,7 @@ test("PM installation scheduling saves date, time and assignee without advancing
     installationTime: "13:45",
     installationAssignee: "Daniel",
   });
-  assert.equal(rescheduled.stage, "installing");
+  assert.equal(rescheduled.stage, "working_in_progress");
   assert.equal(rescheduled.installationScheduledFor, "2026-09-04");
   assert.equal(rescheduled.installationScheduledTime, "13:45");
   assert.equal(rescheduled.installationAssignee, "Daniel");
@@ -1125,7 +1127,7 @@ test("COES and final payment progress independently through the STC stage", asyn
       typeof error === "object"
       && error !== null
       && "code" in error
-      && error.code === "payment_review_pending"
+      && error.code === "reported_amount_exceeds_outstanding"
     ),
   );
 
@@ -1562,6 +1564,359 @@ test("a mutation normalizes and persists a legacy COES-confirmed stage before ac
     stage: string;
   }>;
   assert.equal(persisted.find((candidate) => candidate.id === project.id)?.stage, "stc_rebate");
+});
+
+test("WIP supports combined scheduling and multiple Sales-reported payments before installation", async () => {
+  let project = await createPmNotesProject();
+  project = await transitionPaymentTrackProject(project.id, "acknowledge_deposit", { actorRole: "sales" });
+  project = await transitionPaymentTrackProject(project.id, "confirm_deposit", { actorRole: "admin", amountCents: 100 });
+  assert.equal(project.stage, "working_in_progress");
+
+  project = await transitionPaymentTrackProject(project.id, "schedule_work", {
+    actorRole: "pm",
+    expectedUpdatedAt: project.updatedAt,
+    workMode: "delivery_and_installation",
+    deliveryDate: "2026-08-28",
+    deliveryTime: "09:00",
+    deliveryAssignee: "Leo",
+    installationAssignee: "Daniel",
+    deliverySelections: [{ sku: "BAT-TEST", quantity: 1 }],
+  });
+  assert.equal(project.workMode, "delivery_and_installation");
+  assert.equal(project.deliveryScheduledFor, project.installationScheduledFor);
+
+  project = await transitionPaymentTrackProject(project.id, "acknowledge_payment", { actorRole: "sales", amountCents: 300 });
+  project = await transitionPaymentTrackProject(project.id, "acknowledge_payment", { actorRole: "sales", amountCents: 200 });
+  assert.deepEqual(project.finalPayments.map((payment) => payment.reportedAmountCents), [300, 200]);
+  const firstPayment = project.finalPayments[0];
+  project = await transitionPaymentTrackProject(project.id, "confirm_final_payment", {
+    actorRole: "admin",
+    paymentId: firstPayment.id,
+    amountCents: 250,
+  });
+  assert.equal(project.outstandingCents, 650);
+  assert.equal(project.finalPayments[1].confirmedAt, null);
+
+  project = await transitionPaymentTrackProject(project.id, "mark_work_completed", { actorRole: "pm" });
+  assert.equal(project.stage, "waiting_coes");
+  assert.ok(project.deliveredAt);
+  assert.ok(project.installedAt);
+});
+
+test("Sales payment review stays independent from PM scheduling and completion", async () => {
+  let project = await createPmNotesProject();
+  project = await transitionPaymentTrackProject(project.id, "acknowledge_deposit", {
+    actorRole: "sales",
+    actorName: "Sam Sales",
+  });
+  project = await transitionPaymentTrackProject(project.id, "confirm_deposit", {
+    actorRole: "admin",
+    amountCents: 100,
+  });
+  assert.equal(project.stage, "working_in_progress");
+  assert.equal(project.outstandingCents, 900);
+
+  const unscheduledWorkState = {
+    stage: project.stage,
+    workMode: project.workMode,
+    deliveryScheduledFor: project.deliveryScheduledFor,
+    deliveryScheduledTime: project.deliveryScheduledTime,
+    deliveryAssignee: project.deliveryAssignee,
+    installationScheduledFor: project.installationScheduledFor,
+    installationScheduledTime: project.installationScheduledTime,
+    installationAssignee: project.installationAssignee,
+    deliveredAt: project.deliveredAt,
+    installedAt: project.installedAt,
+  };
+
+  project = await transitionPaymentTrackProject(project.id, "acknowledge_payment", {
+    actorRole: "sales",
+    actorName: "Sam Sales",
+    amountCents: 300,
+  });
+  assert.deepEqual({
+    stage: project.stage,
+    workMode: project.workMode,
+    deliveryScheduledFor: project.deliveryScheduledFor,
+    deliveryScheduledTime: project.deliveryScheduledTime,
+    deliveryAssignee: project.deliveryAssignee,
+    installationScheduledFor: project.installationScheduledFor,
+    installationScheduledTime: project.installationScheduledTime,
+    installationAssignee: project.installationAssignee,
+    deliveredAt: project.deliveredAt,
+    installedAt: project.installedAt,
+  }, unscheduledWorkState);
+  const firstPayment = project.finalPayments[0];
+  assert.ok(firstPayment);
+  assert.equal(firstPayment.acknowledgedBy, "Sam Sales");
+  assert.equal(firstPayment.reportedAmountCents, 300);
+  assert.equal(firstPayment.confirmedAmountCents, null);
+  assert.equal(firstPayment.confirmedAt, null);
+  assert.equal(firstPayment.confirmedBy, null);
+  assert.equal(project.outstandingCents, 900);
+
+  // A pending receipt only reserves its reported amount. Sales can record
+  // another receipt while an unreported portion of the balance remains.
+  project = await transitionPaymentTrackProject(project.id, "acknowledge_payment", {
+    actorRole: "sales",
+    amountCents: 200,
+  });
+  const secondPayment = project.finalPayments[1];
+  assert.ok(secondPayment);
+  assert.notEqual(secondPayment.id, firstPayment.id);
+  assert.deepEqual(project.finalPayments.map((payment) => ({
+    reportedAmountCents: payment.reportedAmountCents,
+    confirmedAt: payment.confirmedAt,
+  })), [
+    { reportedAmountCents: 300, confirmedAt: null },
+    { reportedAmountCents: 200, confirmedAt: null },
+  ]);
+  assert.equal(project.stage, "working_in_progress");
+  assert.equal(project.workMode, null);
+
+  // The two receipts awaiting Admin do not take ownership of, or block, the
+  // PM workstream.
+  project = await transitionPaymentTrackProject(project.id, "schedule_work", {
+    actorRole: "pm",
+    actorName: "Kevin PM",
+    expectedUpdatedAt: project.updatedAt,
+    workMode: "delivery_and_installation",
+    deliveryDate: "2026-08-28",
+    deliveryTime: "09:00",
+    deliveryAssignee: "Leo",
+    installationAssignee: "Daniel",
+    deliverySelections: [{ sku: "BAT-TEST", quantity: 1 }],
+  });
+  const scheduledWorkState = {
+    stage: project.stage,
+    workMode: project.workMode,
+    deliveryScheduledFor: project.deliveryScheduledFor,
+    deliveryScheduledTime: project.deliveryScheduledTime,
+    deliveryAssignee: project.deliveryAssignee,
+    installationScheduledFor: project.installationScheduledFor,
+    installationScheduledTime: project.installationScheduledTime,
+    installationAssignee: project.installationAssignee,
+    deliveredAt: project.deliveredAt,
+    installedAt: project.installedAt,
+  };
+  assert.deepEqual(scheduledWorkState, {
+    stage: "working_in_progress",
+    workMode: "delivery_and_installation",
+    deliveryScheduledFor: "2026-08-28",
+    deliveryScheduledTime: "09:00",
+    deliveryAssignee: "Leo",
+    installationScheduledFor: "2026-08-28",
+    installationScheduledTime: "09:00",
+    installationAssignee: "Daniel",
+    deliveredAt: null,
+    installedAt: null,
+  });
+
+  project = await transitionPaymentTrackProject(project.id, "acknowledge_payment", {
+    actorRole: "sales",
+    amountCents: 100,
+  });
+  const thirdPayment = project.finalPayments[2];
+  assert.ok(thirdPayment);
+  assert.deepEqual({
+    stage: project.stage,
+    workMode: project.workMode,
+    deliveryScheduledFor: project.deliveryScheduledFor,
+    deliveryScheduledTime: project.deliveryScheduledTime,
+    deliveryAssignee: project.deliveryAssignee,
+    installationScheduledFor: project.installationScheduledFor,
+    installationScheduledTime: project.installationScheduledTime,
+    installationAssignee: project.installationAssignee,
+    deliveredAt: project.deliveredAt,
+    installedAt: project.installedAt,
+  }, scheduledWorkState);
+
+  // Admin can confirm an individual receipt out of order; the other receipts
+  // remain pending and the confirmed actual amount alone affects outstanding.
+  project = await transitionPaymentTrackProject(project.id, "confirm_final_payment", {
+    actorRole: "admin",
+    paymentId: secondPayment.id,
+    amountCents: 175,
+  });
+  assert.equal(project.finalPayments[0].confirmedAt, null);
+  assert.equal(project.finalPayments[1].confirmedAmountCents, 175);
+  assert.ok(project.finalPayments[1].confirmedAt);
+  assert.equal(project.finalPayments[2].confirmedAt, null);
+  assert.equal(project.outstandingCents, 725);
+  assert.deepEqual({
+    stage: project.stage,
+    workMode: project.workMode,
+    deliveryScheduledFor: project.deliveryScheduledFor,
+    deliveryScheduledTime: project.deliveryScheduledTime,
+    deliveryAssignee: project.deliveryAssignee,
+    installationScheduledFor: project.installationScheduledFor,
+    installationScheduledTime: project.installationScheduledTime,
+    installationAssignee: project.installationAssignee,
+    deliveredAt: project.deliveredAt,
+    installedAt: project.installedAt,
+  }, scheduledWorkState);
+
+  project = await transitionPaymentTrackProject(project.id, "mark_work_completed", {
+    actorRole: "pm",
+    actorName: "Kevin PM",
+  });
+  assert.equal(project.stage, "waiting_coes");
+  assert.ok(project.deliveredAt);
+  assert.ok(project.installedAt);
+  assert.equal(project.finalPayments.filter((payment) => !payment.confirmedAt).length, 2);
+
+  project = await transitionPaymentTrackProject(project.id, "confirm_final_payment", {
+    actorRole: "admin",
+    paymentId: firstPayment.id,
+    amountCents: 300,
+  });
+  assert.equal(project.stage, "waiting_coes");
+  assert.equal(project.finalPayments.filter((payment) => !payment.confirmedAt).length, 1);
+  project = await transitionPaymentTrackProject(project.id, "confirm_final_payment", {
+    actorRole: "admin",
+    paymentId: thirdPayment.id,
+    amountCents: 100,
+  });
+  assert.equal(project.stage, "waiting_coes");
+  assert.equal(project.finalPayments.filter((payment) => !payment.confirmedAt).length, 0);
+  assert.equal(project.outstandingCents, 325);
+});
+
+test("Weekly delivery then installation completion advances Project Track automatically", async () => {
+  let project = await createPmNotesProject();
+  project = await transitionPaymentTrackProject(project.id, "acknowledge_deposit", { actorRole: "sales" });
+  project = await transitionPaymentTrackProject(project.id, "confirm_deposit", { actorRole: "admin", amountCents: 100 });
+
+  project = await transitionPaymentTrackProject(project.id, "schedule_work", {
+    actorRole: "pm",
+    expectedUpdatedAt: project.updatedAt,
+    workMode: "delivery_only",
+    deliveryDate: "2026-08-28",
+    deliveryTime: "09:00",
+    deliveryAssignee: "Leo",
+    deliverySelections: [{ sku: "BAT-TEST", quantity: 1 }],
+  });
+  project = await transitionPaymentTrackProject(project.id, "mark_work_completed", { actorRole: "pm" });
+  assert.equal(project.stage, "working_in_progress");
+  assert.ok(project.deliveredAt);
+  assert.equal(project.installedAt, null);
+
+  project = await transitionPaymentTrackProject(project.id, "schedule_work", {
+    actorRole: "pm",
+    expectedUpdatedAt: project.updatedAt,
+    workMode: "installation_only",
+    deliveryDate: "2026-08-29",
+    deliveryTime: "10:00",
+    installationAssignee: "Daniel",
+  });
+  project = await transitionPaymentTrackProject(project.id, "mark_work_completed", { actorRole: "pm" });
+  assert.equal(project.stage, "waiting_coes");
+  assert.ok(project.installedAt);
+});
+
+test("installation completion atomically records Solar Panel Inventory consumption once on every completion path", async () => {
+  const panelItems = [{
+    category: "Solar Panel",
+    description: "LONGi Green Energy",
+    model: "LR7-54HVH-475M (IEC 61215-2021)",
+    quantity: 10,
+    capacity: "475W",
+  }, {
+    category: "solar panels",
+    description: "Same panel model",
+    model: "LR7-54HVH-475M (IEC 61215-2021)",
+    quantity: 4,
+    capacity: "475W",
+  }, {
+    category: "太阳能板",
+    description: "DIRECT-SUPPLIER-PANEL",
+    model: "",
+    quantity: 2,
+    capacity: "440W",
+  }, {
+    category: "Solar Inverter",
+    description: "Must not be consumed as a panel",
+    model: "KH10",
+    quantity: 1,
+    capacity: "10kW",
+  }];
+
+  let combined = await createPmNotesProject(panelItems);
+  combined = await transitionPaymentTrackProject(combined.id, "acknowledge_deposit", { actorRole: "sales" });
+  combined = await transitionPaymentTrackProject(combined.id, "confirm_deposit", {
+    actorRole: "admin",
+    amountCents: 100,
+  });
+  combined = await transitionPaymentTrackProject(combined.id, "schedule_work", {
+    actorRole: "pm",
+    expectedUpdatedAt: combined.updatedAt,
+    workMode: "delivery_and_installation",
+    deliveryDate: "2026-08-30",
+    deliveryTime: "09:00",
+    deliveryAssignee: "Leo",
+    installationAssignee: "Daniel",
+    deliverySelections: [{ sku: "BAT-TEST", quantity: 1 }],
+  });
+  combined = await transitionPaymentTrackProject(combined.id, "mark_work_completed", {
+    actorRole: "pm",
+    actorName: "Kevin PM",
+  });
+
+  assert.equal(combined.solarPanelConsumption?.recordedAt, combined.installedAt);
+  assert.equal(combined.solarPanelConsumption?.recordedBy, "Kevin PM");
+  assert.deepEqual(combined.solarPanelConsumption?.items.map(({ sku, quantity }) => ({ sku, quantity })), [{
+    sku: "LR7-54HVH-475M (IEC 61215-2021)",
+    quantity: 14,
+  }, {
+    sku: "DIRECT-SUPPLIER-PANEL",
+    quantity: 2,
+  }]);
+  const panelSourceIds = combined.items
+    .filter((item) => item.model === "LR7-54HVH-475M (IEC 61215-2021)")
+    .map((item) => item.id);
+  assert.deepEqual(combined.solarPanelConsumption?.items[0].sourceItemIds, panelSourceIds);
+  assert.equal(combined.history.filter((entry) => entry.action === "solar_panel_consumption_recorded").length, 1);
+  assert.match(combined.history.at(-1)?.note || "", /LR7-54HVH-475M.*× 14/);
+  assert.doesNotMatch(combined.history.at(-1)?.note || "", /KH10/);
+
+  await assert.rejects(
+    transitionPaymentTrackProject(combined.id, "mark_work_completed", { actorRole: "pm" }),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError && error.code === "invalid_transition",
+  );
+  const listedTwice = [await listPaymentTrackProjects(), await listPaymentTrackProjects()];
+  for (const projects of listedTwice) {
+    const persisted = projects.find((project) => project.id === combined.id);
+    assert.deepEqual(persisted?.solarPanelConsumption, combined.solarPanelConsumption);
+    assert.equal(persisted?.history.filter((entry) => entry.action === "solar_panel_consumption_recorded").length, 1);
+  }
+
+  const markedInstalled = await createInstalledProject({
+    stcSolarRequired: true,
+    stcBatteryRequired: false,
+    items: [panelItems[0]],
+  });
+  assert.equal(markedInstalled.solarPanelConsumption?.items[0].quantity, 10);
+  assert.equal(markedInstalled.history.filter((entry) => entry.action === "solar_panel_consumption_recorded").length, 1);
+
+  const reason = "Installation was completed outside ERP and verified by the Administrator.";
+  let skipped = await createPmNotesProject([panelItems[2]]);
+  skipped = await transitionPaymentTrackProject(skipped.id, "skip_stage", {
+    actorRole: "admin",
+    actorName: "Administrator",
+    reason,
+    expectedUpdatedAt: skipped.updatedAt,
+  });
+  skipped = await transitionPaymentTrackProject(skipped.id, "skip_stage", {
+    actorRole: "admin",
+    actorName: "Administrator",
+    reason,
+    expectedUpdatedAt: skipped.updatedAt,
+  });
+  assert.equal(skipped.stage, "waiting_coes");
+  assert.equal(skipped.solarPanelConsumption?.items[0].sku, "DIRECT-SUPPLIER-PANEL");
+  assert.equal(skipped.solarPanelConsumption?.items[0].quantity, 2);
+  assert.equal(skipped.solarPanelConsumption?.recordedBy, "Administrator");
+  assert.equal(skipped.history.filter((entry) => entry.action === "solar_panel_consumption_recorded").length, 1);
 });
 
 test("PM notes preserve internal newlines, clear safely and never advance workflow", async () => {

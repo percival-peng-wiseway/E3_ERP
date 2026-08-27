@@ -28,11 +28,13 @@ function project(overrides: Partial<PaymentTrackProject> = {}): PaymentTrackProj
     overpaymentCents: 0,
     expectedDepositCents: 2_000,
     stage: "deposit_not_paid",
+    workMode: null,
     contract: null,
     deposit: {
       proof: null,
       acknowledgedAt: null,
       acknowledgedBy: null,
+      reportedAmountCents: null,
       confirmedAmountCents: null,
       confirmedAt: null,
       confirmedBy: null,
@@ -49,6 +51,7 @@ function project(overrides: Partial<PaymentTrackProject> = {}): PaymentTrackProj
       proof: null,
       acknowledgedAt: null,
       acknowledgedBy: null,
+      reportedAmountCents: null,
       confirmedAmountCents: null,
       confirmedAt: null,
       confirmedBy: null,
@@ -132,7 +135,7 @@ test("delivery collection moves from Sales to Admin after delivery", () => {
   })), ["admin:confirm_collection"]);
 });
 
-test("an outstanding installed project notifies Sales, but does not add a PM COES reminder", () => {
+test("outstanding projects keep Sales collection open while Admin verifies pending receipts", () => {
   assert.deepEqual(summary(project({ stage: "waiting_coes" })), [
     "sales:record_final_payment",
   ]);
@@ -148,6 +151,7 @@ test("an outstanding installed project notifies Sales, but does not add a PM COE
     finalPayments: [pendingPayment],
   })), [
     "admin:confirm_final_payment",
+    "sales:record_final_payment",
   ]);
 });
 
@@ -167,6 +171,69 @@ test("Administrator receipt work remains independent from Sales final-payment re
 
 test("paid projects produce no payment action", () => {
   assert.deepEqual(summary(project({ stage: "done", outstandingCents: 0 })), []);
+});
+
+test("every pending Sales payment still requires Admin confirmation after the balance reaches zero", () => {
+  const base = project().deposit;
+  const confirmed = {
+    ...base,
+    id: "payment-1",
+    createdAt: "2026-08-27T01:00:00.000Z",
+    acknowledgedAt: "2026-08-27T01:00:00.000Z",
+    reportedAmountCents: 2_000,
+    confirmedAmountCents: 8_000,
+    confirmedAt: "2026-08-27T02:00:00.000Z",
+    confirmedBy: "Administrator",
+  };
+  const pending = {
+    ...base,
+    id: "payment-2",
+    createdAt: "2026-08-27T01:30:00.000Z",
+    acknowledgedAt: "2026-08-27T01:30:00.000Z",
+    reportedAmountCents: 1_000,
+  };
+  assert.deepEqual(paymentTrackResponsibilities(project({
+    stage: "done",
+    outstandingCents: 0,
+    finalPayments: [confirmed, pending],
+  })), [{ action: "confirm_final_payment", role: "admin", paymentId: "payment-2" }]);
+  assert.deepEqual(summary(project({
+    stage: "done",
+    outstandingCents: 0,
+    finalPayments: [confirmed, {
+      ...pending,
+      confirmedAmountCents: 0,
+      confirmedAt: "2026-08-27T03:00:00.000Z",
+      confirmedBy: "Administrator",
+    }],
+  })), []);
+});
+
+test("WIP keeps PM scheduling and continuous payment responsibilities independent", () => {
+  assert.deepEqual(summary(project({
+    stage: "working_in_progress",
+    workMode: null,
+  })), [
+    "pm:manage_work",
+    "sales:record_final_payment",
+  ]);
+
+  const pending = {
+    ...project().deposit,
+    id: "payment-wip-1",
+    createdAt: "2026-08-27T02:00:00.000Z",
+    acknowledgedAt: "2026-08-27T02:00:00.000Z",
+    reportedAmountCents: 2_000,
+  };
+  assert.deepEqual(summary(project({
+    stage: "working_in_progress",
+    workMode: "delivery_and_installation",
+    finalPayments: [pending],
+  })), [
+    "pm:manage_work",
+    "admin:confirm_final_payment",
+    "sales:record_final_payment",
+  ]);
 });
 
 test("installation work moves from Sales pre-scheduling to PM review and final schedule management", () => {

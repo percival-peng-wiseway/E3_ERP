@@ -23,13 +23,16 @@ import type {
   PaymentTrackRole,
   PaymentTrackScheduleAssignee,
   PaymentTrackScheduleRequest,
+  PaymentTrackSolarPanelConsumption,
   PaymentTrackSpecialist,
   PaymentTrackUploadContentType,
+  PaymentTrackWorkMode,
 } from "./types";
 
 const {
   PAYMENT_TRACK_SCHEDULE_ASSIGNEES,
   PAYMENT_TRACK_STAGE_SKIP_REASON_MAX_LENGTH,
+  PAYMENT_TRACK_WORK_MODES,
 } = paymentTrackTypes;
 
 const {
@@ -45,11 +48,12 @@ type StoredFile = Omit<PaymentTrackFile, "url"> & {
   accessToken: string;
 };
 
-type StoredReceipt = Omit<PaymentTrackReceipt, "proof" | "acknowledgedAt" | "acknowledgedBy"> & {
+type StoredReceipt = Omit<PaymentTrackReceipt, "proof" | "acknowledgedAt" | "acknowledgedBy" | "reportedAmountCents"> & {
   proof: StoredFile | null;
   // Optional so proof-based receipts written by earlier versions remain readable.
   acknowledgedAt?: string | null;
   acknowledgedBy?: string | null;
+  reportedAmountCents?: number | null;
 };
 
 type StoredFinalPayment = StoredReceipt & {
@@ -82,6 +86,8 @@ type StoredProject = Omit<
   | "installationScheduledFor"
   | "installationScheduledTime"
   | "installationAssignee"
+  | "solarPanelConsumption"
+  | "workMode"
 > & {
   contract: StoredFile | null;
   deposit: StoredReceipt;
@@ -113,6 +119,10 @@ type StoredProject = Omit<
   installationScheduledFor?: string | null;
   installationScheduledTime?: string | null;
   installationAssignee?: PaymentTrackScheduleAssignee | null;
+  // Optional so projects installed before Inventory integration remain
+  // readable without retroactively deducting stock a second time.
+  solarPanelConsumption?: PaymentTrackSolarPanelConsumption | null;
+  workMode?: PaymentTrackWorkMode | null;
 };
 
 export type CreatePaymentTrackInput = {
@@ -148,6 +158,7 @@ export type PaymentTrackTransitionInput = {
   installationDate?: string;
   installationTime?: string;
   installationAssignee?: PaymentTrackScheduleAssignee;
+  workMode?: PaymentTrackWorkMode;
   reason?: string;
   expectedUpdatedAt?: string;
   notes?: string;
@@ -356,12 +367,14 @@ function publicProject(project: StoredProject): PaymentTrackProject {
       ...project.deposit,
       acknowledgedAt: project.deposit.acknowledgedAt || null,
       acknowledgedBy: project.deposit.acknowledgedBy || null,
+      reportedAmountCents: project.deposit.reportedAmountCents ?? null,
       proof: publicFile(project.id, project.deposit.proof),
     },
     collection: {
       ...project.collection,
       acknowledgedAt: project.collection.acknowledgedAt || null,
       acknowledgedBy: project.collection.acknowledgedBy || null,
+      reportedAmountCents: project.collection.reportedAmountCents ?? null,
       proof: publicFile(project.id, project.collection.proof),
     },
     finalPayments: finalPayments.map((payment): PaymentTrackFinalPayment => ({
@@ -370,6 +383,7 @@ function publicProject(project: StoredProject): PaymentTrackProject {
       createdAt: payment.createdAt || payment.proof?.uploadedAt || project.completedAt || project.updatedAt,
       acknowledgedAt: payment.acknowledgedAt || null,
       acknowledgedBy: payment.acknowledgedBy || null,
+      reportedAmountCents: payment.reportedAmountCents ?? null,
       proof: publicFile(project.id, payment.proof),
     })),
     solarRebateRequired: project.solarRebateRequired === true,
@@ -412,6 +426,8 @@ function publicProject(project: StoredProject): PaymentTrackProject {
     installationAssignee: validScheduleAssignee(project.installationAssignee)
       ? project.installationAssignee
       : null,
+    solarPanelConsumption: normalizedStoredSolarPanelConsumption(project.solarPanelConsumption),
+    workMode: validWorkMode(project.workMode) ? project.workMode : null,
     outstandingCents: Math.max(0, project.balanceDueCents - confirmedCents),
     overpaymentCents: Math.max(0, confirmedCents - project.balanceDueCents),
   };
@@ -487,9 +503,135 @@ function normalizedStoredScheduleRequest(value: unknown): PaymentTrackScheduleRe
   };
 }
 
+function normalizedStoredSolarPanelConsumption(
+  value: unknown,
+): PaymentTrackSolarPanelConsumption | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const candidate = value as Partial<Record<keyof PaymentTrackSolarPanelConsumption, unknown>>;
+  if (!storedPmNotesTimestamp(candidate.recordedAt)
+    || typeof candidate.recordedBy !== "string"
+    || !candidate.recordedBy.trim()
+    || candidate.recordedBy.trim().length > 120
+    || /[\u0000-\u001F\u007F]/.test(candidate.recordedBy)
+    || !Array.isArray(candidate.items)
+    || !candidate.items.length
+    || candidate.items.length > 100) return null;
+
+  const items = candidate.items.map((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const item = value as { sku?: unknown; quantity?: unknown; sourceItemIds?: unknown };
+    if (typeof item.sku !== "string"
+      || !item.sku.trim()
+      || item.sku.trim().length > 160
+      || /[\u0000-\u001F\u007F]/.test(item.sku)
+      || !Number.isSafeInteger(item.quantity)
+      || (item.quantity as number) < 1
+      || (item.quantity as number) > 1_000_000
+      || !Array.isArray(item.sourceItemIds)
+      || !item.sourceItemIds.length
+      || item.sourceItemIds.length > 100
+      || item.sourceItemIds.some((id) => typeof id !== "string"
+        || !id.trim()
+        || id.length > 160
+        || /[\u0000-\u001F\u007F]/.test(id))) return null;
+    return {
+      sku: item.sku.trim(),
+      quantity: item.quantity as number,
+      sourceItemIds: [...new Set(item.sourceItemIds.map((id) => (id as string).trim()))],
+    };
+  });
+  if (items.some((item) => item === null)) return null;
+  const validItems = items as PaymentTrackSolarPanelConsumption["items"];
+  if (new Set(validItems.map((item) => item.sku.toLocaleLowerCase("en-AU"))).size !== validItems.length) {
+    return null;
+  }
+  return {
+    recordedAt: candidate.recordedAt,
+    recordedBy: candidate.recordedBy.trim(),
+    items: validItems,
+  };
+}
+
+function isSolarPanelSystemItem(item: PaymentTrackItem) {
+  const category = item.category.trim().toLocaleLowerCase("en-AU").replace(/\s+/g, " ");
+  return category === "solar panel"
+    || category === "solar panels"
+    || category === "太阳能板";
+}
+
+function recordSolarPanelConsumption(
+  project: StoredProject,
+  timestamp: string,
+  role: PaymentTrackRole,
+  actor: string,
+) {
+  if (normalizedStoredSolarPanelConsumption(project.solarPanelConsumption)) return;
+  const grouped = new Map<string, {
+    sku: string;
+    quantity: number;
+    sourceItemIds: string[];
+  }>();
+  for (const item of project.items) {
+    if (!isSolarPanelSystemItem(item)) continue;
+    const sku = (item.model.trim() || item.description.trim()).slice(0, 160);
+    if (!sku || !Number.isSafeInteger(item.quantity) || item.quantity < 1) continue;
+    const key = sku.toLocaleLowerCase("en-AU");
+    const existing = grouped.get(key);
+    if (existing) {
+      existing.quantity += item.quantity;
+      existing.sourceItemIds.push(item.id);
+    } else {
+      grouped.set(key, { sku, quantity: item.quantity, sourceItemIds: [item.id] });
+    }
+  }
+  const items = [...grouped.values()];
+  if (!items.length) return;
+  project.solarPanelConsumption = {
+    recordedAt: timestamp,
+    recordedBy: actor,
+    items,
+  };
+  project.history.push(historyEntry(
+    "solar_panel_consumption_recorded",
+    timestamp,
+    role,
+    actor,
+    items.map((item) => `${item.sku} × ${item.quantity}`).join("; "),
+  ));
+}
+
 async function migrateLegacyProjectStages(projects: StoredProject[], fallbackTimestamp: string) {
   let changed = false;
   for (const project of projects) {
+    const legacyStage = project.stage;
+    if (legacyStage === "material_delivery" || legacyStage === "installing") {
+      project.stage = "working_in_progress";
+      project.workMode = legacyStage === "installing" ? "installation_only" : "delivery_only";
+      changed = true;
+    } else if (!validWorkMode(project.workMode) && project.workMode !== null) {
+      project.workMode = null;
+      changed = true;
+    } else if (project.workMode === undefined) {
+      project.workMode = project.stage === "working_in_progress"
+        ? project.installationScheduledFor ? "installation_only" : project.deliveryScheduledFor ? "delivery_only" : null
+        : null;
+      changed = true;
+    }
+    const receipts: StoredReceipt[] = [
+      project.deposit,
+      project.collection,
+      ...(project.finalPayments || []),
+    ];
+    for (const receipt of receipts) {
+      if (receipt.reportedAmountCents !== null
+        && (!Number.isSafeInteger(receipt.reportedAmountCents) || (receipt.reportedAmountCents ?? -1) < 0)) {
+        receipt.reportedAmountCents = null;
+        changed = true;
+      } else if (receipt.reportedAmountCents === undefined) {
+        receipt.reportedAmountCents = null;
+        changed = true;
+      }
+    }
     if (typeof project.pmNotes !== "string") {
       project.pmNotes = "";
       changed = true;
@@ -574,6 +716,16 @@ async function migrateLegacyProjectStages(projects: StoredProject[], fallbackTim
     }
     if (project.installationAssignee !== null && !validScheduleAssignee(project.installationAssignee)) {
       project.installationAssignee = null;
+      changed = true;
+    }
+    const normalizedConsumption = normalizedStoredSolarPanelConsumption(project.solarPanelConsumption);
+    if (!normalizedConsumption) {
+      if (project.solarPanelConsumption !== null) {
+        project.solarPanelConsumption = null;
+        changed = true;
+      }
+    } else if (JSON.stringify(project.solarPanelConsumption) !== JSON.stringify(normalizedConsumption)) {
+      project.solarPanelConsumption = normalizedConsumption;
       changed = true;
     }
     if (project.solarRebateReceivedAt !== null && typeof project.solarRebateReceivedAt !== "string") {
@@ -721,11 +873,13 @@ function buildProject(
     balanceDueCents: input.balanceDueCents,
     expectedDepositCents: input.expectedDepositCents,
     stage: "deposit_not_paid",
+    workMode: null,
     contract,
     deposit: {
       proof: null,
       acknowledgedAt: null,
       acknowledgedBy: null,
+      reportedAmountCents: null,
       confirmedAmountCents: null,
       confirmedAt: null,
       confirmedBy: null,
@@ -742,6 +896,7 @@ function buildProject(
       proof: null,
       acknowledgedAt: null,
       acknowledgedBy: null,
+      reportedAmountCents: null,
       confirmedAmountCents: null,
       confirmedAt: null,
       confirmedBy: null,
@@ -750,6 +905,7 @@ function buildProject(
     installationScheduledFor: null,
     installationScheduledTime: null,
     installationAssignee: null,
+    solarPanelConsumption: null,
     finalPayments: [],
     installedAt: null,
     coesReceivedAt: null,
@@ -926,6 +1082,11 @@ function validScheduleAssignee(value: unknown): value is PaymentTrackScheduleAss
     && PAYMENT_TRACK_SCHEDULE_ASSIGNEES.includes(value as PaymentTrackScheduleAssignee);
 }
 
+function validWorkMode(value: unknown): value is PaymentTrackWorkMode {
+  return typeof value === "string"
+    && PAYMENT_TRACK_WORK_MODES.includes(value as PaymentTrackWorkMode);
+}
+
 function deliveryScheduleIsComplete(project: StoredProject) {
   return validDeliveryDate(project.deliveryScheduledFor)
     && validScheduleTime(project.deliveryScheduledTime)
@@ -1047,6 +1208,26 @@ function installationScheduleIsComplete(project: StoredProject) {
     && validScheduleAssignee(project.installationAssignee);
 }
 
+function workScheduleIsComplete(project: StoredProject) {
+  if (project.workMode === "delivery_only") return deliveryScheduleIsComplete(project);
+  if (project.workMode === "installation_only") return installationScheduleIsComplete(project);
+  return project.workMode === "delivery_and_installation"
+    && deliveryScheduleIsComplete(project)
+    && installationScheduleIsComplete(project)
+    && project.deliveryScheduledFor === project.installationScheduledFor
+    && project.deliveryScheduledTime === project.installationScheduledTime;
+}
+
+function pendingReportedPaymentCents(project: StoredProject) {
+  return (project.finalPayments || []).reduce((total, payment) => (
+    payment.confirmedAt ? total : total + (payment.reportedAmountCents || 0)
+  ), 0);
+}
+
+function paymentCanBeRecorded(project: StoredProject) {
+  return project.stage !== "deposit_not_paid" && publicProject(project).outstandingCents > 0;
+}
+
 function nextProjectTimestamp(project: StoredProject) {
   const previous = [project.updatedAt, project.pmNotesUpdatedAt]
     .map((value) => typeof value === "string" ? Date.parse(value) : Number.NaN)
@@ -1136,6 +1317,7 @@ export function transitionPaymentTrackProject(
     const index = projects.findIndex((candidate) => candidate.id === id);
     if (index < 0) throw new PaymentTrackRepositoryError("Project not found.", 404, "not_found");
     const project = projects[index];
+    const wasInstalled = Boolean(project.installedAt);
     if (!solarRebateAssessmentIsCurrent(project) && action !== "update_pm_notes") {
       throw new PaymentTrackRepositoryError(
         "The contract Solar Rebate requirement could not be verified. Try again before updating this project.",
@@ -1196,11 +1378,83 @@ export function transitionPaymentTrackProject(
       project.deposit.confirmedAmountCents = amount;
       project.deposit.confirmedAt = timestamp;
       project.deposit.confirmedBy = actor;
-      project.stage = "material_delivery";
+      project.stage = "working_in_progress";
+      project.workMode = null;
       project.history.push(historyEntry("deposit_confirmed", timestamp, "admin", actor, `AUD ${(amount / 100).toFixed(2)}`));
+    } else if (action === "schedule_work") {
+      requireRole(input.actorRole, ["pm"], "Only the Project Manager can schedule work.");
+      requireCurrentProjectVersion(project, input.expectedUpdatedAt);
+      const mode = input.workMode;
+      const includesDelivery = mode === "delivery_only" || mode === "delivery_and_installation";
+      const includesInstallation = mode === "installation_only" || mode === "delivery_and_installation";
+      if (project.stage !== "working_in_progress"
+        || !validWorkMode(mode)
+        || !validDeliveryDate(input.deliveryDate)
+        || !validScheduleTime(input.deliveryTime)
+        || (includesDelivery && (!validScheduleAssignee(input.deliveryAssignee) || project.deliveredAt))
+        || (includesInstallation && (!validScheduleAssignee(input.installationAssignee) || project.installedAt))) {
+        throw new PaymentTrackRepositoryError(
+          "Choose a valid work type, date, time and required team members.",
+          409,
+          "invalid_transition",
+        );
+      }
+      if (includesDelivery) {
+        project.deliverySelections = normalizedDeliverySelections(input.deliverySelections);
+        project.deliveryPreparedAt = timestamp;
+        project.deliveryPreparedBy = actor;
+        project.deliveryScheduledFor = input.deliveryDate;
+        project.deliveryScheduledTime = input.deliveryTime;
+        project.deliveryAssignee = input.deliveryAssignee || null;
+      } else {
+        if (!project.deliveredAt) {
+          project.deliveryScheduledFor = null;
+          project.deliveryScheduledTime = null;
+          project.deliveryAssignee = null;
+        }
+      }
+      if (includesInstallation) {
+        project.installationScheduledFor = input.deliveryDate;
+        project.installationScheduledTime = input.deliveryTime;
+        project.installationAssignee = input.installationAssignee || null;
+      } else {
+        if (!project.installedAt) {
+          project.installationScheduledFor = null;
+          project.installationScheduledTime = null;
+          project.installationAssignee = null;
+        }
+      }
+      project.deliveryScheduleRequest = null;
+      project.installationScheduleRequest = null;
+      project.workMode = mode;
+      project.history.push(historyEntry(
+        "work_scheduled",
+        timestamp,
+        "pm",
+        actor,
+        `${mode} · ${input.deliveryDate} ${input.deliveryTime}`,
+      ));
+    } else if (action === "mark_work_completed") {
+      requireRole(input.actorRole, ["pm"], "Only the Project Manager can complete scheduled work.");
+      if (project.stage !== "working_in_progress" || !workScheduleIsComplete(project)) {
+        throw new PaymentTrackRepositoryError("Schedule the work before marking it complete.", 409, "invalid_transition");
+      }
+      const mode = project.workMode;
+      if ((mode === "delivery_only" || mode === "delivery_and_installation") && project.deliveredAt) {
+        throw new PaymentTrackRepositoryError("Delivery is already complete.", 409, "invalid_transition");
+      }
+      if ((mode === "installation_only" || mode === "delivery_and_installation") && project.installedAt) {
+        throw new PaymentTrackRepositoryError("Installation is already complete.", 409, "invalid_transition");
+      }
+      if (mode === "delivery_only" || mode === "delivery_and_installation") project.deliveredAt = timestamp;
+      if (mode === "installation_only" || mode === "delivery_and_installation") {
+        project.installedAt = timestamp;
+        project.stage = "waiting_coes";
+      }
+      project.history.push(historyEntry("work_completed", timestamp, "pm", actor, mode));
     } else if (action === "prepare_delivery") {
       requireRole(input.actorRole, ["sales"], "Only Sales can prepare delivery items.");
-      if (project.stage !== "material_delivery"
+      if (!["material_delivery", "working_in_progress"].includes(project.stage)
         || project.deliveredAt
         || deliveryScheduleIsComplete(project)
         || normalizedStoredScheduleRequest(project.deliveryScheduleRequest)) {
@@ -1224,7 +1478,7 @@ export function transitionPaymentTrackProject(
       ));
     } else if (action === "pre_schedule_delivery") {
       requireRole(input.actorRole, ["sales"], "Only Sales can submit a delivery scheduling request.");
-      if (project.stage !== "material_delivery"
+      if (!["material_delivery", "working_in_progress"].includes(project.stage)
         || project.deliveredAt
         || deliveryScheduleIsComplete(project)) {
         throw new PaymentTrackRepositoryError(
@@ -1260,7 +1514,7 @@ export function transitionPaymentTrackProject(
     } else if (action === "schedule_delivery") {
       requireRole(input.actorRole, ["pm"], "Only the Project Manager can schedule delivery.");
       requireCurrentProjectVersion(project, input.expectedUpdatedAt);
-      if (project.stage !== "material_delivery"
+      if (!["material_delivery", "working_in_progress"].includes(project.stage)
         || project.deliveredAt
         || (!deliveryPreScheduleIsComplete(project) && !deliveryScheduleIsComplete(project))
         || !validDeliveryDate(input.deliveryDate)
@@ -1271,6 +1525,7 @@ export function transitionPaymentTrackProject(
       project.deliveryScheduledFor = input.deliveryDate || null;
       project.deliveryScheduledTime = input.deliveryTime;
       project.deliveryAssignee = input.deliveryAssignee;
+      if (project.stage === "working_in_progress") project.workMode = "delivery_only";
       project.history.push(historyEntry(
         "delivery_scheduled",
         timestamp,
@@ -1280,14 +1535,14 @@ export function transitionPaymentTrackProject(
       ));
     } else if (action === "mark_delivered") {
       requireRole(input.actorRole, ["pm"], "Only the Project Manager can mark materials delivered.");
-      if (project.stage !== "material_delivery" || project.deliveredAt || !deliveryScheduleIsComplete(project)) {
+      if (!["material_delivery", "working_in_progress"].includes(project.stage) || project.deliveredAt || !deliveryScheduleIsComplete(project)) {
         throw new PaymentTrackRepositoryError("Schedule the delivery date, time and assignee before marking it delivered.", 409, "invalid_transition");
       }
       project.deliveredAt = timestamp;
       project.history.push(historyEntry("marked_delivered", timestamp, "pm", actor));
     } else if (action === "acknowledge_collection") {
       requireRole(input.actorRole, ["sales"], "Only Sales can acknowledge a received collection payment.");
-      if (project.stage !== "material_delivery" || !project.deliveredAt || project.collection.confirmedAt) {
+      if (project.stage !== "working_in_progress" || !project.deliveredAt || project.collection.confirmedAt) {
         throw new PaymentTrackRepositoryError("A collection payment can only be acknowledged after delivery.", 409, "invalid_transition");
       }
       if (project.collection.acknowledgedAt) {
@@ -1299,22 +1554,17 @@ export function transitionPaymentTrackProject(
     } else if (action === "confirm_collection") {
       requireRole(input.actorRole, ["admin"], "Only an Administrator can confirm collection.");
       const submittedForReview = Boolean(project.collection.acknowledgedAt || project.collection.proof);
-      if (project.stage !== "material_delivery" || !project.deliveredAt || !submittedForReview || project.collection.confirmedAt) {
+      if (project.stage !== "working_in_progress" || !project.deliveredAt || !submittedForReview || project.collection.confirmedAt) {
         throw new PaymentTrackRepositoryError("Sales must acknowledge the received collection payment before confirmation.", 409, "invalid_transition");
       }
       const amount = validateNonNegativeAmount(input.amountCents);
       project.collection.confirmedAmountCents = amount;
       project.collection.confirmedAt = timestamp;
       project.collection.confirmedBy = actor;
-      project.stage = "installing";
-      project.installationScheduleRequest = null;
-      project.installationScheduledFor = null;
-      project.installationScheduledTime = null;
-      project.installationAssignee = null;
       project.history.push(historyEntry("collection_confirmed", timestamp, "admin", actor, `AUD ${(amount / 100).toFixed(2)}`));
     } else if (action === "pre_schedule_installation") {
       requireRole(input.actorRole, ["sales"], "Only Sales can submit an installation scheduling request.");
-      if (project.stage !== "installing"
+      if (!["installing", "working_in_progress"].includes(project.stage)
         || project.installedAt
         || installationScheduleIsComplete(project)) {
         throw new PaymentTrackRepositoryError(
@@ -1344,7 +1594,7 @@ export function transitionPaymentTrackProject(
     } else if (action === "schedule_installation") {
       requireRole(input.actorRole, ["pm"], "Only the Project Manager can schedule installation.");
       requireCurrentProjectVersion(project, input.expectedUpdatedAt);
-      if (project.stage !== "installing"
+      if (!["installing", "working_in_progress"].includes(project.stage)
         || project.installedAt
         || (!installationPreScheduleIsComplete(project) && !installationScheduleIsComplete(project))
         || !validDeliveryDate(input.installationDate)
@@ -1359,6 +1609,7 @@ export function transitionPaymentTrackProject(
       project.installationScheduledFor = input.installationDate || null;
       project.installationScheduledTime = input.installationTime;
       project.installationAssignee = input.installationAssignee;
+      if (project.stage === "working_in_progress") project.workMode = "installation_only";
       project.history.push(historyEntry(
         "installation_scheduled",
         timestamp,
@@ -1367,16 +1618,24 @@ export function transitionPaymentTrackProject(
         `${input.installationDate} ${input.installationTime} · ${input.installationAssignee}`,
       ));
     } else if (action === "acknowledge_payment") {
-      requireRole(input.actorRole, ["sales"], "Only Sales can acknowledge a received payment.");
-      const paymentStage = project.stage === "waiting_coes"
-        || project.stage === "stc_rebate"
-        || project.stage === "done";
-      if (!paymentStage || publicProject(project).outstandingCents <= 0) {
-        throw new PaymentTrackRepositoryError("A payment can only be acknowledged for an outstanding installed project.", 409, "invalid_transition");
+      requireRole(input.actorRole, ["sales"], "Only Sales can record a received payment.");
+      if (!paymentCanBeRecorded(project)) {
+        throw new PaymentTrackRepositoryError("A payment can only be recorded after the deposit while a balance remains.", 409, "invalid_transition");
+      }
+      const outstanding = publicProject(project).outstandingCents;
+      const amount = input.amountCents === undefined
+        ? Math.max(1, outstanding - pendingReportedPaymentCents(project))
+        : validateNonNegativeAmount(input.amountCents);
+      if (amount <= 0) {
+        throw new PaymentTrackRepositoryError("Enter the amount Sales believes was received.", 400, "invalid_amount");
       }
       const finalPayments = project.finalPayments || (project.finalPayments = []);
-      if (finalPayments.some((payment) => !payment.confirmedAt)) {
-        throw new PaymentTrackRepositoryError("A payment is already awaiting Administrator review.", 409, "payment_review_pending");
+      if (pendingReportedPaymentCents(project) + amount > outstanding) {
+        throw new PaymentTrackRepositoryError(
+          "The pending reported payments cannot exceed the current outstanding balance.",
+          409,
+          "reported_amount_exceeds_outstanding",
+        );
       }
       finalPayments.push({
         id: randomUUID(),
@@ -1384,21 +1643,19 @@ export function transitionPaymentTrackProject(
         proof: null,
         acknowledgedAt: timestamp,
         acknowledgedBy: actor,
+        reportedAmountCents: amount,
         confirmedAmountCents: null,
         confirmedAt: null,
         confirmedBy: null,
       });
-      project.history.push(historyEntry("payment_acknowledged", timestamp, "sales", actor));
+      project.history.push(historyEntry("payment_acknowledged", timestamp, "sales", actor, `Reported AUD ${(amount / 100).toFixed(2)}`));
     } else if (action === "confirm_final_payment") {
       requireRole(input.actorRole, ["admin"], "Only an Administrator can confirm a received payment.");
       const finalPayments = project.finalPayments || (project.finalPayments = []);
       const pendingPayment = finalPayments.find((payment) => (
         payment.id || payment.proof?.id
       ) === input.paymentId);
-      const paymentStage = project.stage === "waiting_coes"
-        || project.stage === "stc_rebate"
-        || project.stage === "done";
-      if (!paymentStage || publicProject(project).outstandingCents <= 0 || !pendingPayment) {
+      if (project.stage === "deposit_not_paid" || !pendingPayment) {
         throw new PaymentTrackRepositoryError("Choose a received payment awaiting Administrator review.", 409, "invalid_transition");
       }
       if ((!pendingPayment.acknowledgedAt && !pendingPayment.proof) || pendingPayment.confirmedAt) {
@@ -1411,7 +1668,7 @@ export function transitionPaymentTrackProject(
       project.history.push(historyEntry("final_payment_confirmed", timestamp, "admin", actor, `AUD ${(amount / 100).toFixed(2)}`));
     } else if (action === "mark_installed") {
       requireRole(input.actorRole, ["pm"], "Only the Project Manager can mark the project installed.");
-      if (project.stage !== "installing" || project.installedAt || !installationScheduleIsComplete(project)) {
+      if (!["installing", "working_in_progress"].includes(project.stage) || project.installedAt || !installationScheduleIsComplete(project)) {
         throw new PaymentTrackRepositoryError("Schedule the installation date, time and assignee before marking the project installed.", 409, "invalid_transition");
       }
       project.installedAt = timestamp;
@@ -1496,7 +1753,8 @@ export function transitionPaymentTrackProject(
             "payment_review_pending",
           );
         }
-        nextStage = "material_delivery";
+        nextStage = "working_in_progress";
+        project.workMode = null;
         project.deliverySelections = [];
         project.deliveryPreparedAt = null;
         project.deliveryPreparedBy = null;
@@ -1504,6 +1762,16 @@ export function transitionPaymentTrackProject(
         project.deliveryScheduledFor = null;
         project.deliveryScheduledTime = null;
         project.deliveryAssignee = null;
+      } else if (skippedStage === "working_in_progress") {
+        if (!project.deliveredAt) {
+          project.deliveredAt = timestamp;
+          populatedFields.push(`deliveredAt=${timestamp}`);
+        }
+        if (!project.installedAt) {
+          project.installedAt = timestamp;
+          populatedFields.push(`installedAt=${timestamp}`);
+        }
+        nextStage = "waiting_coes";
       } else if (skippedStage === "material_delivery") {
         if (project.collection.proof || project.collection.acknowledgedAt) {
           throw new PaymentTrackRepositoryError(
@@ -1570,6 +1838,9 @@ export function transitionPaymentTrackProject(
       }
     }
 
+    if (!wasInstalled && project.installedAt) {
+      recordSolarPanelConsumption(project, project.installedAt, input.actorRole, actor);
+    }
     project.updatedAt = timestamp;
     projects[index] = project;
     await writeStoredProjects(projects, storedDocument.version);
