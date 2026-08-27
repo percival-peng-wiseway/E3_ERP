@@ -130,6 +130,46 @@
   outline-offset: 1px;
 }
 
+.scheduleFrame,
+.scheduleMain { min-width: 0; }
+
+.calendarScheduleFrame {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  align-items: stretch;
+  gap: 12px;
+}
+
+.unscheduledRail {
+  display: flex;
+  min-width: 0;
+  min-height: 654px;
+  overflow: hidden;
+  flex-direction: column;
+  background: #f3f5f7;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.unscheduledRail > header {
+  display: flex;
+  min-height: 58px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 12px;
+  gap: 10px;
+  background: #fff;
+  border-bottom: 1px solid var(--line);
+}
+
+.unscheduledRail > header > div { display: flex; align-items: center; gap: 7px; color: #596477; }
+.unscheduledRail > header strong { color: #303849; font-size: 13px; }
+.unscheduledRail > header > span { display: grid; min-width: 24px; height: 24px; padding: 0 6px; place-items: center; color: #697487; background: #eff2f5; border-radius: 999px; font-size: 12px; font-weight: 700; }
+.unscheduledRailEntries { display: flex; min-height: 0; flex: 1; overflow-y: auto; padding: 9px; flex-direction: column; gap: 9px; scrollbar-color: #c4cbd5 transparent; scrollbar-width: thin; }
+.unscheduledRailEntries .unscheduledCard { width: 100%; flex: 0 0 auto; }
+.unscheduledRailEntries .emptyDay { min-height: 116px; padding: 14px; text-align: center; line-height: 1.45; }
+
 .weekToolbar {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
@@ -315,10 +355,10 @@
 .traySection > header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 16px;
-  min-height: 50px;
-  padding: 10px 14px;
+  min-height: 44px;
+  padding: 8px 14px;
   border-bottom: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.78);
 }
@@ -353,12 +393,6 @@
   font-weight: 750;
 }
 
-.traySection header p {
-  margin: 0;
-  color: var(--muted);
-  font-size: 12px;
-}
-
 .trayList {
   display: flex;
   gap: 10px;
@@ -377,7 +411,6 @@
   min-width: 0;
   padding: 12px;
   border: 1px solid #dbe1e8;
-  border-left: 4px solid #8a94a5;
   border-radius: 8px;
   background: #fff;
   box-shadow: 0 1px 2px rgba(25, 34, 48, 0.04);
@@ -425,6 +458,65 @@
   overflow-wrap: anywhere;
 }
 
+.requestPreview {
+  display: grid;
+  gap: 5px;
+  margin-top: 9px;
+  padding: 8px;
+  border: 1px solid #eadcae;
+  border-radius: 7px;
+  background: #fffaf0;
+}
+
+.requestPreview > span {
+  display: grid;
+  grid-template-columns: 14px auto minmax(0, 1fr);
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: #6c6250;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.requestPreview > span svg {
+  color: #a47719;
+}
+
+.requestPreview > span strong {
+  color: #705821;
+  font-weight: 750;
+}
+
+.requestPreview > small {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 1px 0 0;
+  color: #766b58;
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.awaitingSales {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 9px;
+  padding: 8px;
+  border: 1px solid #efcbc7;
+  border-radius: 7px;
+  background: #fff5f4;
+  color: #935047;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.awaitingSales svg { flex: 0 0 auto; }
+.awaitingSales strong { color: #833f37; }
+
 .unscheduledActions {
   display: flex;
   flex-wrap: wrap;
@@ -449,25 +541,6 @@
   cursor: pointer;
 }
 
-.inventory {
-  border-left-color: #d78a24;
-}
-
-.material_delivery {
-  border-left-color: #d78a24;
-}
-
-.installing {
-  border-left-color: #7857c9;
-}
-
-.custom {
-  border-left-color: #299873;
-}
-
-.site_visit {
-  border-left-color: #218b87;
-}
 
 .emptyTray {
   display: flex;
@@ -545,16 +618,6 @@
   border-bottom: 0;
 }
 
-.listRow > td:first-child {
-  border-left: 4px solid #8a94a5;
-}
-
-.listRow.inventory > td:first-child,
-.listRow.material_delivery > td:first-child { border-left-color: #d78a24; }
-.listRow.installing > td:first-child { border-left-color: #7857c9; }
-.listRow.custom > td:first-child { border-left-color: #299873; }
-.listRow.site_visit > td:first-child { border-left-color: #218b87; }
-
 .listRow:hover td {
   background: #fafbfc;
 }
@@ -594,8 +657,8 @@
   align-items: center;
   gap: 4px;
   padding: 3px 6px;
-  color: #4e5dc8;
-  background: #eef0ff;
+  color: #24714c;
+  background: #e6f5ed;
   border-radius: 5px;
   font-size: 11px;
   font-weight: 750;
@@ -608,8 +671,10 @@
 }
 
 .completedListRow td {
-  background: #f8fbf9;
+  background: #eaf7ef;
 }
+
+.completedListRow:hover td { background: #e5f4eb; }
 
 .cancelledListRow td {
   background: #fff9f6;
@@ -747,41 +812,20 @@
   min-width: 0;
   padding: 10px;
   border: 1px solid #dce1e7;
-  border-left: 4px solid #8a94a5;
   border-radius: 8px;
   background: #fff;
   box-shadow: 0 1px 2px rgba(23, 31, 43, 0.05);
 }
 
-.scheduleCard.inventory {
-  border-left-color: #d78a24;
-}
-
-.scheduleCard.material_delivery {
-  border-left-color: #d78a24;
-}
-
-.scheduleCard.installing {
-  border-left-color: #7857c9;
-}
-
-.scheduleCard.custom {
-  border-left-color: #299873;
-}
-
-.scheduleCard.site_visit {
-  border-left-color: #218b87;
-}
-
 .completedCard {
-  background: #f7faf8;
-  opacity: 0.82;
+  background: #eaf7ef;
+  border-color: #cae7d5;
+  opacity: 1;
 }
 
 .scheduleCard.cancelledCard,
 .unscheduledCard.cancelledCard {
   border-color: #e7c9bf;
-  border-left-color: #b5654f;
   background: #fff9f6;
   opacity: 1;
 }
@@ -795,7 +839,9 @@
 
 .sourceBadge,
 .completedBadge,
-.cancelledBadge {
+.cancelledBadge,
+.unscheduledBadge,
+.preScheduledBadge {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -811,6 +857,21 @@
   white-space: nowrap;
 }
 
+.materialDeliveryBadge {
+  background: #e3f4e9;
+  color: #24714c;
+}
+
+.installingBadge {
+  background: #e7efff;
+  color: #315fa8;
+}
+
+.siteVisitBadge {
+  background: #fff1c7;
+  color: #8a5b00;
+}
+
 .completedBadge {
   flex: 0 0 auto;
   background: #e6f5ed;
@@ -821,6 +882,18 @@
   flex: 0 0 auto;
   background: #f8e8e2;
   color: #974b38;
+}
+
+.unscheduledBadge {
+  flex: 0 0 auto;
+  background: #fbe8e6;
+  color: #a34137;
+}
+
+.preScheduledBadge {
+  flex: 0 0 auto;
+  background: #fff0c9;
+  color: #875b07;
 }
 
 .cardMeta {
@@ -932,6 +1005,96 @@
   color: #4d5acd;
 }
 
+.completedDayGroup {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 1px;
+}
+
+.completedDayToggle {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 9px;
+  border: 1px solid #c9e3d3;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #f1faf5 0%, #e8f6ee 100%);
+  color: #286c4b;
+  font: inherit;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(30, 91, 61, 0.06);
+  transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+.completedDayToggle:hover {
+  border-color: #aad3ba;
+  background: linear-gradient(135deg, #ebf8f1 0%, #ddf1e6 100%);
+  box-shadow: 0 2px 5px rgba(30, 91, 61, 0.1);
+}
+
+.completedDayToggleLabel {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.completedDayToggleLabel svg {
+  flex: 0 0 auto;
+}
+
+.completedDayCount {
+  display: grid;
+  min-width: 22px;
+  height: 22px;
+  place-items: center;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(40, 108, 75, 0.1);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.completedDayChevron,
+.completedDayChevronExpanded {
+  flex: 0 0 auto;
+  transition: transform 160ms ease;
+}
+
+.completedDayChevronExpanded {
+  transform: rotate(90deg);
+}
+
+.completedDayEntries {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.completedDayEntries[hidden] {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .completedDayToggle,
+  .completedDayChevron,
+  .completedDayChevronExpanded {
+    transition: none;
+  }
+}
+
 .modalBackdrop {
   position: fixed;
   z-index: 80;
@@ -955,7 +1118,7 @@
 }
 
 .compactModal {
-  width: min(580px, 100%);
+  width: min(760px, 100%);
 }
 
 .modal > header {
@@ -1140,6 +1303,192 @@
   font-size: 12px;
 }
 
+.modalError {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 11px 12px;
+  border: 1px solid #edbbb4;
+  border-radius: 8px;
+  background: #fff4f2;
+  color: #a23d33;
+}
+
+.modalError > svg {
+  margin-top: 1px;
+  flex: 0 0 auto;
+}
+
+.modalErrorCopy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.modalErrorCopy strong {
+  font-size: 12px;
+}
+
+.modalErrorCopy span {
+  font-size: 12px;
+  font-weight: 550;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.modalErrorActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.modalErrorActions button {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 9px;
+  border: 1px solid #dfaaa3;
+  border-radius: 6px;
+  background: #fff;
+  color: #92372f;
+  font-size: 11px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.modalErrorActions button:disabled {
+  cursor: not-allowed;
+  opacity: .58;
+}
+
+.scheduleRequestPanel {
+  overflow: hidden;
+  margin-bottom: 16px;
+  border: 1px solid #e3d7ad;
+  border-radius: 9px;
+  background: #fffdf7;
+}
+
+.scheduleRequestHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 13px;
+  border-bottom: 1px solid #eee3c2;
+  background: #fff9e9;
+}
+
+.scheduleRequestHeader > div {
+  display: grid;
+  min-width: 0;
+}
+
+.scheduleRequestHeader > div > strong {
+  color: #403928;
+  font-size: 13px;
+}
+
+.scheduleRequestDetails {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+  padding: 12px 13px;
+  gap: 12px;
+}
+
+.scheduleRequestDetails > div {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-width: 0;
+}
+
+.scheduleRequestDetails dt {
+  color: #8a806b;
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.scheduleRequestDetails dd {
+  margin: 0;
+  color: #393428;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.scheduleRequestNotes {
+  display: grid;
+  gap: 4px;
+  margin: 0 13px 12px;
+  padding: 9px 10px;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.scheduleRequestNotes strong {
+  color: #796f59;
+  font-size: 10px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.scheduleRequestNotes p,
+.legacyScheduleNotice {
+  margin: 0;
+  color: #4e493e;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.legacyScheduleNotice {
+  padding: 12px 13px;
+  color: #786f5c;
+}
+
+.scheduleItemComparison {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 12px;
+}
+
+.scheduleItemComparison .itemSummary {
+  min-width: 0;
+  margin-top: 0;
+}
+
+.scheduleItemComparison .itemSummary > span {
+  min-width: 0;
+}
+
+.scheduleItemComparison .itemSummary > span b {
+  flex: 0 0 auto;
+}
+
+.scheduleConfirmationHeading {
+  display: grid;
+  margin: 14px 0 9px;
+  padding-top: 12px;
+  border-top: 1px solid #e4e8ed;
+}
+
+.scheduleConfirmationHeading strong {
+  color: #303849;
+  font-size: 13px;
+}
+
 .singleField {
   max-width: 300px;
 }
@@ -1192,6 +1541,8 @@
 }
 
 @media (max-width: 900px) {
+  .calendarScheduleFrame { grid-template-columns: 240px minmax(0, 1fr); gap: 8px; }
+
   .weekToolbar {
     grid-template-columns: 1fr auto;
   }
@@ -1208,6 +1559,10 @@
 }
 
 @media (max-width: 680px) {
+  .calendarScheduleFrame { display: block; }
+  .unscheduledRail { min-height: 0; max-height: 320px; margin-bottom: 12px; }
+  .unscheduledRailEntries { min-height: 145px; max-height: 260px; }
+
   .pageHeader {
     align-items: flex-start;
   }
@@ -1293,6 +1648,23 @@
     grid-template-columns: 1fr;
   }
 
+  .scheduleRequestDetails {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .modalError {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .modalErrorActions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  .scheduleItemComparison {
+    grid-template-columns: 1fr;
+  }
+
   .paymentAssigneeField {
     grid-column: auto;
   }
@@ -1348,10 +1720,6 @@
     font-weight: 750;
   }
 
-  .listRow > td:first-child {
-    border-left-width: 4px;
-  }
-
   .listRow td > strong + span,
   .listRow td > small {
     margin-top: 2px;
@@ -1401,6 +1769,14 @@
 
   .unscheduledCard {
     flex-basis: 268px;
+  }
+
+  .scheduleRequestHeader {
+    flex-direction: column;
+  }
+
+  .scheduleRequestDetails {
+    grid-template-columns: 1fr;
   }
 
   .modal > header,

@@ -233,7 +233,6 @@ export function AgentSettingsDialog({
         <header>
           <div className={styles.headingIcon}><Bot size={21} /></div>
           <div>
-            <span>Settings</span>
             <h2 id="agent-settings-title">E3 Agent Model API</h2>
           </div>
           <button type="button" aria-label="Close settings" disabled={saving} onClick={onClose}><X size={19} /></button>

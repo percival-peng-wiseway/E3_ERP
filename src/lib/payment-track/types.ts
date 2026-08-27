@@ -20,10 +20,13 @@ export type PaymentTrackScheduleAssignee = (typeof PAYMENT_TRACK_SCHEDULE_ASSIGN
 export const PAYMENT_TRACK_ACTIONS = [
   "acknowledge_deposit",
   "confirm_deposit",
+  "prepare_delivery",
+  "pre_schedule_delivery",
   "schedule_delivery",
   "mark_delivered",
   "acknowledge_collection",
   "confirm_collection",
+  "pre_schedule_installation",
   "schedule_installation",
   "acknowledge_payment",
   "confirm_final_payment",
@@ -89,6 +92,19 @@ export interface PaymentTrackItem {
   capacity: string;
 }
 
+export interface PaymentTrackDeliverySelection {
+  sku: string;
+  quantity: number;
+}
+
+export interface PaymentTrackScheduleRequest {
+  preferredDate: string;
+  preferredTime: string;
+  notes: string;
+  submittedAt: string;
+  submittedBy: string;
+}
+
 export interface PaymentTrackReceipt {
   proof: PaymentTrackFile | null;
   acknowledgedAt: string | null;
@@ -109,11 +125,14 @@ export type PaymentTrackHistoryAction =
   | "deposit_proof_uploaded"
   | "deposit_acknowledged"
   | "deposit_confirmed"
+  | "delivery_items_prepared"
+  | "delivery_pre_scheduled"
   | "delivery_scheduled"
   | "marked_delivered"
   | "collection_acknowledged"
   | "collection_proof_uploaded"
   | "collection_confirmed"
+  | "installation_pre_scheduled"
   | "installation_scheduled"
   | "payment_acknowledged"
   | "final_payment_proof_uploaded"
@@ -153,11 +172,16 @@ export interface PaymentTrackProject {
   stage: PaymentTrackStage;
   contract: PaymentTrackFile | null;
   deposit: PaymentTrackReceipt;
+  deliverySelections: PaymentTrackDeliverySelection[];
+  deliveryPreparedAt: string | null;
+  deliveryPreparedBy: string | null;
+  deliveryScheduleRequest: PaymentTrackScheduleRequest | null;
   deliveryScheduledFor: string | null;
   deliveryScheduledTime: string | null;
   deliveryAssignee: PaymentTrackScheduleAssignee | null;
   deliveredAt: string | null;
   collection: PaymentTrackReceipt;
+  installationScheduleRequest: PaymentTrackScheduleRequest | null;
   installationScheduledFor: string | null;
   installationScheduledTime: string | null;
   installationAssignee: PaymentTrackScheduleAssignee | null;
@@ -189,6 +213,18 @@ export function countActivePaymentTrackProjects(
   projects: ReadonlyArray<Pick<PaymentTrackProject, "stage" | "outstandingCents">>,
 ) {
   return projects.filter(isPaymentTrackProjectActive).length;
+}
+
+const FINAL_PAYMENT_OVERDUE_AFTER_MS = 7 * 24 * 60 * 60 * 1_000;
+
+export function isFinalPaymentOverdue(
+  project: Pick<PaymentTrackProject, "installedAt" | "outstandingCents">,
+  now = Date.now(),
+) {
+  if (!project.installedAt || project.outstandingCents <= 0) return false;
+
+  const installedAt = Date.parse(project.installedAt);
+  return Number.isFinite(installedAt) && now - installedAt >= FINAL_PAYMENT_OVERDUE_AFTER_MS;
 }
 
 export interface PaymentTrackUpdatedEventDetail {
@@ -237,9 +273,14 @@ export type PaymentTrackActionRequest = {
   action: PaymentTrackAction;
   amount?: string;
   paymentId?: string;
+  preferredDate?: string;
+  preferredTime?: string;
   deliveryDate?: string;
   deliveryTime?: string;
   deliveryAssignee?: PaymentTrackScheduleAssignee;
+  deliverySelections?: PaymentTrackDeliverySelection[];
+  selections?: PaymentTrackDeliverySelection[];
+  expectedUpdatedAt?: string;
   installationDate?: string;
   installationTime?: string;
   installationAssignee?: PaymentTrackScheduleAssignee;

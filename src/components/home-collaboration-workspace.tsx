@@ -848,7 +848,6 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
                 <div className={styles.feedState}>
                   <LoaderCircle className={styles.spinning} size={24} />
                   <strong>Preparing your reminders</strong>
-                  <p>Checking the work assigned to your account.</p>
                 </div>
               ) : notificationsError && !notifications.length ? (
                 <div className={`${styles.feedState} ${styles.errorState}`} role="alert">
@@ -861,7 +860,6 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
                 <div className={styles.feedState}>
                   <span><BellRing size={24} /></span>
                   <strong>You are all caught up</strong>
-                  <p>No actions currently need your attention.</p>
                 </div>
               ) : (
                 <ul className={styles.notificationList}>
@@ -975,7 +973,6 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
                 <div className={styles.feedState}>
                   <span><Megaphone size={24} /></span>
                   <strong>No announcements yet</strong>
-                  <p>{isAdmin ? "Post the first update for the team." : "Team updates will appear here."}</p>
                 </div>
               ) : (
                 <ul className={styles.announcementList}>
@@ -1038,7 +1035,6 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
               <div className={styles.agentWelcome}>
                 <span><Bot size={25} /></span>
                 <h3>How can I help?</h3>
-                <p>I can search your connected E3 workspaces, summarise records and help answer operational questions.</p>
               </div>
             )}
             {agentMessages.map((message) => (
@@ -1099,7 +1095,6 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
                 {agentLoading ? <LoaderCircle className={styles.spinning} size={17} /> : <Send size={17} />}
               </button>
             </div>
-            <small className={styles.composerHint}>Enter to send · Shift + Enter for a new line</small>
           </div>
         </article>
       </div>

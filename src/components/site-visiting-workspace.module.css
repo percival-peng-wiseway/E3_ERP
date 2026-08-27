@@ -8,18 +8,9 @@
 
 .hero {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
   gap: 24px;
-}
-
-.kicker {
-  display: block;
-  margin-bottom: 7px;
-  color: #8b6b36;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: .11em;
 }
 
 .hero h1 {
@@ -28,13 +19,6 @@
   font-size: clamp(27px, 3vw, 34px);
   font-weight: 700;
   letter-spacing: -.035em;
-}
-
-.hero p {
-  max-width: 720px;
-  margin: 7px 0 0;
-  color: var(--visit-muted);
-  font-size: 14px;
 }
 
 .primaryButton,
@@ -332,8 +316,7 @@
 
 .loadingState { flex-direction: row; gap: 9px; }
 .emptyState > span { display: grid; width: 58px; height: 58px; place-items: center; color: #267bb8; background: #eaf5fd; border-radius: 16px; }
-.emptyState h2 { margin: 16px 0 6px; color: #34434d; font-size: 19px; }
-.emptyState p { max-width: 480px; margin: 0 0 18px; font-size: 13px; }
+.emptyState h2 { margin: 16px 0 18px; color: #34434d; font-size: 19px; }
 
 .overlay {
   position: fixed;
@@ -419,7 +402,7 @@
 .detailBody { min-height: 0; padding: 17px; overflow-y: auto; overscroll-behavior: contain; }
 .detailGrid { display: grid; grid-template-columns: minmax(360px, 1.12fr) minmax(300px, .88fr); gap: 13px; }
 .panel { min-width: 0; margin-bottom: 13px; padding: 17px; background: #fff; border: 1px solid var(--visit-border); border-radius: 11px; box-shadow: 0 2px 7px rgba(31, 50, 63, .025); }
-.panelTitle { display: flex; align-items: center; margin-bottom: 15px; gap: 10px; }
+.panelTitle { display: flex; align-items: center; margin-bottom: 12px; gap: 10px; }
 .panelTitle > span { display: grid; width: 36px; height: 36px; flex: 0 0 auto; place-items: center; color: #2779b5; background: #ebf5fc; border-radius: 9px; }
 .panelTitle h3, .panelTitle p { margin: 0; }
 .panelTitle h3 { color: #30404a; font-size: 15px; }
@@ -428,9 +411,8 @@
 
 .stagePanel,
 .schedulePanel { align-self: start; }
-.stageCallout { padding: 15px; color: #58707f; background: #f4f8fa; border: 1px solid #dce8ee; border-radius: 9px; }
+.stageCallout { padding: 12px 14px; color: #58707f; background: #f4f8fa; border: 1px solid #dce8ee; border-radius: 9px; }
 .stageCallout strong { display: block; color: #324b5a; font-size: 14px; }
-.stageCallout p { margin: 5px 0 0; font-size: 12px; line-height: 1.55; }
 .scheduleForm { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .scheduleForm .primaryButton { grid-column: 1 / -1; justify-self: start; margin-top: 2px; }
 .scheduleSummary { display: grid; margin: 0; gap: 0; }
@@ -443,8 +425,7 @@
 .checklist { display: grid; gap: 11px; }
 .checkItem { padding: 14px; background: #fafbfc; border: 1px solid #e7ecef; border-radius: 10px; }
 .checkItem h4 { margin: 0; color: #32434e; font-size: 14px; }
-.checkItem small { display: block; margin-top: 2px; color: #8a969e; font-size: 11px; }
-.answerGrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 11px 0; gap: 5px; }
+.answerGrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 8px 0; gap: 5px; }
 .answerButton { display: inline-flex; min-height: 39px; align-items: center; justify-content: center; padding: 0 7px; gap: 4px; color: #667580; background: #fff; border: 1px solid #dbe3e7; border-radius: 7px; font-size: 11px; font-weight: 690; cursor: pointer; }
 .answerButton:disabled { cursor: default; opacity: .82; }
 .answer_not_checked { color: #4f5f69; background: #edf1f3; border-color: #cfd8dd; }
@@ -469,17 +450,9 @@
 
 .photoActions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 14px; gap: 9px; }
 .cameraButton,
-.uploadButton { display: flex; min-height: 68px; align-items: center; padding: 10px 14px; gap: 11px; border-radius: 9px; cursor: pointer; text-align: left; }
+.uploadButton { display: flex; min-height: 46px; align-items: center; justify-content: center; padding: 8px 14px; gap: 9px; border-radius: 9px; cursor: pointer; text-align: left; }
 .cameraButton { color: #fff; background: #247dbd; border: 1px solid #247dbd; }
 .uploadButton { color: #52646f; background: #f8fafb; border: 1px solid #dce4e8; }
-.cameraButton > span,
-.uploadButton > span { min-width: 0; }
-.cameraButton strong,
-.cameraButton small,
-.uploadButton strong,
-.uploadButton small { display: block; }
-.cameraButton small { color: rgba(255, 255, 255, .75); }
-.uploadButton small { color: #8a969e; }
 .hiddenInput { position: fixed; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; }
 .photoGrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 .photoGrid figure { min-width: 0; margin: 0; overflow: hidden; background: #f0f3f5; border: 1px solid #e0e6e9; border-radius: 9px; }
@@ -493,7 +466,7 @@
 .photoGrid figcaption { display: flex; min-height: 39px; align-items: center; padding: 5px 5px 5px 9px; gap: 5px; background: #fff; }
 .photoGrid figcaption span { overflow: hidden; flex: 1; color: #6d7a83; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .photoGrid figcaption button { display: grid; width: 30px; height: 30px; flex: 0 0 auto; padding: 0; place-items: center; color: #9c554f; background: transparent; border: 0; border-radius: 6px; cursor: pointer; }
-.photoEmpty { display: flex; min-height: 100px; align-items: center; justify-content: center; flex-direction: column; gap: 8px; color: #8a969e; background: #fafbfc; border: 1px dashed #d6e0e5; border-radius: 9px; font-size: 12px; text-align: center; }
+.photoEmpty { display: flex; min-height: 74px; align-items: center; justify-content: center; flex-direction: column; gap: 6px; color: #8a969e; background: #fafbfc; border: 1px dashed #d6e0e5; border-radius: 9px; font-size: 12px; text-align: center; }
 .notesArea { min-height: 130px; }
 .stickyFooter { display: flex; min-height: 68px; flex: 0 0 auto; align-items: center; justify-content: space-between; padding: 11px 17px calc(11px + env(safe-area-inset-bottom)); gap: 14px; background: #fff; border-top: 1px solid var(--visit-border); box-shadow: 0 -5px 18px rgba(30, 48, 61, .05); }
 .footerStatus { color: #7a8790; font-size: 12px; }
@@ -567,7 +540,7 @@
   .completedChecksTable td { padding: 10px 11px; }
   .photoActions { grid-template-columns: 1fr; }
   .cameraButton,
-  .uploadButton { min-height: 64px; }
+  .uploadButton { min-height: 46px; }
   .footerStatus { display: none; }
   .footerActions { display: grid; width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-left: 0; }
   .footerActions .mapButton,

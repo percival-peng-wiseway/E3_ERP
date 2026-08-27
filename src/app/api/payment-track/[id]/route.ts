@@ -49,6 +49,7 @@ const INSTALLATION_SCHEDULE_FIELDS = new Set([
   "installationDate",
   "installationTime",
   "installationAssignee",
+  "expectedUpdatedAt",
 ]);
 const DELIVERY_SCHEDULE_FIELDS = new Set([
   "action",
@@ -57,6 +58,33 @@ const DELIVERY_SCHEDULE_FIELDS = new Set([
   "deliveryDate",
   "deliveryTime",
   "deliveryAssignee",
+  "expectedUpdatedAt",
+]);
+const DELIVERY_PREPARATION_FIELDS = new Set([
+  "action",
+  "actorRole",
+  "actorName",
+  "selections",
+  "expectedUpdatedAt",
+]);
+const DELIVERY_PRE_SCHEDULE_FIELDS = new Set([
+  "action",
+  "actorRole",
+  "actorName",
+  "selections",
+  "preferredDate",
+  "preferredTime",
+  "notes",
+  "expectedUpdatedAt",
+]);
+const INSTALLATION_PRE_SCHEDULE_FIELDS = new Set([
+  "action",
+  "actorRole",
+  "actorName",
+  "preferredDate",
+  "preferredTime",
+  "notes",
+  "expectedUpdatedAt",
 ]);
 const SKIP_STAGE_FIELDS = new Set(["action", "actorRole", "actorName", "reason", "expectedUpdatedAt"]);
 
@@ -75,6 +103,37 @@ function hasOnlyInstallationScheduleFields(body: Record<string, unknown>) {
 
 function hasOnlyDeliveryScheduleFields(body: Record<string, unknown>) {
   return Object.keys(body).every((field) => DELIVERY_SCHEDULE_FIELDS.has(field));
+}
+
+function scheduleRequestNotes(value: unknown) {
+  if (value === undefined) return "";
+  if (typeof value !== "string") return null;
+  const notes = value.trim();
+  if (notes.length > 2_000
+    || /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(notes)) return null;
+  return notes;
+}
+
+function deliverySelections(value: unknown) {
+  if (!Array.isArray(value) || !value.length || value.length > 100) return null;
+  const parsed = [] as Array<{ sku: string; quantity: number }>;
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+    const candidate = entry as Record<string, unknown>;
+    if (Object.keys(candidate).some((field) => !["sku", "quantity"].includes(field))
+      || typeof candidate.sku !== "string"
+      || !candidate.sku.trim()
+      || candidate.sku.length > 160
+      || /[\u0000-\u001F\u007F]/.test(candidate.sku)
+      || !Number.isInteger(candidate.quantity)
+      || (candidate.quantity as number) < 1
+      || (candidate.quantity as number) > 100_000) return null;
+    parsed.push({
+      sku: candidate.sku.trim(),
+      quantity: candidate.quantity as number,
+    });
+  }
+  return parsed;
 }
 
 function stageSkipReason(value: unknown) {
@@ -193,20 +252,85 @@ export async function PATCH(
     let deliveryDate: string | undefined;
     let deliveryTime: string | undefined;
     let deliveryAssignee: PaymentTrackScheduleAssignee | undefined;
+    let preferredDate: string | undefined;
+    let preferredTime: string | undefined;
+    let preparedDeliverySelections;
+    if (action === "prepare_delivery") {
+      preparedDeliverySelections = deliverySelections(body.selections);
+      if (actorRole !== "sales") {
+        return paymentTrackError(403, "role_forbidden", "Only Sales can prepare warehouse items.");
+      }
+      if (!Object.keys(body).every((field) => DELIVERY_PREPARATION_FIELDS.has(field))
+        || !preparedDeliverySelections
+        || !paymentTrackUpdatedAtIsValid(body.expectedUpdatedAt)) {
+        return paymentTrackError(400, "invalid_delivery_items", "Choose one or more valid warehouse SKU and quantity lines without extra fields.");
+      }
+      expectedUpdatedAt = body.expectedUpdatedAt;
+    }
+    if (action === "pre_schedule_delivery") {
+      const parsedSelections = deliverySelections(body.selections);
+      const parsedNotes = scheduleRequestNotes(body.notes);
+      if (actorRole !== "sales") {
+        return paymentTrackError(403, "role_forbidden", "Only Sales can submit a delivery scheduling request.");
+      }
+      if (!Object.keys(body).every((field) => DELIVERY_PRE_SCHEDULE_FIELDS.has(field))
+        || !parsedSelections
+        || !paymentTrackDateIsValid(body.preferredDate)
+        || !paymentTrackTimeIsValid(body.preferredTime)
+        || parsedNotes === null
+        || !paymentTrackUpdatedAtIsValid(body.expectedUpdatedAt)) {
+        return paymentTrackError(
+          400,
+          "invalid_delivery_pre_schedule",
+          "Choose warehouse items, a valid preferred delivery date and time, and optional notes without extra fields.",
+        );
+      }
+      preparedDeliverySelections = parsedSelections;
+      preferredDate = body.preferredDate;
+      preferredTime = body.preferredTime;
+      notes = parsedNotes;
+      expectedUpdatedAt = body.expectedUpdatedAt;
+    }
     if (action === "schedule_delivery") {
+      if (actorRole !== "pm") {
+        return paymentTrackError(403, "role_forbidden", "Only the Project Manager can schedule delivery.");
+      }
       if (!hasOnlyDeliveryScheduleFields(body)
         || !paymentTrackDateIsValid(body.deliveryDate)
         || !paymentTrackTimeIsValid(body.deliveryTime)
-        || !paymentTrackScheduleAssigneeIsValid(body.deliveryAssignee)) {
+        || !paymentTrackScheduleAssigneeIsValid(body.deliveryAssignee)
+        || !paymentTrackUpdatedAtIsValid(body.expectedUpdatedAt)) {
         return paymentTrackError(400, "invalid_delivery_schedule", "Choose a valid delivery date, time and assignee.");
       }
       deliveryDate = body.deliveryDate;
       deliveryTime = body.deliveryTime;
       deliveryAssignee = body.deliveryAssignee;
+      expectedUpdatedAt = body.expectedUpdatedAt;
     }
     let installationDate: string | undefined;
     let installationTime: string | undefined;
     let installationAssignee: PaymentTrackScheduleAssignee | undefined;
+    if (action === "pre_schedule_installation") {
+      const parsedNotes = scheduleRequestNotes(body.notes);
+      if (actorRole !== "sales") {
+        return paymentTrackError(403, "role_forbidden", "Only Sales can submit an installation scheduling request.");
+      }
+      if (!Object.keys(body).every((field) => INSTALLATION_PRE_SCHEDULE_FIELDS.has(field))
+        || !paymentTrackDateIsValid(body.preferredDate)
+        || !paymentTrackTimeIsValid(body.preferredTime)
+        || parsedNotes === null
+        || !paymentTrackUpdatedAtIsValid(body.expectedUpdatedAt)) {
+        return paymentTrackError(
+          400,
+          "invalid_installation_pre_schedule",
+          "Choose a valid preferred installation date and time, and optional notes without extra fields.",
+        );
+      }
+      preferredDate = body.preferredDate;
+      preferredTime = body.preferredTime;
+      notes = parsedNotes;
+      expectedUpdatedAt = body.expectedUpdatedAt;
+    }
     if (action === "schedule_installation") {
       if (actorRole !== "pm") {
         return paymentTrackError(403, "role_forbidden", "Only the Project Manager can schedule installation.");
@@ -214,7 +338,8 @@ export async function PATCH(
       if (!hasOnlyInstallationScheduleFields(body)
         || !paymentTrackDateIsValid(body.installationDate)
         || !paymentTrackTimeIsValid(body.installationTime)
-        || !paymentTrackScheduleAssigneeIsValid(body.installationAssignee)) {
+        || !paymentTrackScheduleAssigneeIsValid(body.installationAssignee)
+        || !paymentTrackUpdatedAtIsValid(body.expectedUpdatedAt)) {
         return paymentTrackError(
           400,
           "invalid_installation_schedule",
@@ -224,6 +349,7 @@ export async function PATCH(
       installationDate = body.installationDate;
       installationTime = body.installationTime;
       installationAssignee = body.installationAssignee;
+      expectedUpdatedAt = body.expectedUpdatedAt;
     }
 
     const project = await transitionPaymentTrackProject(id, action, {
@@ -231,9 +357,12 @@ export async function PATCH(
       actorName: actorName || undefined,
       amountCents,
       paymentId,
+      preferredDate,
+      preferredTime,
       deliveryDate,
       deliveryTime,
       deliveryAssignee,
+      deliverySelections: preparedDeliverySelections,
       installationDate,
       installationTime,
       installationAssignee,

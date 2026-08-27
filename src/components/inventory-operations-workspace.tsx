@@ -371,7 +371,6 @@ export function InventoryOperationsWorkspace({ currentUser }: { currentUser: Erp
     <section className={styles.root} lang="en">
       <div className="module-toolbar">
         <div className="module-heading">
-          <span className="eyebrow">Inventory Operations</span>
           <h1>Inventory management</h1>
         </div>
         <div className="module-toolbar-actions">
@@ -522,10 +521,7 @@ export function InventoryOperationsWorkspace({ currentUser }: { currentUser: Erp
 
         {view === "sale" && (
           <div className="form-layout">
-            <div>
-              <h2>New Order</h2>
-              <p className="muted">New orders reserve inventory and enter PM Review as Pending.</p>
-            </div>
+            <h2>New Order</h2>
             <form className="panel form-grid" onSubmit={handleSale}>
               <label>{"Created by"}<select value={orderActor} onChange={(event) => setOrderActor(event.target.value)} disabled={currentUser.role === "sales"} required>{currentUser.role === "sales" ? <option>{currentUser.displayName}</option> : <><option>Sam</option><option>RuiHan</option><option>Hogan</option><option>Kevin</option></>}</select></label>
               <label>{"Customer"}<input name="customer" placeholder="ABC Energy" required /></label>
@@ -588,11 +584,7 @@ export function InventoryOperationsWorkspace({ currentUser }: { currentUser: Erp
 
         {view === "arrival" && (
           <div className="arrival-layout">
-            <div>
-              <h2>New Stock</h2>
-              <p className="muted">{"Enter received stock, then confirm."}</p>
-              <div className="example">{"Example:"}<br /><b>KH10 5, CQ7 S 20, JAM 440 2</b></div>
-            </div>
+            <h2>New Stock</h2>
             <div className="panel">
               <label className="textarea-label">{"Received items"}<textarea value={arrivalText} onChange={(event) => setArrivalText(event.target.value)} placeholder={"Enter SKUs and quantities…"} /></label>
               <button className="secondary full" onClick={parseArrival} disabled={!arrivalText.trim()}>{"Parse items"}</button>
@@ -609,7 +601,7 @@ export function InventoryOperationsWorkspace({ currentUser }: { currentUser: Erp
                         checked={arrivalMode === "received"}
                         onChange={() => setArrivalMode("received")}
                       />
-                      <span><b>{"Receive"}</b><small>{"Add to on-hand stock"}</small></span>
+                      <span><b>{"Receive into on-hand"}</b></span>
                     </label>
                     <label className={`ordered ${arrivalMode === "ordered" ? "selected" : ""}`}>
                       <input
@@ -619,7 +611,7 @@ export function InventoryOperationsWorkspace({ currentUser }: { currentUser: Erp
                         checked={arrivalMode === "ordered"}
                         onChange={() => setArrivalMode("ordered")}
                       />
-                      <span><b>{"Order"}</b><small>{"Add to Pending without changing on-hand stock"}</small></span>
+                      <span><b>{"Record as Pending"}</b></span>
                     </label>
                   </fieldset>
                   {arrivalDraft.map((item) => (
@@ -654,7 +646,6 @@ export function InventoryOperationsWorkspace({ currentUser }: { currentUser: Erp
             <div className="section-heading">
               <div>
                 <h2>{"History"}</h2>
-                <p className="muted">{"Review completed deliveries and inventory damage."}</p>
               </div>
             </div>
             <div className="history-filters panel">
@@ -690,10 +681,7 @@ export function InventoryOperationsWorkspace({ currentUser }: { currentUser: Erp
               </span>
             </div>
             {historyGroups.length === 0 && filteredLossHistory.length === 0 ? (
-              <Empty
-                text={"No matching history"}
-                sub={"Adjust the date range."}
-              />
+              <Empty text={"No matching history"} />
             ) : (
               <div className="history-sections">
                 {historyGroups.length > 0 && (
@@ -766,7 +754,6 @@ export function InventoryOperationsWorkspace({ currentUser }: { currentUser: Erp
             <div className="task-modal-header">
               <div>
                 <h3 id="consumption-title">{consumptionSku}</h3>
-                <p>{"Delivery and damage history"}</p>
               </div>
               <button
                 type="button"
@@ -882,7 +869,6 @@ export function InventoryOperationsWorkspace({ currentUser }: { currentUser: Erp
             <div className="task-modal-header">
               <div>
                 <h3>{"Edit inventory"}</h3>
-                <p>{"Update SKU, category, stock quantities, and status."}</p>
               </div>
               <button
                 type="button"
@@ -984,10 +970,7 @@ export function InventoryOperationsWorkspace({ currentUser }: { currentUser: Erp
       {showAdminLogin && (
         <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowAdminLogin(false)}>
           <form className="admin-modal" onSubmit={loginAdmin} onMouseDown={(event) => event.stopPropagation()}>
-            <div>
-              <h3>{"Admin mode"}</h3>
-              <p>{"Enter the administrator password"}</p>
-            </div>
+            <h3>{"Admin mode"}</h3>
             <label>{"Password"}
               <input
                 type="password"
@@ -1010,8 +993,8 @@ export function InventoryOperationsWorkspace({ currentUser }: { currentUser: Erp
   );
 }
 
-function Empty({ text, sub }: { text: string; sub: string }) {
-  return <div className="empty"><span>✓</span><h3>{text}</h3><p>{sub}</p></div>;
+function Empty({ text }: { text: string }) {
+  return <div className="empty"><span>✓</span><h3>{text}</h3></div>;
 }
 
 function toEnglishApiMessage(value: unknown, fallback = "The operation could not be completed.") {

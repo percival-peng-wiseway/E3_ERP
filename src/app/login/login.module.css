@@ -103,14 +103,6 @@
   line-height: 1.08;
 }
 
-.heading p:not(.eyebrow) {
-  max-width: 330px;
-  margin: 11px 0 0;
-  color: #6c7984;
-  font-size: 14px;
-  line-height: 1.55;
-}
-
 .form {
   display: grid;
   gap: 17px;

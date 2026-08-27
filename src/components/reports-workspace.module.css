@@ -22,18 +22,11 @@
 .editorToolbar strong { font-size: 14px; }
 .editorToolbar > span { font-size: 12px; }
 .editorSurface { min-height: 540px; padding: 22px 0 12px; background: linear-gradient(90deg, #f6f8fa 0 50px, #fff 50px); }
-.promptLine,
 .inputLine { display: grid; grid-template-columns: 50px minmax(0, 1fr); }
-.promptLine > span,
 .inputLine > span { padding-right: 14px; color: #a0aab2; font: 13px/1.7 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; text-align: right; user-select: none; }
-.promptLine p { display: flex; min-height: 34px; align-items: center; margin: -3px 20px 8px 0; padding: 5px 9px; gap: 7px; color: #3f4d58; background: #f3f4ff; border: 1px solid #e4e6fa; border-radius: 6px; font-size: 16px; font-weight: 700; }
-.promptLine svg { color: #6574d9; }
-.inputLine textarea { width: calc(100% - 20px); min-height: 465px; padding: 0 10px 20px; resize: vertical; color: #34414b; background: transparent; border: 0; outline: 0; font: 15px/1.75 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; tab-size: 2; }
+.inputLine textarea { width: calc(100% - 20px); min-height: 500px; padding: 0 10px 20px; resize: vertical; color: #34414b; background: transparent; border: 0; outline: 0; font: 15px/1.75 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; tab-size: 2; }
 .inputLine textarea::placeholder { color: #a2abb3; }
 .inputLine textarea:disabled { cursor: wait; opacity: .55; }
-.editorFooter { display: flex; min-height: 42px; align-items: center; justify-content: space-between; padding: 8px 14px; gap: 16px; color: #87929b; background: #fafbfc; border-top: 1px solid #e8ecef; font-size: 12px; }
-.editorFooter > span:last-child { white-space: nowrap; }
-.editorFooter kbd { display: inline-grid; min-width: 20px; height: 20px; margin-left: 3px; padding: 0 4px; place-items: center; color: #5f6b75; background: #fff; border: 1px solid #d8dee3; border-bottom-width: 2px; border-radius: 4px; font: 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
 .spinning { animation: spin 800ms linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -42,18 +35,13 @@
   .saveStatus { width: 100%; }
   .editorSurface { min-height: 450px; }
   .inputLine textarea { min-height: 380px; }
-  .editorFooter { align-items: flex-start; flex-direction: column; }
-  .editorFooter > span:last-child { white-space: normal; }
 }
 
 @media (max-width: 520px) {
   .editorToolbar { align-items: flex-start; padding: 10px 12px; flex-direction: column; gap: 4px; }
   .editorSurface { background: linear-gradient(90deg, #f6f8fa 0 38px, #fff 38px); }
-  .promptLine,
   .inputLine { grid-template-columns: 38px minmax(0, 1fr); }
-  .promptLine > span,
   .inputLine > span { padding-right: 9px; }
-  .promptLine p { margin-right: 12px; font-size: 15px; }
   .inputLine textarea { width: calc(100% - 12px); }
 }
 

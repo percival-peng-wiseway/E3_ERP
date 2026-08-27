@@ -34,8 +34,6 @@
 .root :global(.admin-toggle) { padding: 8px 11px; border: 1px solid var(--line); border-radius: 8px; background: white; color: var(--muted); font-size: 14px; font-weight: 800; }
 .root :global(.admin-toggle):global(.active) { border-color: #e5bd78; background: #fff0d4; color: #8a530c; }
 
-.root :global(.eyebrow) { margin: 0 0 10px; color: var(--forest-2); font-size: 13px; font-weight: 800; letter-spacing: .15em; text-transform: uppercase; }
-
 .root :global(.nav-tabs) { max-width: none; margin: 18px 0 0; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); background: var(--paper); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
 .root :global(.nav-tabs) button { border: 0; border-right: 1px solid var(--line); background: transparent; padding: 16px; color: var(--ink); position: relative; }
 .root :global(.nav-tabs) button:last-child { border-right: 0; }
@@ -43,10 +41,9 @@
 .root :global(.nav-tabs) button:global(.active) { background: var(--mint); box-shadow: inset 0 -4px 0 var(--forest-2); }
 
 .root :global(.workspace) { max-width: none; margin: 0; min-height: 620px; padding: 28px 0 48px; }
-.root :global(.section-heading) { display: flex; justify-content: space-between; align-items: end; gap: 20px; margin-bottom: 24px; }
+.root :global(.section-heading) { display: flex; justify-content: space-between; align-items: end; gap: 20px; margin-bottom: 14px; }
 .root h2 { margin: 0; font-size: clamp(27px, 3vw, 36px); letter-spacing: -.035em; }
 .root h3 { margin: 0; font-size: 18px; }
-.root :global(.muted) { color: var(--muted); font-size: 14px; line-height: 1.7; }
 .root :global(.primary), .root :global(.secondary) { border: 0; border-radius: 10px; padding: 13px 18px; font-weight: 800; transition: transform .15s, opacity .15s; }
 .root :global(.primary) { color: white; background: var(--forest); }
 .root :global(.secondary) { color: var(--forest); background: var(--mint); }
@@ -87,7 +84,7 @@
 .root :global(.stock-status) { display: inline-block; padding: 5px 9px; border-radius: 99px; background: #dff0e4; color: #276342; font-size: 13px; font-weight: 800; }
 .root :global(.stock-status):global(.low) { background: #fff0d4; color: #a55d0a; }
 
-.root :global(.form-layout), .root :global(.arrival-layout) { display: grid; grid-template-columns: .75fr 1.25fr; gap: 70px; align-items: start; }
+.root :global(.form-layout), .root :global(.arrival-layout) { display: grid; max-width: 960px; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
 .root :global(.panel) { padding: 28px; }
 .root :global(.form-grid) { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
 .root label { display: grid; gap: 8px; color: #33453b; font-size: 14px; font-weight: 700; }
@@ -116,7 +113,6 @@
 .root :global(.loss-mini):disabled { opacity: .4; cursor: not-allowed; }
 
 .root :global(.textarea-label) textarea { min-height: 150px; resize: vertical; margin-bottom: 8px; }
-.root :global(.example) { margin-top: 28px; padding: 18px; background: #ece9db; border-left: 4px solid var(--amber); line-height: 1.7; }
 .root :global(.confirm-box) { margin-top: 22px; border-top: 1px solid var(--line); padding-top: 22px; }
 .root :global(.confirm-title) { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .root :global(.confirm-title) span { color: #a55d0a; background: #fff0d4; border-radius: 99px; padding: 5px 9px; font-size: 13px; font-weight: 800; }
@@ -136,8 +132,7 @@
 .root :global(.arrival-mode) label:global(.ordered):global(.selected) { border-color: #e3aaa4; background: #fde8e6; box-shadow: 0 0 0 2px rgba(161,61,50,.07); }
 .root :global(.arrival-mode) input { width: 16px; height: 16px; margin: 0; accent-color: var(--forest-2); }
 .root :global(.arrival-mode) :global(.ordered) input { accent-color: #a13d32; }
-.root :global(.arrival-mode) span { display: grid; gap: 2px; }
-.root :global(.arrival-mode) small { color: var(--muted); font-weight: 400; }
+.root :global(.arrival-mode) span { display: grid; }
 .root :global(.confirm-box) button { margin-top: 20px; }
 
 .root :global(.driver-grid) { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
@@ -172,13 +167,11 @@
 
 .root :global(.empty) { text-align: center; border: 1px dashed #bdc9c0; border-radius: 16px; padding: 70px 20px; background: rgba(255,255,255,.45); }
 .root :global(.empty) span { width: 48px; height: 48px; display: grid; place-items: center; margin: 0 auto 17px; border-radius: 50%; background: var(--mint); color: var(--forest); font-weight: 900; }
-.root :global(.empty) p { color: var(--muted); }
 .root :global(.log-time) { white-space: nowrap; color: var(--muted); font-variant-numeric: tabular-nums; }
 .root :global(.toast) { position: fixed; right: 24px; bottom: 24px; z-index: 150; padding: 14px 18px; border-radius: 10px; color: white; background: var(--ink); box-shadow: 0 12px 28px rgba(0,0,0,.22); font-weight: 700; }
 .root :global(.modal-backdrop) { position: fixed; inset: 0; z-index: 140; display: grid; place-items: center; padding: 20px; background: rgba(20,34,27,.48); }
 .root :global(.admin-modal) { width: min(400px, 100%); display: grid; gap: 20px; padding: 26px; border: 1px solid var(--line); border-radius: 16px; background: var(--paper); box-shadow: 0 24px 70px rgba(0,0,0,.2); }
 .root :global(.admin-modal) h3 { font-size: 23px; }
-.root :global(.admin-modal) p { margin: 6px 0 0; color: var(--muted); }
 .root :global(.task-modal) { width: min(780px, 100%); max-height: calc(100vh - 40px); overflow-y: auto; display: grid; gap: 22px; padding: 28px; border: 1px solid var(--line); border-radius: 18px; background: var(--paper); box-shadow: 0 24px 70px rgba(0,0,0,.2); }
 .root :global(.inventory-modal) { width: min(580px, 100%); }
 .root :global(.consumption-modal) { width: min(860px, 100%); }
@@ -293,14 +286,6 @@
   font-size: clamp(30px, 3vw, 40px);
   line-height: 1.15;
   letter-spacing: -.035em;
-}
-
-.root :global(.module-heading .eyebrow) {
-  display: block;
-  margin-bottom: 8px;
-  color: var(--forest-2);
-  font-size: 12px;
-  letter-spacing: .16em;
 }
 
 .root :global(.module-toolbar-actions) {

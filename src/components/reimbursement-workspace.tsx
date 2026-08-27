@@ -327,7 +327,6 @@ export function ReimbursementWorkspace({ authenticatedRole }: { authenticatedRol
           <div className={styles.emptyState}>
             <span><ReceiptText size={25} /></span>
             <h2>{view === "mine" ? (isAdmin ? "No reimbursement claims" : "No claims for your account") : `No claims in ${view === "review" ? "Admin Review" : view === "payment" ? "Pending Payment" : "Reimbursed"}`}</h2>
-            <p>{view === "mine" ? "Submit an invoice to create the first claim." : "Claims will appear here when they reach this stage."}</p>
           </div>
         ) : (
           <div className={styles.tableScroll}>
@@ -350,13 +349,13 @@ export function ReimbursementWorkspace({ authenticatedRole }: { authenticatedRol
       </section>
 
       {showSubmission && (
-        <Modal title="New reimbursement" subtitle="Submit an invoice for Admin Review" onClose={() => { if (!busy) { setShowSubmission(false); setSelectedFile(null); } }}>
+        <Modal title="New reimbursement" onClose={() => { if (!busy) { setShowSubmission(false); setSelectedFile(null); } }}>
           <form className={styles.form} onSubmit={submitClaim}>
             <div className={styles.formGrid}>
               <label>Name<input name="claimantName" autoComplete="name" autoFocus required /></label>
               <label>Date<input name="expenseDate" type="date" defaultValue={todayIso()} max={todayIso()} required /></label>
               <label>Amount (AUD)<span className={styles.moneyInput}><b>$</b><input name="amount" type="number" min="0.01" max="10000000" step="0.01" inputMode="decimal" required /></span></label>
-              <label className={styles.fullField}><span className={styles.fieldLabel}>Note <small>Optional</small></span><textarea name="note" rows={3} maxLength={2000} placeholder="Add a note if needed" /></label>
+              <label className={styles.fullField}><span className={styles.fieldLabel}>Note</span><textarea name="note" rows={3} maxLength={2000} /></label>
               <label className={`${styles.uploadField} ${styles.fullField}`}>
                 <input type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp" onChange={(event) => setSelectedFile(event.target.files?.[0] || null)} required />
                 <span><UploadCloud size={23} /></span>
@@ -408,6 +407,6 @@ function Detail({ label, children }: { label: string; children: ReactNode }) {
   return <div><span>{label}</span><p>{children}</p></div>;
 }
 
-function Modal({ title, subtitle, children, onClose, compact = false }: { title: string; subtitle: string; children: ReactNode; onClose: () => void; compact?: boolean }) {
-  return <div className={styles.backdrop} role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><section className={`${styles.modal} ${compact ? styles.compactModal : ""}`} role="dialog" aria-modal="true" aria-labelledby="reimbursement-dialog-title"><header><div><span>{subtitle}</span><h2 id="reimbursement-dialog-title">{title}</h2></div><button onClick={onClose} aria-label="Close"><X size={19} /></button></header>{children}</section></div>;
+function Modal({ title, subtitle, children, onClose, compact = false }: { title: string; subtitle?: string; children: ReactNode; onClose: () => void; compact?: boolean }) {
+  return <div className={styles.backdrop} role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><section className={`${styles.modal} ${compact ? styles.compactModal : ""}`} role="dialog" aria-modal="true" aria-labelledby="reimbursement-dialog-title"><header><div>{subtitle ? <span>{subtitle}</span> : null}<h2 id="reimbursement-dialog-title">{title}</h2></div><button onClick={onClose} aria-label="Close"><X size={19} /></button></header>{children}</section></div>;
 }

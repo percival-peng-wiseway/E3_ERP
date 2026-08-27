@@ -385,19 +385,6 @@
   letter-spacing: -.015em;
 }
 
-.panelHeader > p,
-.sectionHeader p {
-  margin: 0;
-  color: #88909d;
-  font-size: 13px;
-  text-align: right;
-}
-
-.sectionHeader p {
-  margin-top: 3px;
-  text-align: left;
-}
-
 .projectGrid {
   display: grid;
   grid-template-columns: minmax(220px, .75fr) minmax(360px, 1.25fr);
@@ -1335,34 +1322,8 @@
 }
 
 .emptyHistory h3 {
-  margin: 13px 0 4px;
+  margin: 13px 0 14px;
   font-size: 16px;
-}
-
-.emptyHistory p {
-  margin: 0 0 14px;
-  color: #7f8998;
-  font-size: 13px;
-}
-
-.excelNote {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 15px;
-  padding: 10px 12px;
-  border: 1px dashed #d9dde4;
-  border-radius: 8px;
-  color: #727c8d;
-  background: #fafbfc;
-  font-size: 12px;
-}
-
-.excelNote code {
-  padding: 1px 4px;
-  border-radius: 4px;
-  color: #4d56bf;
-  background: #eef0ff;
 }
 
 .settingsGrid {
@@ -1376,6 +1337,106 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: start;
   gap: 12px;
+}
+
+.stcReferencePanel {
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid var(--qh-line);
+  border-radius: 11px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .025);
+}
+
+.stcReferenceHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.stcReferenceHeader > div {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.stcReferenceHeader > div > span {
+  display: grid;
+  width: 33px;
+  height: 33px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid #f3ccb0;
+  border-radius: 8px;
+  color: #bd5d1d;
+  background: #fff5ed;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.stcReferenceHeader h2 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.stcReferenceHeader > strong {
+  flex: 0 0 auto;
+  padding: 5px 9px;
+  border-radius: 999px;
+  color: #65746b;
+  background: #f1f5f2;
+  font-size: 11px;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+}
+
+.stcReferenceTableWrap {
+  overflow-x: auto;
+  border: 1px solid #dfe6e1;
+  border-radius: 9px;
+}
+
+.stcReferenceTable {
+  width: 100%;
+  min-width: 380px;
+  border-collapse: collapse;
+  color: #34423a;
+  font-size: 13px;
+}
+
+.stcReferenceTable th,
+.stcReferenceTable td {
+  width: 50%;
+  padding: 10px 14px;
+  border-bottom: 1px solid #e4e9e6;
+  text-align: right;
+}
+
+.stcReferenceTable th + th,
+.stcReferenceTable td + td {
+  border-left: 1px solid #e4e9e6;
+}
+
+.stcReferenceTable th {
+  color: #68776e;
+  background: #f2f6f3;
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: .055em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.stcReferenceTable tbody:last-child tr:last-child td {
+  border-bottom: 0;
+}
+
+.stcReferenceTable .stcReferenceGroup tr:first-child td {
+  padding-top: 16px;
+  border-top: 12px solid #fafcfb;
 }
 
 .catalogPanel {
@@ -1531,30 +1592,6 @@
 .userRole {
   color: #5d6879;
   background: #f1f3f5;
-}
-
-.permissionNote {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  margin-top: 18px;
-  padding: 14px;
-  border: 1px solid #dfe2fc;
-  border-radius: 9px;
-  color: #5660c4;
-  background: #f7f7ff;
-}
-
-.permissionNote b {
-  color: #414aab;
-  font-size: 13px;
-}
-
-.permissionNote p {
-  margin: 3px 0 0;
-  color: #687190;
-  font-size: 12px;
-  line-height: 1.55;
 }
 
 .stateCard,
@@ -1790,18 +1827,19 @@
 
   .panel,
   .historyPanel,
-  .usersPanel {
+  .usersPanel,
+  .stcReferencePanel {
     padding: 15px;
+  }
+
+  .stcReferenceHeader {
+    align-items: flex-start;
   }
 
   .panelHeader,
   .sectionHeader {
     align-items: flex-start;
     flex-direction: column;
-  }
-
-  .panelHeader > p {
-    text-align: left;
   }
 
   .projectGrid,
