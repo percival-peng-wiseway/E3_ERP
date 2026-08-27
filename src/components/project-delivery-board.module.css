@@ -1010,12 +1010,7 @@
   min-width: 0;
   flex-direction: column;
   gap: 8px;
-  margin-top: auto;
-  padding-top: 3px;
-}
-
-.completedDayGroupAfterAdd {
-  margin-top: 0;
+  margin: 0 0 1px;
 }
 
 .completedDayToggle {

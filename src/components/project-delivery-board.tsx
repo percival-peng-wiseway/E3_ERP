@@ -1288,6 +1288,7 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
               const completedExpanded = Boolean(expandedCompletedDays[day]);
               const completedRegionId = `completed-schedule-${day}`;
               const isToday = day === today;
+              const canAddToDay = canManageSchedule && day >= today;
               return (
                 <section key={day} className={`${styles.dayColumn} ${isToday ? styles.todayColumn : ""}`} aria-labelledby={`schedule-day-${day}`}>
                   <header>
@@ -1295,11 +1296,8 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
                     {isToday ? <small>Today</small> : <span>{entries.length}</span>}
                   </header>
                   <div className={styles.dayEntries}>
-                    {activeEntries.map(renderCalendarEntry)}
-                    {!entries.length ? <div className={styles.emptyDay}>No jobs</div> : null}
-                    {canManageSchedule ? <button type="button" className={styles.quickAdd} onClick={() => openCustomEditor(undefined, day)}><Plus size={14} /> Add job</button> : null}
                     {completedEntries.length ? (
-                      <div className={`${styles.completedDayGroup} ${canManageSchedule ? styles.completedDayGroupAfterAdd : ""}`}>
+                      <div className={styles.completedDayGroup}>
                         <button
                           type="button"
                           className={styles.completedDayToggle}
@@ -1317,6 +1315,9 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
                         </div>
                       </div>
                     ) : null}
+                    {activeEntries.map(renderCalendarEntry)}
+                    {!entries.length ? <div className={styles.emptyDay}>No jobs</div> : null}
+                    {canAddToDay ? <button type="button" className={styles.quickAdd} onClick={() => openCustomEditor(undefined, day)}><Plus size={14} /> Add job</button> : null}
                   </div>
                 </section>
               );
