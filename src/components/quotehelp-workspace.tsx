@@ -105,6 +105,10 @@ const shortMoney = new Intl.NumberFormat("en-AU", {
 
 const percent = (value: number) => `${(value * 100).toFixed(2)}%`;
 const percentageRate = (value: number) => Math.round((value / 100) * 1_000_000) / 1_000_000;
+const SIG_BATTERY_STC_REFERENCE = [
+  [{ kwh: 16, stc: 101 }, { kwh: 24, stc: 133 }, { kwh: 32, stc: 155 }, { kwh: 40, stc: 163 }, { kwh: 48, stc: 171 }],
+  [{ kwh: 20, stc: 119 }, { kwh: 30, stc: 154 }, { kwh: 40, stc: 164 }, { kwh: 50, stc: 174 }],
+] as const;
 const safeNumber = (value: string) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -1086,6 +1090,7 @@ export function QuoteHelpWorkspace() {
               <Field label="Solar installation cost / kW"><NumberField value={settingsDraft.solarInstallCostPerKw} prefix="$" onChange={(value) => setSettingsDraft((current) => ({ ...current, solarInstallCostPerKw: value }))} /></Field>
             </div>
           </Panel>
+          <SigBatteryStcReference />
           <div className={styles.catalogGrid}>
             <CatalogEditor title="FOX Inverters" items={settingsDraft.inverters} onItemChange={(index, patch) => updateCatalog("inverters", index, patch)} />
             <CatalogEditor title="FOX Batteries" items={settingsDraft.batteries} battery onItemChange={(index, patch) => updateCatalog("batteries", index, patch)} />
@@ -1277,5 +1282,27 @@ function CatalogEditor({ title, items, battery, onItemChange }: {
         })}
       </div>
     </details>
+  );
+}
+
+function SigBatteryStcReference() {
+  return (
+    <section className={styles.stcReferencePanel} aria-labelledby="sig-battery-stc-title">
+      <header className={styles.stcReferenceHeader}>
+        <div><span aria-hidden="true">J</span><h2 id="sig-battery-stc-title">SIG Battery STC reference</h2></div>
+        <strong>Reference only</strong>
+      </header>
+      <div className={styles.stcReferenceTableWrap}>
+        <table className={styles.stcReferenceTable}>
+          <caption className={styles.srOnly}>SIG battery capacity and STC reference values</caption>
+          <thead><tr><th scope="col">BAT kWh</th><th scope="col">STC</th></tr></thead>
+          {SIG_BATTERY_STC_REFERENCE.map((group, groupIndex) => (
+            <tbody key={`sig-stc-group-${groupIndex}`} className={groupIndex ? styles.stcReferenceGroup : undefined}>
+              {group.map((row) => <tr key={`${groupIndex}-${row.kwh}`}><td>{row.kwh}</td><td>{row.stc}</td></tr>)}
+            </tbody>
+          ))}
+        </table>
+      </div>
+    </section>
   );
 }

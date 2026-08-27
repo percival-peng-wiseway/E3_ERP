@@ -1339,6 +1339,106 @@
   gap: 12px;
 }
 
+.stcReferencePanel {
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid var(--qh-line);
+  border-radius: 11px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .025);
+}
+
+.stcReferenceHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.stcReferenceHeader > div {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.stcReferenceHeader > div > span {
+  display: grid;
+  width: 33px;
+  height: 33px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid #f3ccb0;
+  border-radius: 8px;
+  color: #bd5d1d;
+  background: #fff5ed;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.stcReferenceHeader h2 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.stcReferenceHeader > strong {
+  flex: 0 0 auto;
+  padding: 5px 9px;
+  border-radius: 999px;
+  color: #65746b;
+  background: #f1f5f2;
+  font-size: 11px;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+}
+
+.stcReferenceTableWrap {
+  overflow-x: auto;
+  border: 1px solid #dfe6e1;
+  border-radius: 9px;
+}
+
+.stcReferenceTable {
+  width: 100%;
+  min-width: 380px;
+  border-collapse: collapse;
+  color: #34423a;
+  font-size: 13px;
+}
+
+.stcReferenceTable th,
+.stcReferenceTable td {
+  width: 50%;
+  padding: 10px 14px;
+  border-bottom: 1px solid #e4e9e6;
+  text-align: right;
+}
+
+.stcReferenceTable th + th,
+.stcReferenceTable td + td {
+  border-left: 1px solid #e4e9e6;
+}
+
+.stcReferenceTable th {
+  color: #68776e;
+  background: #f2f6f3;
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: .055em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.stcReferenceTable tbody:last-child tr:last-child td {
+  border-bottom: 0;
+}
+
+.stcReferenceTable .stcReferenceGroup tr:first-child td {
+  padding-top: 16px;
+  border-top: 12px solid #fafcfb;
+}
+
 .catalogPanel {
   min-width: 0;
   overflow: hidden;
@@ -1727,8 +1827,13 @@
 
   .panel,
   .historyPanel,
-  .usersPanel {
+  .usersPanel,
+  .stcReferencePanel {
     padding: 15px;
+  }
+
+  .stcReferenceHeader {
+    align-items: flex-start;
   }
 
   .panelHeader,
