@@ -306,9 +306,9 @@ function pendingRebateReceipts(project: PaymentTrackProject) {
   ].filter(Boolean);
 }
 
-function compareDoneProjects(left: PaymentTrackProject, right: PaymentTrackProject) {
-  const settlementOrder = Number(right.outstandingCents > 0) - Number(left.outstandingCents > 0);
-  if (settlementOrder) return settlementOrder;
+function compareProjectsByOutstanding(left: PaymentTrackProject, right: PaymentTrackProject) {
+  const outstandingOrder = right.outstandingCents - left.outstandingCents;
+  if (outstandingOrder) return outstandingOrder;
 
   const updatedOrder = right.updatedAt.localeCompare(left.updatedAt);
   if (updatedOrder) return updatedOrder;
@@ -781,19 +781,10 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
   }, [projects, query]);
 
   const listProjects = useMemo(() => {
-    const stageRank = new Map(STAGES.map((stage, index) => [stage.id, index]));
     return filtered
       .filter((project) => listStage === "all" || project.stage === listStage)
       .slice()
-      .sort((left, right) => {
-        if (listStage === "all") {
-          const stageOrder = (stageRank.get(left.stage) ?? 0) - (stageRank.get(right.stage) ?? 0);
-          if (stageOrder) return stageOrder;
-        }
-        if (left.stage === "done" && right.stage === "done") return compareDoneProjects(left, right);
-        return right.updatedAt.localeCompare(left.updatedAt)
-          || left.reference.localeCompare(right.reference, "en-AU", { numeric: true });
-      });
+      .sort(compareProjectsByOutstanding);
   }, [filtered, listStage]);
 
   const updateBoardPosition = useCallback(() => {
@@ -2132,8 +2123,9 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
           >
             <div className={styles.board}>
               {STAGES.map((column) => {
-              const columnProjects = filtered.filter((project) => project.stage === column.id);
-              if (column.id === "done") columnProjects.sort(compareDoneProjects);
+              const columnProjects = filtered
+                .filter((project) => project.stage === column.id)
+                .sort(compareProjectsByOutstanding);
               return (
                 <section data-payment-stage={column.id} className={`${styles.column} ${styles[column.tone]}`} key={column.id} aria-labelledby={`column-${column.id}`}>
                   <header>
