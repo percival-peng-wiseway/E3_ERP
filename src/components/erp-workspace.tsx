@@ -164,15 +164,48 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
     async function loadPendingPmReviewCount() {
       const requestId = ++latestRequest;
       try {
-        const response = await fetch("/api/inventory/operations", { cache: "no-store" });
-        if (!response.ok) return;
-        const body = await readJsonResponse<{ orders?: Order[] }>(response);
-        if (!active || requestId !== latestRequest || !Array.isArray(body.orders)) return;
-        setPendingPmReviewCount(groupOrders(
-          body.orders.filter((order) => order.status === "pending"),
-        ).length);
+        const [inventoryResponse, paymentResponse] = await Promise.all([
+          fetch("/api/inventory/operations", { cache: "no-store" }),
+          fetch("/api/payment-track", { cache: "no-store" }),
+        ]);
+        if (!inventoryResponse.ok || !paymentResponse.ok) return;
+        const [inventoryBody, paymentBody] = await Promise.all([
+          readJsonResponse<{ orders?: Order[] }>(inventoryResponse),
+          readJsonResponse<PaymentTrackListResponse>(paymentResponse),
+        ]);
+        if (!active
+          || requestId !== latestRequest
+          || !Array.isArray(inventoryBody.orders)
+          || !Array.isArray(paymentBody.data)) return;
+        const inventoryPending = groupOrders(
+          inventoryBody.orders.filter((order) => order.status === "pending"),
+        ).length;
+        const projectTrackPending = paymentBody.data.filter((project) => {
+          const deliveryFinal = Boolean(
+            project.deliveryScheduledFor
+            && project.deliveryScheduledTime
+            && project.deliveryAssignee,
+          );
+          if (project.stage === "material_delivery" && !project.deliveredAt) {
+            return Boolean(
+              project.deliveryScheduleRequest
+              && project.deliverySelections.length
+              && !deliveryFinal,
+            );
+          }
+          const installmentFinal = Boolean(
+            project.installationScheduledFor
+            && project.installationScheduledTime
+            && project.installationAssignee,
+          );
+          return project.stage === "installing"
+            && !project.installedAt
+            && Boolean(project.installationScheduleRequest)
+            && !installmentFinal;
+        }).length;
+        setPendingPmReviewCount(inventoryPending + projectTrackPending);
       } catch {
-        // Retain the last confirmed count while the Inventory service is unavailable.
+        // Retain the last confirmed count while a Weekly Schedule source is unavailable.
       }
     }
 
@@ -183,6 +216,7 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
 
     refresh();
     window.addEventListener("erp:inventory-updated", refresh);
+    window.addEventListener("erp:payment-track-updated", refresh);
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refreshWhenVisible);
     const refreshTimer = window.setInterval(refreshWhenVisible, 60_000);
@@ -192,6 +226,7 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
       latestRequest += 1;
       window.clearInterval(refreshTimer);
       window.removeEventListener("erp:inventory-updated", refresh);
+      window.removeEventListener("erp:payment-track-updated", refresh);
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
@@ -348,7 +383,7 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
                 const Icon = item.icon;
                 const pendingReviewLabel = pendingPmReviewCount === null
                   ? "Pending PM Review count is loading"
-                  : `${pendingPmReviewCount} ${pendingPmReviewCount === 1 ? "order" : "orders"} pending PM review`;
+                  : `${pendingPmReviewCount} ${pendingPmReviewCount === 1 ? "item" : "items"} pending PM review`;
                 const activeProjectTrackLabel = activeProjectTrackCount === null
                   ? "Active Project Track count is loading"
                   : `${activeProjectTrackCount} active ${activeProjectTrackCount === 1 ? "project" : "projects"}`;

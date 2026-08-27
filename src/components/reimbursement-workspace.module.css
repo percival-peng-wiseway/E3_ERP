@@ -87,7 +87,6 @@
 .lockedState > span { display: grid; width: 50px; height: 50px; place-items: center; color: #6977ca; background: #eef0ff; border-radius: 12px; }
 .emptyState h2,
 .lockedState h2 { margin: 5px 0 0; color: #34404a; font-size: 20px; }
-.emptyState p,
 .lockedState p { max-width: 430px; margin: 0 0 7px; font-size: 14px; }
 
 .backdrop { position: fixed; inset: 0; z-index: 160; display: grid; place-items: center; padding: 22px; background: rgba(20, 29, 36, .48); backdrop-filter: blur(2px); animation: fadeIn 140ms ease-out both; }
@@ -103,7 +102,6 @@
 .loginForm label,
 .actionField { display: flex; flex-direction: column; gap: 6px; color: #596671; font-size: 13px; font-weight: 650; }
 .fieldLabel { display: flex; align-items: center; gap: 7px; }
-.fieldLabel small { color: #8a959e; font-size: 12px; font-weight: 500; }
 .form input,
 .form select,
 .form textarea,

@@ -690,7 +690,6 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
         <div>
           <span className={styles.eyebrow}>DOCUMENTS · SHARED WORKSPACE</span>
           <h1 id="files-workspace-title">Files</h1>
-          <p>Create folders, upload working documents and keep the team&apos;s files in one place.</p>
         </div>
         <div className={styles.headerActions}>
           <button type="button" className={styles.secondaryButton} disabled={view !== "active"} onClick={(event) => openDialog({ type: "create" }, event.currentTarget)}><FolderPlus size={17} />New folder</button>
@@ -723,7 +722,7 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
             <span><HardDrive size={18} /></span>
             <div>
               <strong>Workspace storage</strong>
-              {usage ? <small>{formatBytes(usage.usedBytes)} of {formatBytes(usage.workspaceLimitBytes)} used · yours {formatBytes(usage.ownerUsedBytes)}</small> : <small>Shared by E3 ERP users</small>}
+              {usage ? <small>{formatBytes(usage.usedBytes)} of {formatBytes(usage.workspaceLimitBytes)} used · yours {formatBytes(usage.ownerUsedBytes)}</small> : null}
             </div>
           </div>
         </aside>
@@ -780,7 +779,6 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
             <div className={styles.emptyState}>
               <span>{view === "trash" ? <Trash2 size={27} /> : appliedQuery ? <Search size={27} /> : <FolderOpen size={27} />}</span>
               <h2>{view === "trash" ? "Trash is empty" : appliedQuery ? "No files match your search" : `No files in ${currentFolderName}`}</h2>
-              <p>{view === "trash" ? "Files and folders moved to Trash will appear here." : appliedQuery ? "Try a different file or folder name." : "Create a folder or upload the first document to this location."}</p>
               {view === "active" && !appliedQuery ? <div><button type="button" className={styles.secondaryButton} onClick={(event) => openDialog({ type: "create" }, event.currentTarget)}><FolderPlus size={16} />New folder</button><button type="button" className={styles.primaryButton} onClick={() => fileInputRef.current?.click()}><UploadCloud size={16} />Upload files</button></div> : null}
             </div>
           ) : layout === "list" ? (
@@ -821,7 +819,7 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
 
       {uploadTasks.length ? (
         <aside className={styles.uploadQueue} aria-label="File uploads" aria-live="polite">
-          <header><div><strong>{uploadingCount ? `Uploading ${uploadingCount} ${uploadingCount === 1 ? "file" : "files"}` : failedCount ? `${failedCount} upload ${failedCount === 1 ? "needs" : "need"} attention` : "Uploads complete"}</strong><small>Files upload one at a time</small></div><button type="button" disabled={uploading} onClick={() => setUploadTasks([])} aria-label="Close upload status"><X size={17} /></button></header>
+          <header><strong>{uploadingCount ? `Uploading ${uploadingCount} ${uploadingCount === 1 ? "file" : "files"}` : failedCount ? `${failedCount} upload ${failedCount === 1 ? "needs" : "need"} attention` : "Uploads complete"}</strong><button type="button" disabled={uploading} onClick={() => setUploadTasks([])} aria-label="Close upload status"><X size={17} /></button></header>
           <div className={styles.uploadList}>
             {uploadTasks.map((task) => (
               <div className={styles.uploadRow} key={task.id}>
@@ -864,7 +862,7 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
           <div ref={modalRef} className={styles.previewDialog} role="dialog" aria-modal="true" aria-labelledby="file-preview-title">
             <header><div><span>FILE PREVIEW</span><h2 id="file-preview-title">{previewItem.name}</h2><small>{formatBytes(previewItem.size)} · Updated {formatDate(previewItem.updatedAt)}</small></div><div><a href={contentUrl(previewItem, "download")} className={styles.secondaryButton}><Download size={16} />Download</a><button type="button" aria-label="Close preview" onClick={closeModal}><X size={20} /></button></div></header>
             <div className={styles.previewBody}>
-              {previewFailed || !canPreview(previewItem) ? <div className={styles.previewFallback}><span><FileIcon size={32} /></span><h3>Preview unavailable</h3><p>Download this file to open it in the appropriate application.</p><a href={contentUrl(previewItem, "download")} className={styles.primaryButton}><Download size={16} />Download file</a></div> : previewItem.contentType === "application/pdf" ? <iframe src={contentUrl(previewItem, "preview")} title={`Preview of ${previewItem.name}`} onError={() => setPreviewFailed(true)} /> : <img src={contentUrl(previewItem, "preview")} alt={previewItem.name} onError={() => setPreviewFailed(true)} />}
+              {previewFailed || !canPreview(previewItem) ? <div className={styles.previewFallback}><span><FileIcon size={32} /></span><h3>Preview unavailable</h3><a href={contentUrl(previewItem, "download")} className={styles.primaryButton}><Download size={16} />Download file</a></div> : previewItem.contentType === "application/pdf" ? <iframe src={contentUrl(previewItem, "preview")} title={`Preview of ${previewItem.name}`} onError={() => setPreviewFailed(true)} /> : <img src={contentUrl(previewItem, "preview")} alt={previewItem.name} onError={() => setPreviewFailed(true)} />}
             </div>
           </div>
         </div>

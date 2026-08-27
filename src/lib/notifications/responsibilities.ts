@@ -4,9 +4,13 @@ import type { NotificationRole } from "./types";
 export type PaymentTrackResponsibilityAction =
   | "upload_deposit_proof"
   | "confirm_deposit"
+  | "pre_schedule_delivery"
+  | "review_delivery_pre_schedule"
   | "manage_delivery"
   | "record_collection"
   | "confirm_collection"
+  | "pre_schedule_installation"
+  | "review_installation_pre_schedule"
   | "manage_installation"
   | "record_final_payment"
   | "confirm_final_payment"
@@ -26,6 +30,26 @@ function pendingFinalPayment(project: PaymentTrackProject) {
   ));
 }
 
+function deliveryScheduleIsComplete(project: PaymentTrackProject) {
+  return Boolean(
+    project.deliveryScheduledFor
+    && project.deliveryScheduledTime
+    && project.deliveryAssignee,
+  );
+}
+
+function deliveryPreScheduleIsComplete(project: PaymentTrackProject) {
+  return Boolean(project.deliveryScheduleRequest && project.deliverySelections.length);
+}
+
+function installationScheduleIsComplete(project: PaymentTrackProject) {
+  return Boolean(
+    project.installationScheduledFor
+    && project.installationScheduledTime
+    && project.installationAssignee,
+  );
+}
+
 /** Returns only the next role-owned work for a Project Track project. */
 export function paymentTrackResponsibilities(project: PaymentTrackProject): PaymentTrackResponsibility[] {
   if (project.stage === "deposit_not_paid") {
@@ -36,7 +60,12 @@ export function paymentTrackResponsibilities(project: PaymentTrackProject): Paym
   }
 
   if (project.stage === "material_delivery") {
-    if (!project.deliveredAt) return [{ action: "manage_delivery", role: "pm" }];
+    if (!project.deliveredAt) {
+      if (deliveryScheduleIsComplete(project)) return [{ action: "manage_delivery", role: "pm" }];
+      return deliveryPreScheduleIsComplete(project)
+        ? [{ action: "review_delivery_pre_schedule", role: "pm" }]
+        : [{ action: "pre_schedule_delivery", role: "sales" }];
+    }
     if (project.collection.confirmedAt) return [];
     return project.collection.acknowledgedAt || project.collection.proof
       ? [{ action: "confirm_collection", role: "admin" }]
@@ -44,7 +73,11 @@ export function paymentTrackResponsibilities(project: PaymentTrackProject): Paym
   }
 
   if (project.stage === "installing") {
-    return project.installedAt ? [] : [{ action: "manage_installation", role: "pm" }];
+    if (project.installedAt) return [];
+    if (installationScheduleIsComplete(project)) return [{ action: "manage_installation", role: "pm" }];
+    return project.installationScheduleRequest
+      ? [{ action: "review_installation_pre_schedule", role: "pm" }]
+      : [{ action: "pre_schedule_installation", role: "sales" }];
   }
 
   const tasks: PaymentTrackResponsibility[] = [];

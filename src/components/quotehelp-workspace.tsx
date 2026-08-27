@@ -12,7 +12,6 @@ import {
   Database,
   Download,
   FileClock,
-  FileSpreadsheet,
   FileText,
   History,
   LoaderCircle,
@@ -106,6 +105,10 @@ const shortMoney = new Intl.NumberFormat("en-AU", {
 
 const percent = (value: number) => `${(value * 100).toFixed(2)}%`;
 const percentageRate = (value: number) => Math.round((value / 100) * 1_000_000) / 1_000_000;
+const SIG_BATTERY_STC_REFERENCE = [
+  [{ kwh: 16, stc: 101 }, { kwh: 24, stc: 133 }, { kwh: 32, stc: 155 }, { kwh: 40, stc: 163 }, { kwh: 48, stc: 171 }],
+  [{ kwh: 20, stc: 119 }, { kwh: 30, stc: 154 }, { kwh: 40, stc: 164 }, { kwh: 50, stc: 174 }],
+] as const;
 const safeNumber = (value: string) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -821,7 +824,6 @@ export function QuoteHelpWorkspace() {
               icon={Building2}
               number="01"
               title="Customer & System Details"
-              description="Orange fields can be adjusted for each project"
             >
               <div className={styles.projectGrid}>
                 <div className={styles.fieldColumn}>
@@ -919,7 +921,7 @@ export function QuoteHelpWorkspace() {
               </div>
             </Panel>
 
-            <Panel icon={FileText} number="02" title="Quote Breakdown" description="Sale price = Cost × (1 + Margin)">
+            <Panel icon={FileText} number="02" title="Quote Breakdown">
               <div className={styles.breakdownHeader}>
                 <div><b>Costs &amp; Sale Prices</b><span>{result.lineItems.length} line items</span></div>
                 <button type="button" className={styles.smallButton} onClick={addCustomItem}><Plus size={14} /> Custom Item</button>
@@ -950,7 +952,7 @@ export function QuoteHelpWorkspace() {
               </div>
             </Panel>
 
-            <Panel icon={CircleDollarSign} number="03" title="Incentives & Customer Balance" description="STCs, rebates, loans and discounts feed into the margin model in real time">
+            <Panel icon={CircleDollarSign} number="03" title="Incentives & Customer Balance">
               <div className={styles.fundingGrid}>
                 {stcEditable ? (
                   <Field label={`Solar STC · ${result.solarCertificates} certificates`}><NumberField value={result.solarStc} prefix="$" onChange={(value) => setField("manualSolarStc", Math.max(0, value))} /></Field>
@@ -1020,7 +1022,7 @@ export function QuoteHelpWorkspace() {
       {tab === "history" && (
         <section className={styles.historyPanel}>
           <div className={styles.sectionHeader}>
-            <div><span className={styles.sectionIcon}><FileClock size={18} /></span><div><h2>Team Quotes</h2><p>All members can view and continue editing; administrators can delete.</p></div></div>
+            <div><span className={styles.sectionIcon}><FileClock size={18} /></span><div><h2>Team Quotes</h2></div></div>
             <div className={styles.transferActions}>
               <input ref={importRef} hidden type="file" accept=".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel.sheet.macroEnabled.12" onChange={importExcel} />
               <button type="button" disabled={transferBusy} onClick={() => importRef.current?.click()}><Upload size={15} /> Import Excel</button>
@@ -1071,13 +1073,12 @@ export function QuoteHelpWorkspace() {
               })}
             </div>
           )}
-          <div className={styles.excelNote}><FileSpreadsheet size={15} /><span>Excel files include a summary, project breakdowns, re-importable data and instructions. Imported quotes are marked as Completed.</span></div>
         </section>
       )}
 
       {tab === "settings" && isAdmin && (
         <div className={styles.settingsStack}>
-          <Panel icon={Settings2} number="A" title="Calculation Model Parameters" description="Published changes affect new calculations for every user">
+          <Panel icon={Settings2} number="A" title="Calculation Model Parameters">
             <div className={styles.settingsGrid}>
               <Field label="Senior approval threshold"><NumberField value={settingsDraft.thresholds.approval * 100} suffix="%" onChange={(value) => setSettingsDraft((current) => ({ ...current, thresholds: { ...current.thresholds, approval: percentageRate(value) } }))} /></Field>
               <Field label="Target margin"><NumberField value={settingsDraft.thresholds.target * 100} suffix="%" onChange={(value) => setSettingsDraft((current) => ({ ...current, thresholds: { ...current.thresholds, target: percentageRate(value) } }))} /></Field>
@@ -1089,6 +1090,7 @@ export function QuoteHelpWorkspace() {
               <Field label="Solar installation cost / kW"><NumberField value={settingsDraft.solarInstallCostPerKw} prefix="$" onChange={(value) => setSettingsDraft((current) => ({ ...current, solarInstallCostPerKw: value }))} /></Field>
             </div>
           </Panel>
+          <SigBatteryStcReference />
           <div className={styles.catalogGrid}>
             <CatalogEditor title="FOX Inverters" items={settingsDraft.inverters} onItemChange={(index, patch) => updateCatalog("inverters", index, patch)} />
             <CatalogEditor title="FOX Batteries" items={settingsDraft.batteries} battery onItemChange={(index, patch) => updateCatalog("batteries", index, patch)} />
@@ -1105,7 +1107,7 @@ export function QuoteHelpWorkspace() {
       {tab === "users" && isAdmin && (
         <section className={styles.usersPanel}>
           <div className={styles.sectionHeader}>
-            <div><span className={styles.sectionIcon}><ShieldCheck size={18} /></span><div><h2>Users &amp; Permissions</h2><p>Account roles are managed by the QuoteHelp backend.</p></div></div>
+            <div><span className={styles.sectionIcon}><ShieldCheck size={18} /></span><div><h2>Users &amp; Permissions</h2></div></div>
           </div>
           <div className={styles.userList}>
             {session.users.map((user) => (
@@ -1116,10 +1118,6 @@ export function QuoteHelpWorkspace() {
                 <strong className={user.role === "admin" ? styles.adminRole : styles.userRole}>{user.role === "admin" ? "Administrator" : "Standard user"}</strong>
               </div>
             ))}
-          </div>
-          <div className={styles.permissionNote}>
-            <ShieldCheck size={20} />
-            <div><b>Permission boundary</b><p>Standard users can edit customer details, project parameters, rebates, discounts and on-site costs. Only administrators can publish equipment catalogues, base costs, STC unit prices and margin approval thresholds.</p></div>
           </div>
         </section>
       )}
@@ -1133,7 +1131,7 @@ function LoadingState() {
   return (
     <section className={styles.stateCard} role="status" aria-live="polite">
       <span className={styles.stateIcon}><LoaderCircle className={styles.spin} size={22} /></span>
-      <div><h2>Connecting to QuoteHelp</h2><p>Loading the pricing model, team quotes and permissions.</p></div>
+      <div><h2>Connecting to QuoteHelp</h2></div>
     </section>
   );
 }
@@ -1181,12 +1179,11 @@ function LoginPanel({
   );
 }
 
-function Panel({ icon: Icon, number, title, description, children }: { icon: LucideIcon; number: string; title: string; description: string; children: ReactNode }) {
+function Panel({ icon: Icon, number, title, children }: { icon: LucideIcon; number: string; title: string; children: ReactNode }) {
   return (
     <section className={styles.panel}>
       <div className={styles.panelHeader}>
         <div><span><Icon size={16} /></span><div><small>{number}</small><h2>{title}</h2></div></div>
-        <p>{description}</p>
       </div>
       {children}
     </section>
@@ -1255,7 +1252,6 @@ function EmptyHistory({ onCreate }: { onCreate: () => void }) {
     <div className={styles.emptyHistory}>
       <span><PackagePlus size={24} /></span>
       <h3>No matching quotes</h3>
-      <p>Adjust the filters or start with a blank quote.</p>
       <button type="button" className={styles.primaryButton} onClick={onCreate}><Plus size={15} /> New Quote</button>
     </div>
   );
@@ -1286,5 +1282,27 @@ function CatalogEditor({ title, items, battery, onItemChange }: {
         })}
       </div>
     </details>
+  );
+}
+
+function SigBatteryStcReference() {
+  return (
+    <section className={styles.stcReferencePanel} aria-labelledby="sig-battery-stc-title">
+      <header className={styles.stcReferenceHeader}>
+        <div><span aria-hidden="true">J</span><h2 id="sig-battery-stc-title">SIG Battery STC reference</h2></div>
+        <strong>Reference only</strong>
+      </header>
+      <div className={styles.stcReferenceTableWrap}>
+        <table className={styles.stcReferenceTable}>
+          <caption className={styles.srOnly}>SIG battery capacity and STC reference values</caption>
+          <thead><tr><th scope="col">BAT kWh</th><th scope="col">STC</th></tr></thead>
+          {SIG_BATTERY_STC_REFERENCE.map((group, groupIndex) => (
+            <tbody key={`sig-stc-group-${groupIndex}`} className={groupIndex ? styles.stcReferenceGroup : undefined}>
+              {group.map((row) => <tr key={`${groupIndex}-${row.kwh}`}><td>{row.kwh}</td><td>{row.stc}</td></tr>)}
+            </tbody>
+          ))}
+        </table>
+      </div>
+    </section>
   );
 }

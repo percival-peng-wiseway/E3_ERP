@@ -203,7 +203,7 @@ export function UserManagementDialog({
       <section ref={dialogRef} className={styles.dialog} role="dialog" aria-modal="true" aria-labelledby="user-management-title">
         <header>
           <span><Users size={19} /></span>
-          <div><small>Settings</small><h2 id="user-management-title">User Management</h2></div>
+          <div><h2 id="user-management-title">User Management</h2></div>
           <button type="button" onClick={onClose} disabled={saving} aria-label="Close user management"><X size={18} /></button>
         </header>
 
@@ -240,14 +240,14 @@ export function UserManagementDialog({
                 <label>Display name<input required disabled={saving} maxLength={80} value={editor.displayName} onChange={(event) => setEditor({ ...editor, displayName: event.target.value })} placeholder="Employee name" /></label>
                 <label>Role<select disabled={saving || finalAdmin} value={editor.role} onChange={(event) => setEditor({ ...editor, role: event.target.value as ErpRole })}>{ERP_ASSIGNABLE_ROLES.map((role) => <option value={role} key={role}>{ERP_ROLE_LABELS[role]}</option>)}</select></label>
                 <label>{editor.version === null ? "Temporary password" : passwordRequired ? "Temporary password required" : "Reset password (optional)"}<span className={styles.password}><KeyRound size={15} /><input required={passwordRequired} disabled={saving} type="password" minLength={6} maxLength={200} autoComplete="new-password" value={editor.password} onChange={(event) => setEditor({ ...editor, password: event.target.value })} placeholder={passwordRequired ? "Set at least 6 characters before activation" : "Leave blank to keep current password"} /></span></label>
-                <label className={styles.statusToggle}><input type="checkbox" disabled={saving || finalAdmin} checked={editor.active} onChange={(event) => setEditor({ ...editor, active: event.target.checked })} /><span><strong>Active account</strong><small>Inactive employees cannot sign in.</small></span></label>
+                <label className={styles.statusToggle}><input type="checkbox" disabled={saving || finalAdmin} checked={editor.active} onChange={(event) => setEditor({ ...editor, active: event.target.checked })} /><span><strong>Active account</strong></span></label>
                 {finalAdmin ? <p className={styles.safetyNote}>The final active Administrator cannot be deactivated or assigned another role.</p> : null}
                 {editingUser && !editingUser.credentialsConfigured ? <p className={styles.safetyNote}>This seeded account has no sign-in password. Set a temporary password before activating it.</p> : null}
                 {editor.version !== null ? <p className={styles.audit}>Created {formatTimestamp(editingUser?.createdAt || "")} by {editingUser?.createdBy || "unknown"}<br />Last updated {formatTimestamp(editingUser?.updatedAt || "")} by {editingUser?.updatedBy || "unknown"}</p> : null}
                 <footer><button type="button" className={styles.secondary} disabled={saving} onClick={() => setEditor(null)}>Cancel</button><button type="submit" className={styles.primary} disabled={saving || (passwordRequired && editor.password.length < 6)}>{saving ? <LoaderCircle className={styles.spin} size={16} /> : <ShieldCheck size={16} />}{saving ? "Saving…" : editor.version === null ? "Create employee" : "Save changes"}</button></footer>
               </form>
             ) : (
-              <div className={styles.emptyEditor}><Users size={30} /><strong>Select an employee</strong><p>Review their role, change account status or issue a new temporary password.</p></div>
+              <div className={styles.emptyEditor}><Users size={30} /><strong>Select an employee</strong></div>
             )}
           </div>
         </div>

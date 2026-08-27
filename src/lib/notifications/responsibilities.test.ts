@@ -37,6 +37,10 @@ function project(overrides: Partial<PaymentTrackProject> = {}): PaymentTrackProj
       confirmedAt: null,
       confirmedBy: null,
     },
+    deliverySelections: [],
+    deliveryPreparedAt: null,
+    deliveryPreparedBy: null,
+    deliveryScheduleRequest: null,
     deliveryScheduledFor: null,
     deliveryScheduledTime: null,
     deliveryAssignee: null,
@@ -52,6 +56,7 @@ function project(overrides: Partial<PaymentTrackProject> = {}): PaymentTrackProj
     installationScheduledFor: null,
     installationScheduledTime: null,
     installationAssignee: null,
+    installationScheduleRequest: null,
     finalPayments: [],
     installedAt: null,
     coesReceivedAt: null,
@@ -76,6 +81,17 @@ function summary(value: PaymentTrackProject) {
   return paymentTrackResponsibilities(value).map(({ action, role }) => `${role}:${action}`);
 }
 
+function scheduleRequest(overrides: Partial<NonNullable<PaymentTrackProject["deliveryScheduleRequest"]>> = {}) {
+  return {
+    preferredDate: "2026-09-04",
+    preferredTime: "09:30",
+    notes: "Customer prefers a morning appointment.",
+    submittedAt: "2026-08-24T03:00:00.000Z",
+    submittedBy: "Sales Owner",
+    ...overrides,
+  };
+}
+
 test("deposit work stays with Sales until evidence is submitted, then moves to Admin", () => {
   assert.deepEqual(summary(project()), ["sales:upload_deposit_proof"]);
   assert.deepEqual(summary(project({
@@ -86,8 +102,22 @@ test("deposit work stays with Sales until evidence is submitted, then moves to A
   })), ["admin:confirm_deposit"]);
 });
 
-test("delivery collection moves from PM to Sales and only then to Admin", () => {
-  assert.deepEqual(summary(project({ stage: "material_delivery" })), ["pm:manage_delivery"]);
+test("delivery work moves from Sales pre-scheduling to PM review and final schedule management", () => {
+  assert.deepEqual(summary(project({ stage: "material_delivery" })), ["sales:pre_schedule_delivery"]);
+  assert.deepEqual(summary(project({
+    stage: "material_delivery",
+    deliveryScheduleRequest: scheduleRequest(),
+    deliverySelections: [{ sku: "SKU-DELIVERY", quantity: 1 }],
+  })), ["pm:review_delivery_pre_schedule"]);
+  assert.deepEqual(summary(project({
+    stage: "material_delivery",
+    deliveryScheduledFor: "2026-09-05",
+    deliveryScheduledTime: "10:00",
+    deliveryAssignee: "Leo",
+  })), ["pm:manage_delivery"]);
+});
+
+test("delivery collection moves from Sales to Admin after delivery", () => {
   assert.deepEqual(summary(project({
     stage: "material_delivery",
     deliveredAt: "2026-08-24T01:00:00.000Z",
@@ -139,9 +169,32 @@ test("paid projects produce no payment action", () => {
   assert.deepEqual(summary(project({ stage: "done", outstandingCents: 0 })), []);
 });
 
-test("PM responsibility is limited to incomplete delivery and installation scheduling", () => {
-  assert.deepEqual(summary(project({ stage: "material_delivery" })), ["pm:manage_delivery"]);
-  assert.deepEqual(summary(project({ stage: "installing" })), ["pm:manage_installation"]);
+test("installation work moves from Sales pre-scheduling to PM review and final schedule management", () => {
+  assert.deepEqual(summary(project({ stage: "installing" })), ["sales:pre_schedule_installation"]);
+  assert.deepEqual(summary(project({
+    stage: "installing",
+    installationScheduleRequest: scheduleRequest(),
+  })), ["pm:review_installation_pre_schedule"]);
+  assert.deepEqual(summary(project({
+    stage: "installing",
+    installationScheduledFor: "2026-09-06",
+    installationScheduledTime: "08:00",
+    installationAssignee: "Daniel",
+  })), ["pm:manage_installation"]);
+});
+
+test("PM responsibility is limited to reviewed or scheduled incomplete delivery and installation work", () => {
+  assert.equal(summary(project({ stage: "material_delivery" })).some((entry) => entry.startsWith("pm:")), false);
+  assert.equal(summary(project({ stage: "installing" })).some((entry) => entry.startsWith("pm:")), false);
+  assert.deepEqual(summary(project({
+    stage: "material_delivery",
+    deliveryScheduleRequest: scheduleRequest(),
+    deliverySelections: [{ sku: "SKU-DELIVERY", quantity: 1 }],
+  })), ["pm:review_delivery_pre_schedule"]);
+  assert.deepEqual(summary(project({
+    stage: "installing",
+    installationScheduleRequest: scheduleRequest(),
+  })), ["pm:review_installation_pre_schedule"]);
   assert.equal(summary(project({ stage: "material_delivery", deliveredAt: "2026-08-24T01:00:00.000Z" }))
     .some((entry) => entry.startsWith("pm:")), false);
   assert.deepEqual(summary(project({ stage: "installing", installedAt: "2026-08-24T01:00:00.000Z" })), []);

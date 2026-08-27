@@ -272,17 +272,9 @@
 }
 
 .agentWelcome h3 {
-  margin: 14px 0 5px;
+  margin: 14px 0 0;
   color: #303b44;
   font-size: 18px;
-}
-
-.agentWelcome p {
-  max-width: 380px;
-  margin: 0;
-  color: #77838d;
-  font-size: 14px;
-  line-height: 1.55;
 }
 
 .agentMessage {
@@ -650,14 +642,6 @@
 
 .composer > button:hover:not(:disabled) { filter: brightness(.94); }
 .composer > button:disabled { cursor: not-allowed; opacity: .42; }
-
-.composerHint {
-  display: block;
-  margin-top: 5px;
-  color: #929ca4;
-  font-size: 12px;
-  text-align: center;
-}
 
 .inlineError,
 .inlineNotice {

@@ -4,8 +4,13 @@ import { test } from "node:test";
 const typesModule = "./types.ts";
 const {
   countActivePaymentTrackProjects,
+  isFinalPaymentOverdue,
   isPaymentTrackProjectActive,
 } = await import(typesModule) as typeof import("./types");
+
+const INSTALLED_AT = "2026-08-20T10:00:00.000Z";
+const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1_000;
+const INSTALLED_AT_MS = Date.parse(INSTALLED_AT);
 
 test("Project Track treats unfinished projects and unsettled Done projects as active", () => {
   assert.equal(isPaymentTrackProjectActive({ stage: "deposit_not_paid", outstandingCents: 0 }), true);
@@ -22,4 +27,36 @@ test("Project Track active count matches the workspace Active Projects metric", 
     { stage: "done", outstandingCents: 0 },
   ]), 3);
   assert.equal(countActivePaymentTrackProjects([]), 0);
+});
+
+test("final payment is not overdue before installation", () => {
+  assert.equal(isFinalPaymentOverdue({ installedAt: null, outstandingCents: 1 }, INSTALLED_AT_MS + SEVEN_DAYS_MS), false);
+});
+
+test("final payment is not overdue before seven full days", () => {
+  assert.equal(isFinalPaymentOverdue(
+    { installedAt: INSTALLED_AT, outstandingCents: 1 },
+    INSTALLED_AT_MS + SEVEN_DAYS_MS - 1,
+  ), false);
+});
+
+test("final payment becomes overdue at exactly seven full days", () => {
+  assert.equal(isFinalPaymentOverdue(
+    { installedAt: INSTALLED_AT, outstandingCents: 1 },
+    INSTALLED_AT_MS + SEVEN_DAYS_MS,
+  ), true);
+});
+
+test("unsettled final payment remains overdue after seven days", () => {
+  assert.equal(isFinalPaymentOverdue(
+    { installedAt: INSTALLED_AT, outstandingCents: 1 },
+    INSTALLED_AT_MS + SEVEN_DAYS_MS + 1,
+  ), true);
+});
+
+test("settled final payment is never overdue", () => {
+  assert.equal(isFinalPaymentOverdue(
+    { installedAt: INSTALLED_AT, outstandingCents: 0 },
+    INSTALLED_AT_MS + SEVEN_DAYS_MS + 1,
+  ), false);
 });
