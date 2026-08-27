@@ -2,8 +2,9 @@
 .dialog { width: min(1020px, 100%); max-height: calc(100vh - 48px); overflow: hidden; color: #27323a; background: #fff; border: 1px solid #dfe5e8; border-radius: 12px; box-shadow: 0 24px 80px rgba(25, 35, 43, .24); }
 .dialog > header { display: grid; grid-template-columns: 40px 1fr 34px; align-items: center; padding: 16px 18px; gap: 11px; border-bottom: 1px solid #e7ebee; }
 .dialog > header > span { display: grid; width: 40px; height: 40px; color: #5263ce; background: #eef0ff; border-radius: 9px; place-items: center; }
-.dialog > header small, .editorHeading small { color: #8a959d; font-size: 11px; font-weight: 760; text-transform: uppercase; letter-spacing: .06em; }
-.dialog > header h2, .editorHeading h3 { margin: 2px 0 0; color: #222d35; line-height: 1.2; }
+.editorHeading small { color: #8a959d; font-size: 11px; font-weight: 760; text-transform: uppercase; letter-spacing: .06em; }
+.dialog > header h2 { margin: 0; }
+.dialog > header h2, .editorHeading h3 { color: #222d35; line-height: 1.2; }
 .dialog > header h2 { font-size: 20px; }
 .dialog > header button { display: grid; width: 34px; height: 34px; padding: 0; place-items: center; color: #76828a; background: transparent; border: 0; border-radius: 7px; cursor: pointer; }
 .dialog > header button:hover { background: #f1f3f5; }
@@ -43,8 +44,7 @@
 .password input { padding-left: 35px; }
 .statusToggle { display: grid !important; grid-template-columns: 18px 1fr; align-items: start; padding: 10px 11px; background: #fff; border: 1px solid #dde3e7; border-radius: 7px; cursor: pointer; }
 .statusToggle input { width: 16px; min-height: 16px; margin-top: 1px; }
-.statusToggle strong, .statusToggle small { display: block; }
-.statusToggle small { margin-top: 2px; color: #7c8890; font-weight: 500; }
+.statusToggle strong { display: block; }
 .safetyNote { margin: 0; padding: 9px 10px; color: #805c1f; background: #fff8e8; border: 1px solid #eddcad; border-radius: 7px; font-size: 12px; line-height: 1.45; }
 .audit { margin: 0; color: #839098; font-size: 11px; line-height: 1.55; }
 .editorPane footer { display: flex; justify-content: flex-end; padding-top: 3px; gap: 8px; }
@@ -57,7 +57,6 @@
 .emptyEditor { min-height: 430px; flex-direction: column; padding: 30px; text-align: center; }
 .emptyEditor svg { color: #8994d7; }
 .emptyEditor strong { margin-top: 12px; color: #4c5861; }
-.emptyEditor p { max-width: 290px; margin: 6px 0 0; font-size: 12px; line-height: 1.5; }
 .spin { animation: spin 800ms linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 

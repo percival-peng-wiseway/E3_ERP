@@ -30,6 +30,7 @@ import {
   UploadCloud,
   UserRound,
   WalletCards,
+  Warehouse,
   Wrench,
   X,
 } from "lucide-react";
@@ -46,12 +47,14 @@ import type { ErpRole } from "@/lib/auth/types";
 import { readJsonResponse } from "@/lib/client/http";
 import {
   countActivePaymentTrackProjects,
+  isFinalPaymentOverdue,
   PAYMENT_TRACK_SCHEDULE_ASSIGNEES,
   PAYMENT_TRACK_STAGE_SKIP_REASON_MAX_LENGTH,
 } from "@/lib/payment-track/types";
 import type {
   PaymentTrackAction,
   PaymentTrackAdminSession,
+  PaymentTrackDeliverySelection,
   PaymentTrackItem,
   PaymentTrackListResponse,
   PaymentTrackMutationResponse,
@@ -62,6 +65,7 @@ import type {
   PaymentTrackUpdatedEventDetail,
 } from "@/lib/payment-track/types";
 import styles from "./payment-track-workspace.module.css";
+import { MaterialDeliveryPicker } from "./material-delivery-picker";
 
 type AddMode = "agreement" | "manual";
 type ProofKind = "deposit";
@@ -99,30 +103,26 @@ const ROLE_LABELS: Record<PaymentTrackRole, string> = {
 const STAGES: Array<{
   id: PaymentTrackStage;
   title: string;
-  description: string;
   tone: "amber" | "blue" | "violet" | "cyan" | "teal" | "green";
 }> = [
   {
     id: "deposit_not_paid",
     title: "Deposit Not Paid",
-    description: "Deposit proof and Admin confirmation",
     tone: "amber",
   },
   {
     id: "material_delivery",
     title: "Material Delivery",
-    description: "Delivery and payment confirmation",
     tone: "blue",
   },
-  { id: "installing", title: "Installing", description: "PM installation confirmation", tone: "violet" },
+  { id: "installing", title: "Installment", tone: "violet" },
   {
     id: "waiting_coes",
     title: "Installed / Waiting COES",
-    description: "Installed projects awaiting COES",
     tone: "cyan",
   },
-  { id: "stc_rebate", title: "STC Rebate", description: "Confirm applicable rebate receipts", tone: "teal" },
-  { id: "done", title: "Done", description: "Completed work and final settlements", tone: "green" },
+  { id: "stc_rebate", title: "STC Rebate", tone: "teal" },
+  { id: "done", title: "Done", tone: "green" },
 ];
 
 const EMPTY_ADMIN_SESSION: PaymentTrackAdminSession = { admin: false, configured: false };
@@ -173,6 +173,14 @@ function hasInstallationSchedule(project: PaymentTrackProject) {
   );
 }
 
+function hasDeliveryScheduleRequest(project: PaymentTrackProject) {
+  return Boolean(project.deliveryScheduleRequest && project.deliverySelections.length);
+}
+
+function hasInstallationScheduleRequest(project: PaymentTrackProject) {
+  return Boolean(project.installationScheduleRequest);
+}
+
 function fileSize(bytes: number) {
   return bytes < 1024 * 1024
     ? `${Math.max(1, Math.round(bytes / 1024))} KB`
@@ -206,6 +214,46 @@ function unwrap<T>(value: T | { data: T }): T {
 
 function stageLabel(stage: PaymentTrackStage) {
   return STAGES.find((column) => column.id === stage)?.title ?? stage;
+}
+
+function projectHasScheduledCurrentStage(project: PaymentTrackProject) {
+  return (project.stage === "material_delivery" && !project.deliveredAt && hasDeliverySchedule(project))
+    || (project.stage === "installing" && !project.installedAt && hasInstallationSchedule(project));
+}
+
+function projectHasPreScheduledCurrentStage(project: PaymentTrackProject) {
+  return (project.stage === "material_delivery"
+    && !project.deliveredAt
+    && hasDeliveryScheduleRequest(project)
+    && !hasDeliverySchedule(project))
+    || (project.stage === "installing"
+      && !project.installedAt
+      && hasInstallationScheduleRequest(project)
+      && !hasInstallationSchedule(project));
+}
+
+function projectHasUnscheduledCurrentStage(project: PaymentTrackProject) {
+  return (project.stage === "material_delivery"
+    && !project.deliveredAt
+    && !hasDeliveryScheduleRequest(project)
+    && !hasDeliverySchedule(project))
+    || (project.stage === "installing"
+      && !project.installedAt
+      && !hasInstallationScheduleRequest(project)
+      && !hasInstallationSchedule(project));
+}
+
+function displayedProjectStage(project: PaymentTrackProject) {
+  if (projectHasScheduledCurrentStage(project)) return "Scheduled";
+  if (projectHasPreScheduledCurrentStage(project)) return "Pre-scheduled";
+  return projectHasUnscheduledCurrentStage(project) ? "Unscheduled" : stageLabel(project.stage);
+}
+
+function displayedProjectStageTone(project: PaymentTrackProject) {
+  if (projectHasScheduledCurrentStage(project)) return "green";
+  if (projectHasPreScheduledCurrentStage(project)) return "amber";
+  if (projectHasUnscheduledCurrentStage(project)) return "red";
+  return STAGES.find((stage) => stage.id === project.stage)?.tone || "blue";
 }
 
 function skipStageDetails(project: PaymentTrackProject) {
@@ -280,18 +328,24 @@ function projectStatus(project: PaymentTrackProject): { label: string; owner: st
   }
   if (project.stage === "material_delivery") {
     if (!project.deliveredAt) {
-      return hasDeliverySchedule(project)
-        ? { label: "Delivery scheduled", owner: project.deliveryAssignee || "PM", tone: "blue" }
-        : { label: "Delivery scheduling required", owner: "PM", tone: "amber" };
+      if (hasDeliverySchedule(project)) {
+        return { label: "Delivery scheduled", owner: project.deliveryAssignee || "PM", tone: "blue" };
+      }
+      return hasDeliveryScheduleRequest(project)
+        ? { label: "Awaiting PM schedule confirmation", owner: "PM", tone: "amber" }
+        : { label: "Delivery preference required", owner: "Sales", tone: "amber" };
     }
     return project.collection.acknowledgedAt || project.collection.proof
       ? { label: "Awaiting collection confirmation", owner: "Admin", tone: "blue" }
       : { label: "Payment receipt acknowledgement required", owner: "Sales", tone: "amber" };
   }
   if (project.stage === "installing") {
-    return hasInstallationSchedule(project)
-      ? { label: "Installation scheduled", owner: project.installationAssignee || "PM", tone: "violet" }
-      : { label: "Installation scheduling required", owner: "PM", tone: "amber" };
+    if (hasInstallationSchedule(project)) {
+      return { label: "Installment scheduled", owner: project.installationAssignee || "PM", tone: "violet" };
+    }
+    return hasInstallationScheduleRequest(project)
+      ? { label: "Awaiting PM schedule confirmation", owner: "PM", tone: "amber" }
+      : { label: "Installment preference required", owner: "Sales", tone: "amber" };
   }
   if (project.stage === "waiting_coes") {
     const pendingPayment = pendingLaterPayment(project);
@@ -350,18 +404,24 @@ function projectNextStep(project: PaymentTrackProject, activeRole: PaymentTrackR
   }
   if (project.stage === "material_delivery") {
     if (!project.deliveredAt) {
-      return hasDeliverySchedule(project)
-        ? { label: "Mark Delivered", roles: ["pm"] as PaymentTrackRole[] }
-        : { label: "Schedule Delivery", roles: ["pm"] as PaymentTrackRole[] };
+      if (hasDeliverySchedule(project)) {
+        return { label: "Mark Delivered", roles: ["pm"] as PaymentTrackRole[] };
+      }
+      return hasDeliveryScheduleRequest(project)
+        ? { label: "Review Delivery Request", roles: ["pm"] as PaymentTrackRole[] }
+        : { label: "Submit Delivery Preference", roles: ["sales"] as PaymentTrackRole[] };
     }
     return project.collection.acknowledgedAt || project.collection.proof
       ? { label: "Review Collection", roles: ["admin"] as PaymentTrackRole[] }
       : { label: "Payment Received", roles: ["sales"] as PaymentTrackRole[] };
   }
   if (project.stage === "installing") {
-    return hasInstallationSchedule(project)
-      ? { label: "Mark Installed", roles: ["pm"] as PaymentTrackRole[] }
-      : { label: "Schedule Installation", roles: ["pm"] as PaymentTrackRole[] };
+    if (hasInstallationSchedule(project)) {
+      return { label: "Mark Installed", roles: ["pm"] as PaymentTrackRole[] };
+    }
+    return hasInstallationScheduleRequest(project)
+      ? { label: "Review Installment Request", roles: ["pm"] as PaymentTrackRole[] }
+      : { label: "Submit Installment Preference", roles: ["sales"] as PaymentTrackRole[] };
   }
   if (project.stage === "waiting_coes") {
     const pendingPayment = pendingLaterPayment(project);
@@ -527,16 +587,25 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
   const [actionAmount, setActionAmount] = useState("");
   const [deliveryDate, setDeliveryDate] = useState("");
   const [deliveryTime, setDeliveryTime] = useState("");
+  const [deliveryNotes, setDeliveryNotes] = useState("");
   const [deliveryAssignee, setDeliveryAssignee] = useState<ScheduleAssignee>("");
+  const [deliverySelectionDraft, setDeliverySelectionDraft] = useState<PaymentTrackDeliverySelection[]>([]);
+  const [showDeliveryPicker, setShowDeliveryPicker] = useState(false);
   const [installationDate, setInstallationDate] = useState("");
   const [installationTime, setInstallationTime] = useState("");
+  const [installationNotes, setInstallationNotes] = useState("");
   const [installationAssignee, setInstallationAssignee] = useState<ScheduleAssignee>("");
   const [workflowConfirmation, setWorkflowConfirmation] = useState<WorkflowConfirmation | null>(null);
   const [workflowReason, setWorkflowReason] = useState("");
   const [viewMode, setViewMode] = useState<ProjectTrackViewMode>("board");
   const [listStage, setListStage] = useState<ProjectTrackStageFilter>("all");
+  const [finalPaymentStatusNow, setFinalPaymentStatusNow] = useState(() => Date.now());
   const [boardPosition, setBoardPosition] = useState({ stageIndex: 0, canScrollLeft: false, canScrollRight: false });
   const returnFocusRef = useRef<HTMLElement | null>(null);
+  const deliveryPickerDialogRef = useRef<HTMLElement | null>(null);
+  const deliveryPickerTriggerRef = useRef<HTMLElement | null>(null);
+  const showDeliveryPickerRef = useRef(false);
+  const returningFromDeliveryPickerRef = useRef(false);
   const boardScrollerRef = useRef<HTMLDivElement | null>(null);
   const stageJumpListRef = useRef<HTMLDivElement | null>(null);
   const busyRef = useRef(false);
@@ -555,6 +624,24 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
   useEffect(() => {
     busyRef.current = busy;
   }, [busy]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setFinalPaymentStatusNow(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const openDeliveryPicker = useCallback((trigger: HTMLElement) => {
+    deliveryPickerTriggerRef.current = trigger;
+    returningFromDeliveryPickerRef.current = false;
+    showDeliveryPickerRef.current = true;
+    setShowDeliveryPicker(true);
+  }, []);
+
+  const closeDeliveryPicker = useCallback(() => {
+    showDeliveryPickerRef.current = false;
+    returningFromDeliveryPickerRef.current = true;
+    setShowDeliveryPicker(false);
+  }, []);
 
   const load = useCallback(async (quiet = false) => {
     const requestId = ++loadRequestRef.current;
@@ -604,14 +691,18 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
     : showAdd
       ? "add"
       : selected
-        ? `detail:${selected.id}`
+        ? `${showDeliveryPicker ? "delivery-picker" : "detail"}:${selected.id}`
         : "none";
   useEffect(() => {
     if (modalKey === "none") return;
     const originalOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    const dialog = document.querySelector<HTMLElement>("[role='dialog'][aria-modal='true']");
-    const focusDialog = window.requestAnimationFrame(() => {
+    const dialog = showDeliveryPicker
+      ? deliveryPickerDialogRef.current
+      : document.querySelector<HTMLElement>("[role='dialog'][aria-modal='true']");
+    const returningToPickerTrigger = !showDeliveryPicker && returningFromDeliveryPickerRef.current;
+    if (returningToPickerTrigger) returningFromDeliveryPickerRef.current = false;
+    const focusDialog = returningToPickerTrigger ? null : window.requestAnimationFrame(() => {
       const preferred = dialog?.querySelector<HTMLElement>("[autofocus]");
       const fallback = dialog?.querySelector<HTMLElement>("button, input, select, textarea, a[href]");
       (preferred || fallback || dialog)?.focus();
@@ -620,6 +711,10 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
       if (event.key === "Escape" && !busyRef.current) {
         if (workflowConfirmation) {
           setWorkflowConfirmation(null);
+          return;
+        }
+        if (showDeliveryPicker) {
+          closeDeliveryPicker();
           return;
         }
         setShowAdd(false);
@@ -651,12 +746,18 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
     };
     document.addEventListener("keydown", handleDialogKeys);
     return () => {
-      window.cancelAnimationFrame(focusDialog);
+      if (focusDialog !== null) window.cancelAnimationFrame(focusDialog);
       document.body.style.overflow = originalOverflow;
       document.removeEventListener("keydown", handleDialogKeys);
-      window.requestAnimationFrame(() => returnFocusRef.current?.focus());
+      if (modalKey.startsWith("delivery-picker:")) {
+        window.requestAnimationFrame(() => {
+          if (deliveryPickerTriggerRef.current?.isConnected) deliveryPickerTriggerRef.current.focus();
+        });
+      } else if (!(modalKey.startsWith("detail:") && showDeliveryPickerRef.current)) {
+        window.requestAnimationFrame(() => returnFocusRef.current?.focus());
+      }
     };
-  }, [modalKey, workflowConfirmation]);
+  }, [closeDeliveryPicker, modalKey, showDeliveryPicker, workflowConfirmation]);
 
   const metrics = useMemo(() => ({
     receivable: projects.reduce((sum, project) => sum + project.balanceDueCents, 0),
@@ -774,13 +875,19 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
     returnFocusRef.current = element;
     setProofFile(null);
     setActionAmount("");
-    setDeliveryDate(project.deliveryScheduledFor || "");
-    setDeliveryTime(project.deliveryScheduledTime || "");
+    setDeliveryDate(project.deliveryScheduledFor || project.deliveryScheduleRequest?.preferredDate || "");
+    setDeliveryTime(project.deliveryScheduledTime || project.deliveryScheduleRequest?.preferredTime || "");
+    setDeliveryNotes(project.deliveryScheduleRequest?.notes || "");
     setDeliveryAssignee(project.deliveryAssignee || "");
-    setInstallationDate(project.installationScheduledFor || "");
-    setInstallationTime(project.installationScheduledTime || "");
+    setDeliverySelectionDraft(project.deliverySelections);
+    setInstallationDate(project.installationScheduledFor || project.installationScheduleRequest?.preferredDate || "");
+    setInstallationTime(project.installationScheduledTime || project.installationScheduleRequest?.preferredTime || "");
+    setInstallationNotes(project.installationScheduleRequest?.notes || "");
     setInstallationAssignee(project.installationAssignee || "");
     setError("");
+    showDeliveryPickerRef.current = false;
+    returningFromDeliveryPickerRef.current = false;
+    setShowDeliveryPicker(false);
     setRole(paymentTrackRole);
     setSelectedId(project.id);
   };
@@ -930,7 +1037,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
 
   const performAction = async (
     action: PaymentTrackAction,
-    extra: Record<string, string> = {},
+    extra: Record<string, unknown> = {},
     successMessage = "Project updated.",
   ) => {
     if (!selected) return;
@@ -946,11 +1053,14 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
       if (!response.ok) throw new Error(apiError(result, "Unable to update this project."));
       updateProject(result.data);
       setActionAmount("");
-      setDeliveryDate(result.data.deliveryScheduledFor || deliveryDate);
-      setDeliveryTime(result.data.deliveryScheduledTime || deliveryTime);
+      setDeliveryDate(result.data.deliveryScheduledFor || result.data.deliveryScheduleRequest?.preferredDate || deliveryDate);
+      setDeliveryTime(result.data.deliveryScheduledTime || result.data.deliveryScheduleRequest?.preferredTime || deliveryTime);
+      setDeliveryNotes(result.data.deliveryScheduleRequest?.notes || deliveryNotes);
       setDeliveryAssignee(result.data.deliveryAssignee || deliveryAssignee);
-      setInstallationDate(result.data.installationScheduledFor || installationDate);
-      setInstallationTime(result.data.installationScheduledTime || installationTime);
+      setDeliverySelectionDraft(result.data.deliverySelections);
+      setInstallationDate(result.data.installationScheduledFor || result.data.installationScheduleRequest?.preferredDate || installationDate);
+      setInstallationTime(result.data.installationScheduledTime || result.data.installationScheduleRequest?.preferredTime || installationTime);
+      setInstallationNotes(result.data.installationScheduleRequest?.notes || installationNotes);
       setInstallationAssignee(result.data.installationAssignee || installationAssignee);
       setWorkflowConfirmation(null);
       setWorkflowReason("");
@@ -1005,7 +1115,16 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
   };
 
   const closeProjectDetail = () => {
+    showDeliveryPickerRef.current = false;
+    returningFromDeliveryPickerRef.current = false;
+    setShowDeliveryPicker(false);
     setSelectedId(null);
+  };
+
+  const reloadSelectedProject = () => {
+    setError("");
+    closeProjectDetail();
+    void load(true);
   };
 
   const closeWorkflowConfirmation = () => {
@@ -1017,6 +1136,10 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
     if (event.target !== event.currentTarget || busy) return;
     if (workflowConfirmation) {
       closeWorkflowConfirmation();
+      return;
+    }
+    if (showDeliveryPicker) {
+      closeDeliveryPicker();
       return;
     }
     setShowAdd(false);
@@ -1059,7 +1182,6 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
           icon={<Banknote size={18} />}
           owner="Sales / Administrator"
           title="Customer final payment"
-          description="Final payment is tracked independently from the project workflow."
         >
           <div className={styles.parallelComplete}><CheckCircle2 size={15} /> Balance paid in full</div>
         </ParallelActionCard>
@@ -1072,7 +1194,6 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
           icon={<ShieldCheck size={18} />}
           owner="Administrator"
           title="Confirm customer payment"
-          description={`Sales has acknowledged a payment. Record the actual amount received against ${formatMoney(project.outstandingCents)} outstanding.`}
         >
           {role === "admin" ? (
             <>
@@ -1100,10 +1221,12 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                 Confirm Actual Amount
               </button>
             </>
-          ) : (
+          ) : authenticatedRole === "admin" ? (
             <button className={styles.secondaryButton} type="button" onClick={() => selectRole("admin")}>
               Continue as Administrator <ChevronRight size={15} />
             </button>
+          ) : (
+            <span className={styles.roleWaitHint}>Waiting for Administrator confirmation.</span>
           )}
         </ParallelActionCard>
       );
@@ -1114,7 +1237,6 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
         icon={<Banknote size={18} />}
         owner="Sales"
         title="Customer final payment"
-        description={`If payment has arrived, acknowledge it here. No proof is required. ${formatMoney(project.outstandingCents)} remains outstanding.`}
       >
         {role === "sales" ? (
           <button
@@ -1130,10 +1252,12 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
             {busy ? <LoaderCircle className={styles.spinning} size={16} /> : <Banknote size={16} />}
             Payment Received
           </button>
-        ) : (
+        ) : authenticatedRole === "admin" ? (
           <button className={styles.secondaryButton} type="button" onClick={() => selectRole("sales")}>
             Continue as Sales <ChevronRight size={15} />
           </button>
+        ) : (
+          <span className={styles.roleWaitHint}>Waiting for Sales acknowledgement.</span>
         )}
       </ParallelActionCard>
     );
@@ -1150,6 +1274,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
               <ReadOnlyNextStep
                 owner="Administrator"
                 label="Confirm the final payment and record the actual amount received."
+                allowContinue={authenticatedRole === "admin"}
                 buttonLabel="Continue as Administrator"
                 onContinue={() => selectRole("admin")}
               />
@@ -1171,6 +1296,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
             <ReadOnlyNextStep
               owner="Sales"
               label={`Acknowledge receipt of the remaining ${formatMoney(project.outstandingCents)}.`}
+              allowContinue={authenticatedRole === "admin"}
               buttonLabel="Continue as Sales"
               onContinue={() => selectRole("sales")}
             />
@@ -1180,7 +1306,6 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
           <SimpleAction
             icon={<Banknote size={18} />}
             title="Customer payment received"
-            description={`Acknowledge the payment against the remaining ${formatMoney(project.outstandingCents)}. Administrator will record the actual amount.`}
             button="Payment Received"
             busy={busy}
             onClick={() => void performAction(
@@ -1194,7 +1319,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
       return (
         <div className={`${styles.actionPanel} ${styles.completedPanel}`}>
           <CheckCircle2 size={20} />
-          <div><strong>Paid in full</strong><span>All required confirmations and customer payments have been recorded.</span></div>
+          <strong>Paid in full</strong>
         </div>
       );
     }
@@ -1205,6 +1330,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
           <ReadOnlyNextStep
             owner="Sales"
             label="Upload the customer’s deposit payment proof."
+            allowContinue={authenticatedRole === "admin"}
             buttonLabel="Continue as Sales"
             onContinue={() => selectRole("sales")}
           />
@@ -1235,6 +1361,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
           <ReadOnlyNextStep
             owner="Administrator"
             label="Confirm the deposit and record the actual amount received."
+            allowContinue={authenticatedRole === "admin"}
             buttonLabel="Continue as Administrator"
             onContinue={() => selectRole("admin")}
           />
@@ -1253,31 +1380,126 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
     }
 
     if (project.stage === "material_delivery" && !project.deliveredAt) {
+      const deliveryScheduled = hasDeliverySchedule(project);
+      const deliveryRequest = hasDeliveryScheduleRequest(project) ? project.deliveryScheduleRequest : null;
+      const deliveryPrepared = deliverySelectionDraft.length > 0;
+
+      if (role === "sales" && !deliveryScheduled) {
+        return (
+          <div className={`${styles.actionPanel} ${styles.scheduleActionPanel}`}>
+            <div className={styles.scheduleActionHeader}>
+              <div className={styles.actionHeading}>
+                <span><Truck size={17} /></span>
+                <strong>Material delivery preference</strong>
+              </div>
+              <span className={styles.salesRequestBadge}>Sales request</span>
+            </div>
+            <div className={`${styles.deliveryPreparationRow} ${deliveryPrepared ? styles.deliveryPrepared : ""}`}>
+              <span><Warehouse size={17} /></span>
+              <strong>{deliveryPrepared ? "Warehouse items chosen" : "Warehouse item selection required"}</strong>
+              <button className={styles.secondaryButton} type="button" disabled={busy} onClick={(event) => openDeliveryPicker(event.currentTarget)}>
+                <Warehouse size={14} /> {deliveryPrepared ? "Edit items" : "Choose items"}
+              </button>
+            </div>
+            <div className={styles.preferenceSubmitRow}>
+              <div className={styles.preferenceFields}>
+                <label className={styles.actionField}>
+                  Preferred delivery date
+                  <input type="date" value={deliveryDate} disabled={busy} onChange={(event) => setDeliveryDate(event.target.value)} />
+                </label>
+                <label className={styles.actionField}>
+                  Preferred delivery time
+                  <input type="time" value={deliveryTime} disabled={busy} onChange={(event) => setDeliveryTime(event.target.value)} />
+                </label>
+                <label className={`${styles.actionField} ${styles.preferenceNotesField}`}>
+                  Notes
+                  <textarea
+                    value={deliveryNotes}
+                    disabled={busy}
+                    maxLength={2000}
+                    rows={1}
+                    onChange={(event) => setDeliveryNotes(event.target.value)}
+                  />
+                </label>
+              </div>
+              <div className={`${styles.actionButtons} ${styles.scheduleActionButtons}`}>
+                <button
+                  className={styles.primaryButton}
+                  type="button"
+                  disabled={busy || !deliveryPrepared || !deliveryDate || !deliveryTime}
+                  onClick={() => void performAction(
+                    "pre_schedule_delivery",
+                    {
+                      selections: deliverySelectionDraft,
+                      preferredDate: deliveryDate,
+                      preferredTime: deliveryTime,
+                      notes: deliveryNotes,
+                      expectedUpdatedAt: project.updatedAt,
+                    },
+                    deliveryRequest
+                      ? "Delivery request updated for Project Manager review."
+                      : "Delivery request sent to Weekly Schedule for Project Manager review.",
+                  )}
+                >
+                  {busy ? <LoaderCircle className={styles.spinning} size={15} /> : <CalendarDays size={15} />}
+                  {deliveryRequest ? "Update request" : "Send to Weekly Schedule"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
       if (role !== "pm") {
         return (
           <ReadOnlyNextStep
-            owner="Project Manager"
-            label="Schedule material delivery and confirm when delivered."
-            buttonLabel="Continue as Project Manager"
-            onContinue={() => selectRole("pm")}
+            owner={deliveryRequest ? "Project Manager" : "Sales"}
+            label={deliveryRequest
+              ? "Review the Sales delivery preference and confirm the final schedule."
+              : "Choose delivery items and submit a preferred delivery date and time."}
+            allowContinue={authenticatedRole === "admin"}
+            buttonLabel={deliveryRequest ? "Continue as Project Manager" : "Continue as Sales"}
+            onContinue={() => selectRole(deliveryRequest ? "pm" : "sales")}
           />
         );
       }
+
+      if (!deliveryRequest && !deliveryScheduled) {
+        return (
+          <ReadOnlyNextStep
+            owner="Sales"
+            label="Sales must choose the warehouse items and send a preferred delivery date and time before PM scheduling."
+            allowContinue={authenticatedRole === "admin"}
+            buttonLabel="Continue as Sales"
+            onContinue={() => selectRole("sales")}
+          />
+        );
+      }
+
       return (
         <div className={`${styles.actionPanel} ${styles.scheduleActionPanel}`}>
           <div className={styles.scheduleActionHeader}>
             <div className={styles.actionHeading}>
               <span><Truck size={17} /></span>
-              <div>
-                <strong>Material delivery</strong>
-                <small>Choose when the materials will arrive and who will deliver them.</small>
-              </div>
+              <strong>{deliveryScheduled ? "Material delivery scheduled" : "Review material delivery request"}</strong>
             </div>
-            <span className={styles.scheduleSyncBadge}><CalendarDays size={14} /> Weekly Schedule task</span>
+            <span className={deliveryScheduled ? styles.scheduleSyncBadge : styles.preScheduledBadge}>
+              <CalendarDays size={14} /> {deliveryScheduled ? "Scheduled" : "Pre-scheduled"}
+            </span>
+          </div>
+          <div className={styles.scheduleRequestSummary}>
+            <span><Clock3 size={17} /></span>
+            <div>
+              <strong>Sales preference</strong>
+              <small>{deliveryRequest
+                ? `${formatScheduledAt(deliveryRequest.preferredDate, deliveryRequest.preferredTime)} · Submitted by ${deliveryRequest.submittedBy}`
+                : "Legacy schedule — no Sales preference was recorded."}</small>
+              {deliveryRequest?.notes ? <p>{deliveryRequest.notes}</p> : null}
+            </div>
           </div>
           <div className={styles.scheduleFields}>
             <label className={styles.actionField}>
-              Delivery date
+              Confirmed delivery date
               <input
                 type="date"
                 value={deliveryDate}
@@ -1286,7 +1508,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
               />
             </label>
             <label className={styles.actionField}>
-              Delivery time
+              Confirmed delivery time
               <input
                 type="time"
                 value={deliveryTime}
@@ -1306,22 +1528,19 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
               </select>
             </label>
           </div>
-          <p className={styles.scheduleSyncHint}>
-            Saving creates or updates a Weekly Schedule task with this project&apos;s items and delivery person.
-          </p>
           <div className={`${styles.actionButtons} ${styles.scheduleActionButtons}`}>
             <button
               className={styles.secondaryButton}
               type="button"
-              disabled={busy || !deliveryDate || !deliveryTime || !deliveryAssignee}
+              disabled={busy || (!deliveryScheduled && !project.deliverySelections.length) || !deliveryDate || !deliveryTime || !deliveryAssignee}
               onClick={() => void performAction(
                 "schedule_delivery",
-                { deliveryDate, deliveryTime, deliveryAssignee },
+                { deliveryDate, deliveryTime, deliveryAssignee, expectedUpdatedAt: project.updatedAt },
                 "Delivery schedule saved and Weekly Schedule task updated.",
               )}
             >
               {busy ? <LoaderCircle className={styles.spinning} size={15} /> : <CalendarDays size={15} />}
-              Save Schedule
+              {deliveryScheduled ? "Update Schedule" : "Confirm Schedule"}
             </button>
             <button
               className={styles.primaryButton}
@@ -1352,6 +1571,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
           <ReadOnlyNextStep
             owner="Sales"
             label="Acknowledge that the customer’s payment has been received."
+            allowContinue={authenticatedRole === "admin"}
             buttonLabel="Continue as Sales"
             onContinue={() => selectRole("sales")}
           />
@@ -1361,7 +1581,6 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
         <SimpleAction
           icon={<Banknote size={18} />}
           title="Customer payment received"
-          description="No proof is required. Administrator will record the actual amount received."
           button="Payment Received"
           busy={busy}
           onClick={() => void performAction(
@@ -1379,6 +1598,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
           <ReadOnlyNextStep
             owner="Administrator"
             label="Confirm collection and record the actual amount received."
+            allowContinue={authenticatedRole === "admin"}
             buttonLabel="Continue as Administrator"
             onContinue={() => selectRole("admin")}
           />
@@ -1397,31 +1617,117 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
     }
 
     if (project.stage === "installing") {
+      const installationScheduled = hasInstallationSchedule(project);
+      const installationRequest = project.installationScheduleRequest;
+
+      if (role === "sales" && !installationScheduled) {
+        return (
+          <div className={`${styles.actionPanel} ${styles.scheduleActionPanel}`}>
+            <div className={styles.scheduleActionHeader}>
+              <div className={styles.actionHeading}>
+                <span><Wrench size={17} /></span>
+                <strong>Installment preference</strong>
+              </div>
+              <span className={styles.salesRequestBadge}>Sales request</span>
+            </div>
+            <div className={styles.preferenceSubmitRow}>
+              <div className={styles.preferenceFields}>
+                <label className={styles.actionField}>
+                  Preferred installment date
+                  <input type="date" value={installationDate} disabled={busy} onChange={(event) => setInstallationDate(event.target.value)} />
+                </label>
+                <label className={styles.actionField}>
+                  Preferred installment time
+                  <input type="time" value={installationTime} disabled={busy} onChange={(event) => setInstallationTime(event.target.value)} />
+                </label>
+                <label className={`${styles.actionField} ${styles.preferenceNotesField}`}>
+                  Notes
+                  <textarea
+                    value={installationNotes}
+                    disabled={busy}
+                    maxLength={2000}
+                    rows={1}
+                    onChange={(event) => setInstallationNotes(event.target.value)}
+                  />
+                </label>
+              </div>
+              <div className={`${styles.actionButtons} ${styles.scheduleActionButtons}`}>
+                <button
+                  className={styles.primaryButton}
+                  type="button"
+                  disabled={busy || !installationDate || !installationTime}
+                  onClick={() => void performAction(
+                    "pre_schedule_installation",
+                    {
+                      preferredDate: installationDate,
+                      preferredTime: installationTime,
+                      notes: installationNotes,
+                      expectedUpdatedAt: project.updatedAt,
+                    },
+                    installationRequest
+                      ? "Installment request updated for Project Manager review."
+                      : "Installment request sent to Weekly Schedule for Project Manager review.",
+                  )}
+                >
+                  {busy ? <LoaderCircle className={styles.spinning} size={15} /> : <CalendarDays size={15} />}
+                  {installationRequest ? "Update request" : "Send to Weekly Schedule"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
       if (role !== "pm") {
         return (
           <ReadOnlyNextStep
-            owner="Project Manager"
-            label="Schedule the installation date, time and installer, then confirm when the work is complete."
-            buttonLabel="Continue as Project Manager"
-            onContinue={() => selectRole("pm")}
+            owner={installationRequest ? "Project Manager" : "Sales"}
+            label={installationRequest
+              ? "Review the Sales installment preference and confirm the final schedule."
+              : "Submit the customer’s preferred installment date and time."}
+            allowContinue={authenticatedRole === "admin"}
+            buttonLabel={installationRequest ? "Continue as Project Manager" : "Continue as Sales"}
+            onContinue={() => selectRole(installationRequest ? "pm" : "sales")}
           />
         );
       }
+
+      if (!installationRequest && !installationScheduled) {
+        return (
+          <ReadOnlyNextStep
+            owner="Sales"
+            label="Sales must send a preferred installment date and time before PM scheduling."
+            allowContinue={authenticatedRole === "admin"}
+            buttonLabel="Continue as Sales"
+            onContinue={() => selectRole("sales")}
+          />
+        );
+      }
+
       return (
         <div className={`${styles.actionPanel} ${styles.scheduleActionPanel}`}>
           <div className={styles.scheduleActionHeader}>
             <div className={styles.actionHeading}>
               <span><Wrench size={17} /></span>
-              <div>
-                <strong>Installation</strong>
-                <small>Choose the installation time and assign Leo or Daniel before completion.</small>
-              </div>
+              <strong>{installationScheduled ? "Installment scheduled" : "Review installment request"}</strong>
             </div>
-            <span className={styles.scheduleSyncBadge}><CalendarDays size={14} /> Weekly Schedule task</span>
+            <span className={installationScheduled ? styles.scheduleSyncBadge : styles.preScheduledBadge}>
+              <CalendarDays size={14} /> {installationScheduled ? "Scheduled" : "Pre-scheduled"}
+            </span>
+          </div>
+          <div className={styles.scheduleRequestSummary}>
+            <span><Clock3 size={17} /></span>
+            <div>
+              <strong>Sales preference</strong>
+              <small>{installationRequest
+                ? `${formatScheduledAt(installationRequest.preferredDate, installationRequest.preferredTime)} · Submitted by ${installationRequest.submittedBy}`
+                : "Legacy schedule — no Sales preference was recorded."}</small>
+              {installationRequest?.notes ? <p>{installationRequest.notes}</p> : null}
+            </div>
           </div>
           <div className={styles.scheduleFields}>
             <label className={styles.actionField}>
-              Installation date
+              Confirmed installment date
               <input
                 type="date"
                 value={installationDate}
@@ -1430,7 +1736,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
               />
             </label>
             <label className={styles.actionField}>
-              Installation time
+              Confirmed installment time
               <input
                 type="time"
                 value={installationTime}
@@ -1450,9 +1756,6 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
               </select>
             </label>
           </div>
-          <p className={styles.scheduleSyncHint}>
-            Saving creates or updates a Weekly Schedule task with this project&apos;s items and installer.
-          </p>
           <div className={`${styles.actionButtons} ${styles.scheduleActionButtons}`}>
             <button
               className={styles.secondaryButton}
@@ -1460,12 +1763,12 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
               disabled={busy || !installationDate || !installationTime || !installationAssignee}
               onClick={() => void performAction(
                 "schedule_installation",
-                { installationDate, installationTime, installationAssignee },
-                "Installation schedule saved and Weekly Schedule task updated.",
+                { installationDate, installationTime, installationAssignee, expectedUpdatedAt: project.updatedAt },
+                "Installment schedule saved and Weekly Schedule task updated.",
               )}
             >
               {busy ? <LoaderCircle className={styles.spinning} size={15} /> : <CalendarDays size={15} />}
-              Save Schedule
+              {installationScheduled ? "Update Schedule" : "Confirm Schedule"}
             </button>
             <button
               className={styles.primaryButton}
@@ -1477,7 +1780,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                 || installationTime !== project.installationScheduledTime
                 || installationAssignee !== project.installationAssignee
               }
-              onClick={() => void performAction("mark_installed", {}, "Installation marked complete. Project moved to Waiting COES.")}
+              onClick={() => void performAction("mark_installed", {}, "Installment marked complete. Project moved to Waiting COES.")}
             >
               <Wrench size={15} /> Mark Installed
             </button>
@@ -1492,7 +1795,6 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
           <div className={styles.parallelWorkflowIntro}>
             <div>
               <strong>COES and final payment</strong>
-              <small>These tasks run independently. The project can continue after COES even when the customer balance is still outstanding.</small>
             </div>
           </div>
           <div className={styles.parallelWorkflowGrid}>
@@ -1500,7 +1802,6 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
               icon={<FileCheck2 size={18} />}
               owner="Project Manager"
               title="Certificate of Electrical Safety"
-              description="Confirm the COES when it has been received. Final payment does not block this step."
             >
               {project.coesReceivedAt ? (
                 <div className={styles.parallelComplete}><CheckCircle2 size={15} /> COES received</div>
@@ -1519,10 +1820,12 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                 >
                   <FileCheck2 size={16} /> COES Received
                 </button>
-              ) : (
+              ) : authenticatedRole === "admin" ? (
                 <button className={styles.secondaryButton} type="button" onClick={() => selectRole("pm")}>
                   Continue as Project Manager <ChevronRight size={15} />
                 </button>
+              ) : (
+                <span className={styles.roleWaitHint}>Waiting for Project Manager confirmation.</span>
               )}
             </ParallelActionCard>
             {renderFinalPaymentTask(project)}
@@ -1539,7 +1842,6 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
           <div className={styles.parallelWorkflowIntro}>
             <div>
               <strong>Rebate receipts and final payment</strong>
-              <small>Confirm each applicable rebate independently. An outstanding customer payment remains available alongside these checks.</small>
             </div>
           </div>
           <div className={`${styles.parallelWorkflowGrid} ${showPaymentTask ? styles.rebateWorkflowGrid : styles.singleParallelTask}`}>
@@ -1547,7 +1849,6 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
               icon={<BadgeCheck size={18} />}
               owner="Administrator"
               title="Rebate receipts"
-              description="Confirm each applicable STC or Solar Rebate receipt. Every receipt asks for confirmation before it is saved."
               wide={!showPaymentTask}
             >
               <div className={styles.stcActions}>
@@ -1557,6 +1858,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                   received={Boolean(project.stcSolarReceivedAt)}
                   busy={busy}
                   canConfirm={canConfirmStc}
+                  canSwitchRole={authenticatedRole === "admin"}
                   onClick={() => requestWorkflowConfirmation({
                     action: "confirm_stc_solar",
                     title: "Confirm Solar STC received?",
@@ -1572,6 +1874,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                   received={Boolean(project.stcBatteryReceivedAt)}
                   busy={busy}
                   canConfirm={canConfirmStc}
+                  canSwitchRole={authenticatedRole === "admin"}
                   onClick={() => requestWorkflowConfirmation({
                     action: "confirm_stc_battery",
                     title: "Confirm Battery STC received?",
@@ -1587,6 +1890,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                   received={Boolean(project.solarRebateReceivedAt)}
                   busy={busy}
                   canConfirm={canConfirmStc}
+                  canSwitchRole={authenticatedRole === "admin"}
                   onClick={() => requestWorkflowConfirmation({
                     action: "confirm_solar_rebate",
                     title: "Confirm Solar Rebate received?",
@@ -1646,7 +1950,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
           <button type="button" aria-label="Dismiss notification" onClick={() => setNotice("")}><X size={14} /></button>
         </div>
       ) : null}
-      {error ? (
+      {error && (!selected || showAdminLogin || workflowConfirmation) ? (
         <div className={styles.error} role="alert">
           <AlertCircle size={16} /><span>{error}</span>
           <button type="button" aria-label="Dismiss error" onClick={() => setError("")}><X size={14} /></button>
@@ -1729,23 +2033,23 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
               const status = projectStatus(project);
               const nextStep = projectNextStep(project, role);
               const canContinue = nextStep.roles.includes(role);
-              const stage = STAGES.find((item) => item.id === project.stage);
               const isSettledDone = project.stage === "done" && project.outstandingCents === 0;
+              const finalPaymentOverdue = isFinalPaymentOverdue(project, finalPaymentStatusNow);
               return (
                 <button
                   key={project.id}
                   type="button"
-                  className={`${styles.projectListRow} ${isSettledDone ? styles.settledListRow : ""}`}
+                  className={`${styles.projectListRow} ${isSettledDone ? styles.settledListRow : ""} ${finalPaymentOverdue ? styles.overdueFinalPaymentListRow : ""}`}
                   onClick={(event) => openProject(project, event.currentTarget)}
-                  aria-label={`Open ${customerName(project)}, ${stageLabel(project.stage)}, ${formatMoney(project.outstandingCents)} due, next owner ${status.owner}, next action ${nextStep.label}`}
+                  aria-label={`Open ${customerName(project)}, ${displayedProjectStage(project)}, ${formatMoney(project.outstandingCents)} due${finalPaymentOverdue ? ", final payment overdue" : ""}, next owner ${status.owner}, next action ${nextStep.label}`}
                 >
                   <span className={styles.listProjectIdentity}>
                     <strong>{customerName(project)}</strong>
                     <small>{project.reference} · Proposal {project.quoteNumber}</small>
                     <small><MapPin size={12} /> {customerAddress(project)}</small>
                   </span>
-                  <span className={`${styles.listStageBadge} ${styles[stage?.tone || "blue"]}`}>
-                    {stageLabel(project.stage)}
+                  <span className={`${styles.listStageBadge} ${styles[displayedProjectStageTone(project)]}`}>
+                    {displayedProjectStage(project)}
                   </span>
                   <span className={styles.listAmount}>
                     <strong>{formatMoney(project.outstandingCents)}</strong>
@@ -1836,23 +2140,29 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                     <span className={styles.columnDot} aria-hidden="true" />
                     <div>
                       <h2 id={`column-${column.id}`}>{column.title}</h2>
-                      <p>{column.description}</p>
                     </div>
                     <b>{columnProjects.length}</b>
                   </header>
                   <div className={styles.cardList}>
                     {columnProjects.map((project) => {
                       const status = projectStatus(project);
+                      const hasCurrentScheduleStatus = projectHasScheduledCurrentStage(project)
+                        || projectHasPreScheduledCurrentStage(project)
+                        || projectHasUnscheduledCurrentStage(project);
+                      const scheduleWorkflowStatus = hasCurrentScheduleStatus
+                        ? { label: displayedProjectStage(project), tone: displayedProjectStageTone(project) }
+                        : null;
                       const nextStep = projectNextStep(project, role);
                       const canContinue = nextStep.roles.includes(role);
                       const isSettledDone = project.stage === "done" && project.outstandingCents === 0;
+                      const finalPaymentOverdue = isFinalPaymentOverdue(project, finalPaymentStatusNow);
                       return (
                         <button
-                          className={`${styles.projectCard} ${isSettledDone ? styles.settledDoneCard : ""}`}
+                          className={`${styles.projectCard} ${isSettledDone ? styles.settledDoneCard : ""} ${finalPaymentOverdue ? styles.overdueFinalPaymentCard : ""}`}
                           key={project.id}
                           type="button"
                           onClick={(event) => openProject(project, event.currentTarget)}
-                          aria-label={`Open ${customerName(project)}, proposal ${project.quoteNumber}`}
+                          aria-label={`Open ${customerName(project)}, proposal ${project.quoteNumber}${finalPaymentOverdue ? ", final payment overdue" : ""}`}
                         >
                           {isSettledDone ? (
                             <>
@@ -1876,20 +2186,28 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                                 <span><UserRound size={13} /> {project.specialist.name}</span>
                                 <span><Boxes size={13} /> {project.items.length} {project.items.length === 1 ? "item" : "items"}</span>
                               </div>
-                              {project.stage === "material_delivery" && project.deliveryScheduledFor ? (
+                              {project.stage === "material_delivery" && (project.deliveryScheduledFor || project.deliveryScheduleRequest) ? (
                                 <div className={styles.cardSchedule}>
-                                  <span><CalendarDays size={13} /> {formatScheduledAt(project.deliveryScheduledFor, project.deliveryScheduledTime)}</span>
-                                  <strong><UserRound size={13} /> {project.deliveryAssignee || "Unassigned"}</strong>
+                                  <span><CalendarDays size={13} /> {formatScheduledAt(
+                                    project.deliveryScheduledFor || project.deliveryScheduleRequest?.preferredDate || null,
+                                    project.deliveryScheduledTime || project.deliveryScheduleRequest?.preferredTime || null,
+                                  )}</span>
+                                  <strong><UserRound size={13} /> {project.deliveryAssignee || "PM review"}</strong>
                                 </div>
                               ) : null}
-                              {project.stage === "installing" && project.installationScheduledFor ? (
+                              {project.stage === "installing" && (project.installationScheduledFor || project.installationScheduleRequest) ? (
                                 <div className={styles.cardSchedule}>
-                                  <span><CalendarDays size={13} /> {formatScheduledAt(project.installationScheduledFor, project.installationScheduledTime)}</span>
-                                  <strong><UserRound size={13} /> {project.installationAssignee || "Unassigned"}</strong>
+                                  <span><CalendarDays size={13} /> {formatScheduledAt(
+                                    project.installationScheduledFor || project.installationScheduleRequest?.preferredDate || null,
+                                    project.installationScheduledTime || project.installationScheduleRequest?.preferredTime || null,
+                                  )}</span>
+                                  <strong><UserRound size={13} /> {project.installationAssignee || "PM review"}</strong>
                                 </div>
                               ) : null}
                               <div className={styles.cardFooter}>
-                                <span className={`${styles.substatus} ${styles[status.tone]}`}>{status.label}</span>
+                                <span className={`${styles.substatus} ${styles[scheduleWorkflowStatus?.tone || status.tone]}`}>
+                                  {scheduleWorkflowStatus?.label || status.label}
+                                </span>
                                 <small>{status.owner}</small>
                               </div>
                               <span className={`${styles.cardNextStep} ${canContinue ? styles.cardNextReady : ""}`}>
@@ -2006,10 +2324,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
               <form className={styles.importForm} onSubmit={importAgreement}>
                 <div className={styles.importIntro}>
                   <span><FileCheck2 size={22} /></span>
-                  <div>
-                    <strong>Import a Solar Proposal</strong>
-                    <p>We will extract the Sales representative, Proposal Number, customer, system items, deposit and Balance Due. You can verify everything in Project Details.</p>
-                  </div>
+                  <strong>Import a Solar Proposal</strong>
                 </div>
                 <label className={styles.uploadField}>
                   <input
@@ -2022,10 +2337,6 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                   <strong>{agreement?.name || "Choose Solar Proposal PDF"}</strong>
                   <small>{agreement ? fileSize(agreement.size) : "PDF · maximum 15 MB"}</small>
                 </label>
-                <div className={styles.importChecks}>
-                  <span><CheckCircle2 size={15} /> Starts in Deposit Not Paid</span>
-                  <span><CheckCircle2 size={15} /> Original PDF stays attached</span>
-                </div>
                 <footer className={styles.modalFooter}>
                   <button className={styles.secondaryButton} type="button" disabled={busy} onClick={() => setShowAdd(false)}>Cancel</button>
                   <button className={styles.primaryButton} type="submit" disabled={busy || !agreement}>
@@ -2073,7 +2384,6 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                     <label className={styles.fullField}>
                       Project items
                       <textarea required name="items" rows={4} placeholder={"One item per line: Model | Description | Qty | Capacity\nLR7-54HVH-475M | Solar panel | 14 | 475W"} />
-                      <small>Use a new line for each item. Quantity defaults to 1.</small>
                     </label>
                     <fieldset className={styles.fullField}>
                       <legend>Applicable rebate receipts</legend>
@@ -2105,7 +2415,6 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
             </header>
             <form className={styles.loginForm} onSubmit={submitAdminLogin}>
               <div className={styles.loginIcon}><ShieldCheck size={23} /></div>
-              <p>Sign in before confirming money received. This keeps payment approvals separate from operational updates.</p>
               <label>Administrator password<input autoFocus required type="password" name="password" autoComplete="current-password" /></label>
               {adminSession.demoPassword ? <div className={styles.demoHint}>Local demo password: <strong>{adminSession.demoPassword}</strong></div> : null}
               <footer className={styles.modalFooter}>
@@ -2121,8 +2430,18 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
       ) : null}
 
       {selected && !showAdminLogin && !workflowConfirmation ? (
-        <div className={styles.backdrop} onMouseDown={closeFromBackdrop}>
-          <div className={`${styles.modal} ${styles.detailModal}`} role="dialog" aria-modal="true" aria-labelledby="project-detail-title">
+        <div className={`${styles.backdrop} ${showDeliveryPicker ? styles.detailPickerBackdrop : ""}`} onMouseDown={closeFromBackdrop}>
+          <div
+            className={`${styles.detailPickerShell} ${showDeliveryPicker ? styles.detailPickerShellOpen : ""}`}
+            role={showDeliveryPicker ? undefined : "dialog"}
+            aria-modal={showDeliveryPicker ? undefined : "true"}
+            aria-labelledby={showDeliveryPicker ? undefined : "project-detail-title"}
+          >
+          <div
+            className={`${styles.modal} ${styles.detailModal}`}
+            inert={showDeliveryPicker ? true : undefined}
+            aria-hidden={showDeliveryPicker ? "true" : undefined}
+          >
             <header className={styles.detailHeader}>
               <div className={styles.detailHeaderMain}>
                 <div className={styles.detailHeaderTitle}>
@@ -2130,8 +2449,8 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                   <h2 id="project-detail-title">{customerName(selected)}</h2>
                 </div>
                 <div className={styles.detailHeaderMeta}>
-                  <span className={`${styles.stageBadge} ${styles[STAGES.find((item) => item.id === selected.stage)?.tone || "blue"]}`}>
-                    {stageLabel(selected.stage)}
+                  <span className={`${styles.stageBadge} ${styles[displayedProjectStageTone(selected)]}`}>
+                    {displayedProjectStage(selected)}
                   </span>
                   <span className={styles.detailStatus}>{projectStatus(selected).label}</span>
                 </div>
@@ -2142,6 +2461,18 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
               </div>
             </header>
             <div className={styles.detailBody}>
+              {error ? (
+                <div className={`${styles.error} ${styles.modalError}`} role="alert">
+                  <AlertCircle size={16} />
+                  <span>{error}</span>
+                  <div className={styles.modalErrorActions}>
+                    <button type="button" disabled={busy} onClick={reloadSelectedProject}>
+                      <RefreshCw size={14} /> Reload project
+                    </button>
+                    <button type="button" disabled={busy} aria-label="Dismiss error" onClick={() => setError("")}><X size={14} /></button>
+                  </div>
+                </div>
+              ) : null}
               <section className={styles.detailAmounts} aria-label="Receivable summary">
                 <div><span>Original Balance Due</span><strong>{formatMoney(selected.balanceDueCents)}</strong></div>
                 <div><span>Expected Deposit</span><strong>{selected.expectedDepositCents === null ? "—" : formatMoney(selected.expectedDepositCents)}</strong></div>
@@ -2164,10 +2495,7 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                   <div className={`${styles.actionPanel} ${styles.adminSkipPanel}`}>
                     <div className={styles.actionHeading}>
                       <span><SkipForward size={18} /></span>
-                      <div>
-                        <strong>Administrator stage override</strong>
-                        <small>Use only when the current stage was already completed outside ERP. The action is recorded in project history.</small>
-                      </div>
+                      <strong>Administrator stage override</strong>
                     </div>
                     <button
                       className={styles.secondaryButton}
@@ -2207,15 +2535,25 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                     <div>
                       <dt>Material delivery</dt>
                       <dd>
-                        {formatScheduledAt(selected.deliveryScheduledFor, selected.deliveryScheduledTime)}
-                        {selected.deliveryAssignee ? ` · ${selected.deliveryAssignee}` : ""}
+                        {formatScheduledAt(
+                          selected.deliveryScheduledFor || selected.deliveryScheduleRequest?.preferredDate || null,
+                          selected.deliveryScheduledTime || selected.deliveryScheduleRequest?.preferredTime || null,
+                        )}
+                        {selected.deliveryAssignee
+                          ? ` · ${selected.deliveryAssignee}`
+                          : selected.deliveryScheduleRequest ? " · Pre-scheduled" : ""}
                       </dd>
                     </div>
                     <div>
-                      <dt>Installation</dt>
+                      <dt>Installment</dt>
                       <dd>
-                        {formatScheduledAt(selected.installationScheduledFor, selected.installationScheduledTime)}
-                        {selected.installationAssignee ? ` · ${selected.installationAssignee}` : ""}
+                        {formatScheduledAt(
+                          selected.installationScheduledFor || selected.installationScheduleRequest?.preferredDate || null,
+                          selected.installationScheduledTime || selected.installationScheduleRequest?.preferredTime || null,
+                        )}
+                        {selected.installationAssignee
+                          ? ` · ${selected.installationAssignee}`
+                          : selected.installationScheduleRequest ? " · Pre-scheduled" : ""}
                       </dd>
                     </div>
                     <div><dt>Created</dt><dd>{formatDate(selected.createdAt, true)}</dd></div>
@@ -2223,25 +2561,54 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
                 </section>
               </div>
 
-              <section className={styles.detailSection}>
-                <h3><Boxes size={16} /> System Items <span>{selected.items.length}</span></h3>
-                <div className={styles.itemTableScroll}>
-                  <table className={styles.itemTable}>
-                    <thead><tr><th>Category</th><th>Model</th><th>Description</th><th>Capacity</th><th>Qty</th></tr></thead>
-                    <tbody>
-                      {selected.items.map((item) => (
-                        <tr key={item.id}>
-                          <td><span>{item.category || "Item"}</span></td>
-                          <td><strong>{item.model || "—"}</strong></td>
-                          <td>{item.description || "—"}</td>
-                          <td>{item.capacity || "—"}</td>
-                          <td>{item.quantity}</td>
-                        </tr>
+              <div className={styles.deliveryComparisonGrid}>
+                <section className={styles.detailSection}>
+                  <h3><Boxes size={16} /> Order Items <span>{selected.items.length}</span></h3>
+                  <div className={styles.itemTableScroll}>
+                    <table className={styles.itemTable}>
+                      <thead><tr><th>Category</th><th>Model</th><th>Description</th><th>Capacity</th><th>Qty</th></tr></thead>
+                      <tbody>
+                        {selected.items.map((item) => (
+                          <tr key={item.id}>
+                            <td><span>{item.category || "Item"}</span></td>
+                            <td><strong>{item.model || "—"}</strong></td>
+                            <td>{item.description || "—"}</td>
+                            <td>{item.capacity || "—"}</td>
+                            <td>{item.quantity}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+
+                <section className={`${styles.detailSection} ${styles.chosenItemsSection}`}>
+                  <h3>
+                    <PackageCheck size={16} /> Chosen Items <span>{deliverySelectionDraft.length}</span>
+                    {role === "sales"
+                      && selected.stage === "material_delivery"
+                      && !selected.deliveredAt
+                      && !hasDeliverySchedule(selected) ? (
+                      <button type="button" onClick={(event) => openDeliveryPicker(event.currentTarget)}>{deliverySelectionDraft.length ? "Edit" : "Choose items"}</button>
+                    ) : null}
+                  </h3>
+                  {deliverySelectionDraft.length ? (
+                    <ul className={styles.chosenItemsList} aria-label="Chosen warehouse items">
+                      {deliverySelectionDraft.map((item) => (
+                        <li key={item.sku} title={`${item.sku} × ${item.quantity}`}>
+                          <strong>{item.sku}</strong>
+                          <span>× {item.quantity}</span>
+                        </li>
                       ))}
-                    </tbody>
-                  </table>
-                </div>
-              </section>
+                    </ul>
+                  ) : (
+                    <div className={styles.chosenItemsEmpty}>
+                      <Warehouse size={20} />
+                      <strong>No warehouse items chosen</strong>
+                    </div>
+                  )}
+                </section>
+              </div>
 
               <section className={styles.detailSection}>
                 <h3><Paperclip size={16} /> Files</h3>
@@ -2292,6 +2659,28 @@ export function PaymentTrackWorkspace({ authenticatedRole }: { authenticatedRole
 
             </div>
           </div>
+          {showDeliveryPicker ? (
+            <aside
+              ref={deliveryPickerDialogRef}
+              className={styles.deliveryPickerDrawer}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="material-delivery-picker-title"
+              tabIndex={-1}
+            >
+              <MaterialDeliveryPicker
+                project={selected}
+                selections={deliverySelectionDraft}
+                onBack={closeDeliveryPicker}
+                onSaved={(selections) => {
+                  setDeliverySelectionDraft(selections);
+                  closeDeliveryPicker();
+                  setNotice("Chosen warehouse items are ready. Submit the delivery preference to save them.");
+                }}
+              />
+            </aside>
+          ) : null}
+          </div>
         </div>
       ) : null}
     </section>
@@ -2302,14 +2691,12 @@ function ParallelActionCard({
   icon,
   owner,
   title,
-  description,
   children,
   wide = false,
 }: {
   icon: React.ReactNode;
   owner: string;
   title: string;
-  description: string;
   children: React.ReactNode;
   wide?: boolean;
 }) {
@@ -2319,7 +2706,6 @@ function ParallelActionCard({
         <span>{icon}</span>
         <div><small>{owner}</small><strong>{title}</strong></div>
       </div>
-      <p>{description}</p>
       {children}
     </article>
   );
@@ -2328,19 +2714,21 @@ function ParallelActionCard({
 function ReadOnlyNextStep({
   owner,
   label,
+  allowContinue = false,
   buttonLabel,
   onContinue,
 }: {
   owner: string;
   label: string;
+  allowContinue?: boolean;
   buttonLabel?: string;
   onContinue?: () => void;
 }) {
   return (
-    <div className={styles.readOnlyStep}>
+    <div className={styles.readOnlyStep} aria-label={`Next owner: ${owner}. ${label}`}>
       <span><Clock3 size={18} /></span>
-      <div><strong>Next owner: {owner}</strong><small>{label}</small></div>
-      {buttonLabel && onContinue ? (
+      <div><strong>Next owner: {owner}</strong></div>
+      {allowContinue && buttonLabel && onContinue ? (
         <button className={styles.secondaryButton} type="button" onClick={onContinue}>
           {buttonLabel} <ChevronRight size={15} />
         </button>
@@ -2370,13 +2758,13 @@ function ProofAction({
     <div className={`${styles.actionPanel} ${styles.proofChoicePanel}`}>
       <div className={styles.proofChoiceHeader}>
         <span><UploadCloud size={18} /></span>
-        <div><strong>{label}</strong><small>Choose one payment confirmation method.</small></div>
+        <strong>{label}</strong>
       </div>
       <div className={styles.proofChoiceGrid}>
         <section className={styles.proofChoiceCard} aria-label="Upload payment proof">
           <div className={styles.proofChoiceCardHeader}>
             <span className={styles.proofChoiceIcon}><Paperclip size={18} /></span>
-            <div><strong>Upload proof</strong><small>Attach a screenshot or PDF for Administrator review.</small></div>
+            <strong>Upload proof</strong>
           </div>
           <div className={styles.proofUploadControls}>
             <label
@@ -2406,7 +2794,7 @@ function ProofAction({
         <section className={`${styles.proofChoiceCard} ${styles.confirmPaidChoice}`} aria-label="Confirm paid without proof">
           <div className={styles.proofChoiceCardHeader}>
             <span className={styles.proofChoiceIcon}><CheckCircle2 size={18} /></span>
-            <div><strong>Confirm paid</strong><small>No file available? Confirm payment and send it to Administrator review.</small></div>
+            <strong>Confirm paid</strong>
           </div>
           <button className={styles.confirmPaidButton} type="button" disabled={busy} onClick={onConfirmPaid}>
             <CheckCircle2 size={16} /> Confirm Paid — No Upload
@@ -2436,7 +2824,7 @@ function AmountAction({
     <div className={styles.actionPanel}>
       <div className={styles.actionHeading}>
         <span><Banknote size={18} /></span>
-        <div><strong>Administrator payment confirmation</strong><small>Record the amount actually received. Zero is allowed; negative values are not.</small></div>
+        <strong>Administrator payment confirmation</strong>
       </div>
       <label className={styles.actionField}>
         {label} (AUD)
@@ -2453,14 +2841,12 @@ function AmountAction({
 function SimpleAction({
   icon,
   title,
-  description,
   button,
   busy,
   onClick,
 }: {
   icon: React.ReactNode;
   title: string;
-  description: string;
   button: string;
   busy: boolean;
   onClick: () => void;
@@ -2469,7 +2855,7 @@ function SimpleAction({
     <div className={styles.actionPanel}>
       <div className={styles.actionHeading}>
         <span>{icon}</span>
-        <div><strong>{title}</strong><small>{description}</small></div>
+        <strong>{title}</strong>
       </div>
       <button className={styles.primaryButton} type="button" disabled={busy} onClick={onClick}>
         {busy ? <LoaderCircle className={styles.spinning} size={16} /> : <CheckCircle2 size={16} />}
@@ -2485,6 +2871,7 @@ function StcAction({
   received,
   busy,
   canConfirm,
+  canSwitchRole,
   onClick,
   onSwitchRole,
 }: {
@@ -2493,11 +2880,15 @@ function StcAction({
   received: boolean;
   busy: boolean;
   canConfirm: boolean;
+  canSwitchRole: boolean;
   onClick: () => void;
   onSwitchRole: () => void;
 }) {
   if (!required) return <div className={styles.stcRow}><span>{label}</span><small>Not applicable</small></div>;
   if (received) return <div className={`${styles.stcRow} ${styles.received}`}><span>{label}</span><small><CheckCircle2 size={14} /> Received</small></div>;
+  if (!canConfirm && !canSwitchRole) {
+    return <div className={styles.stcRow}><span>{label}</span><small>Waiting for Administrator</small></div>;
+  }
   return (
     <div className={styles.stcRow}>
       <span>{label}</span>

@@ -12,6 +12,7 @@ import * as paymentTrackTypes from "./types.ts";
 import type {
   PaymentTrackAction,
   PaymentTrackCustomer,
+  PaymentTrackDeliverySelection,
   PaymentTrackFile,
   PaymentTrackFinalPayment,
   PaymentTrackHistoryAction,
@@ -21,6 +22,7 @@ import type {
   PaymentTrackReceipt,
   PaymentTrackRole,
   PaymentTrackScheduleAssignee,
+  PaymentTrackScheduleRequest,
   PaymentTrackSpecialist,
   PaymentTrackUploadContentType,
 } from "./types";
@@ -72,6 +74,11 @@ type StoredProject = Omit<
   | "deliveryScheduledFor"
   | "deliveryScheduledTime"
   | "deliveryAssignee"
+  | "deliverySelections"
+  | "deliveryPreparedAt"
+  | "deliveryPreparedBy"
+  | "deliveryScheduleRequest"
+  | "installationScheduleRequest"
   | "installationScheduledFor"
   | "installationScheduledTime"
   | "installationAssignee"
@@ -95,7 +102,14 @@ type StoredProject = Omit<
   deliveryScheduledFor?: string | null;
   deliveryScheduledTime?: string | null;
   deliveryAssignee?: PaymentTrackScheduleAssignee | null;
+  // Optional so records written before warehouse item preparation remain readable.
+  deliverySelections?: PaymentTrackDeliverySelection[];
+  deliveryPreparedAt?: string | null;
+  deliveryPreparedBy?: string | null;
+  // Optional so records written before Sales scheduling requests remain readable.
+  deliveryScheduleRequest?: PaymentTrackScheduleRequest | null;
   // Optional so records written before installation scheduling remain readable.
+  installationScheduleRequest?: PaymentTrackScheduleRequest | null;
   installationScheduledFor?: string | null;
   installationScheduledTime?: string | null;
   installationAssignee?: PaymentTrackScheduleAssignee | null;
@@ -125,9 +139,12 @@ export type PaymentTrackTransitionInput = {
   actorName?: string;
   amountCents?: number;
   paymentId?: string;
+  preferredDate?: string;
+  preferredTime?: string;
   deliveryDate?: string;
   deliveryTime?: string;
   deliveryAssignee?: PaymentTrackScheduleAssignee;
+  deliverySelections?: PaymentTrackDeliverySelection[];
   installationDate?: string;
   installationTime?: string;
   installationAssignee?: PaymentTrackScheduleAssignee;
@@ -376,6 +393,15 @@ function publicProject(project: StoredProject): PaymentTrackProject {
     deliveryAssignee: validScheduleAssignee(project.deliveryAssignee)
       ? project.deliveryAssignee
       : null,
+    deliverySelections: normalizedStoredDeliverySelections(project.deliverySelections) || [],
+    deliveryPreparedAt: storedPmNotesTimestamp(project.deliveryPreparedAt)
+      ? project.deliveryPreparedAt
+      : null,
+    deliveryPreparedBy: typeof project.deliveryPreparedBy === "string"
+      ? project.deliveryPreparedBy
+      : null,
+    deliveryScheduleRequest: normalizedStoredScheduleRequest(project.deliveryScheduleRequest),
+    installationScheduleRequest: normalizedStoredScheduleRequest(project.installationScheduleRequest),
     installationScheduledFor: typeof project.installationScheduledFor === "string"
       && validDeliveryDate(project.installationScheduledFor)
       ? project.installationScheduledFor
@@ -439,6 +465,28 @@ function storedPmNotesTimestamp(value: unknown): value is string {
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value;
 }
 
+function normalizedStoredScheduleRequest(value: unknown): PaymentTrackScheduleRequest | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const candidate = value as Partial<Record<keyof PaymentTrackScheduleRequest, unknown>>;
+  if (!validDeliveryDate(candidate.preferredDate)
+    || !validScheduleTime(candidate.preferredTime)
+    || typeof candidate.notes !== "string"
+    || candidate.notes.length > 2_000
+    || /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(candidate.notes)
+    || !storedPmNotesTimestamp(candidate.submittedAt)
+    || typeof candidate.submittedBy !== "string"
+    || !candidate.submittedBy.trim()
+    || candidate.submittedBy.trim().length > 120
+    || /[\u0000-\u001F\u007F]/.test(candidate.submittedBy)) return null;
+  return {
+    preferredDate: candidate.preferredDate,
+    preferredTime: candidate.preferredTime,
+    notes: candidate.notes.trim(),
+    submittedAt: candidate.submittedAt,
+    submittedBy: candidate.submittedBy.trim(),
+  };
+}
+
 async function migrateLegacyProjectStages(projects: StoredProject[], fallbackTimestamp: string) {
   let changed = false;
   for (const project of projects) {
@@ -468,6 +516,56 @@ async function migrateLegacyProjectStages(projects: StoredProject[], fallbackTim
     }
     if (project.deliveryAssignee !== null && !validScheduleAssignee(project.deliveryAssignee)) {
       project.deliveryAssignee = null;
+      changed = true;
+    }
+    const normalizedSelections = normalizedStoredDeliverySelections(project.deliverySelections);
+    if (!normalizedSelections) {
+      const selectionsAreCanonicalEmpty = Array.isArray(project.deliverySelections)
+        && project.deliverySelections.length === 0;
+      const preparationIsCanonicalEmpty = project.deliveryPreparedAt === null
+        && project.deliveryPreparedBy === null;
+      if (!selectionsAreCanonicalEmpty || !preparationIsCanonicalEmpty) {
+        project.deliverySelections = [];
+        project.deliveryPreparedAt = null;
+        project.deliveryPreparedBy = null;
+        changed = true;
+      }
+    } else if (JSON.stringify(project.deliverySelections) !== JSON.stringify(normalizedSelections)) {
+      project.deliverySelections = normalizedSelections;
+      changed = true;
+    }
+    if (!normalizedSelections
+      && project.deliveryScheduleRequest !== null
+      && project.deliveryScheduleRequest !== undefined) {
+      project.deliveryScheduleRequest = null;
+      changed = true;
+    }
+    if (project.deliveryPreparedAt !== null && !storedPmNotesTimestamp(project.deliveryPreparedAt)) {
+      project.deliveryPreparedAt = null;
+      changed = true;
+    }
+    if (project.deliveryPreparedBy !== null && typeof project.deliveryPreparedBy !== "string") {
+      project.deliveryPreparedBy = null;
+      changed = true;
+    }
+    const normalizedDeliveryRequest = normalizedStoredScheduleRequest(project.deliveryScheduleRequest);
+    if (!normalizedDeliveryRequest) {
+      if (project.deliveryScheduleRequest !== null) {
+        project.deliveryScheduleRequest = null;
+        changed = true;
+      }
+    } else if (JSON.stringify(project.deliveryScheduleRequest) !== JSON.stringify(normalizedDeliveryRequest)) {
+      project.deliveryScheduleRequest = normalizedDeliveryRequest;
+      changed = true;
+    }
+    const normalizedInstallationRequest = normalizedStoredScheduleRequest(project.installationScheduleRequest);
+    if (!normalizedInstallationRequest) {
+      if (project.installationScheduleRequest !== null) {
+        project.installationScheduleRequest = null;
+        changed = true;
+      }
+    } else if (JSON.stringify(project.installationScheduleRequest) !== JSON.stringify(normalizedInstallationRequest)) {
+      project.installationScheduleRequest = normalizedInstallationRequest;
       changed = true;
     }
     if (project.installationScheduledTime !== null && !validScheduleTime(project.installationScheduledTime)) {
@@ -635,6 +733,10 @@ function buildProject(
     deliveryScheduledFor: null,
     deliveryScheduledTime: null,
     deliveryAssignee: null,
+    deliverySelections: [],
+    deliveryPreparedAt: null,
+    deliveryPreparedBy: null,
+    deliveryScheduleRequest: null,
     deliveredAt: null,
     collection: {
       proof: null,
@@ -644,6 +746,7 @@ function buildProject(
       confirmedAt: null,
       confirmedBy: null,
     },
+    installationScheduleRequest: null,
     installationScheduledFor: null,
     installationScheduledTime: null,
     installationAssignee: null,
@@ -829,6 +932,115 @@ function deliveryScheduleIsComplete(project: StoredProject) {
     && validScheduleAssignee(project.deliveryAssignee);
 }
 
+function normalizedStoredDeliverySelections(value: unknown): PaymentTrackDeliverySelection[] | null {
+  if (!Array.isArray(value) || !value.length || value.length > 100) return null;
+  const quantities = new Map<string, number>();
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+    const candidate = entry as { sku?: unknown; quantity?: unknown };
+    // The first picker stored null rows for order lines that were not supplied
+    // from the warehouse. Ignore those rows while migrating to the independent
+    // chosen-item list.
+    if (candidate.sku === null && candidate.quantity === 0) {
+      continue;
+    }
+    if (typeof candidate.sku !== "string"
+      || !candidate.sku.trim()
+      || candidate.sku.length > 160
+      || /[\u0000-\u001F\u007F]/.test(candidate.sku)
+      || typeof candidate.quantity !== "number"
+      || !Number.isInteger(candidate.quantity)
+      || candidate.quantity < 1
+      || candidate.quantity > 100_000) return null;
+    const sku = candidate.sku.trim();
+    const total = (quantities.get(sku) || 0) + (candidate.quantity as number);
+    if (total > 100_000) return null;
+    quantities.set(sku, total);
+  }
+  if (!quantities.size) return null;
+  return [...quantities].map(([sku, quantity]) => ({ sku, quantity }));
+}
+
+function validStoredDeliverySelections(value: unknown): value is PaymentTrackDeliverySelection[] {
+  return normalizedStoredDeliverySelections(value) !== null;
+}
+
+function normalizedDeliverySelections(
+  value: PaymentTrackDeliverySelection[] | undefined,
+) {
+  const normalized = normalizedStoredDeliverySelections(value);
+  if (!normalized) {
+    throw new PaymentTrackRepositoryError(
+      "Choose one or more valid warehouse SKU and quantity lines.",
+      400,
+      "invalid_delivery_items",
+    );
+  }
+  return normalized;
+}
+
+function normalizedScheduleRequestNotes(value: string | undefined) {
+  if (value !== undefined && typeof value !== "string") {
+    throw new PaymentTrackRepositoryError(
+      "Scheduling preference notes must be text when provided.",
+      400,
+      "invalid_schedule_request_notes",
+    );
+  }
+  const notes = value?.trim() || "";
+  if (notes.length > 2_000
+    || /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(notes)) {
+    throw new PaymentTrackRepositoryError(
+      "Scheduling preference notes must be 2,000 characters or fewer.",
+      400,
+      "invalid_schedule_request_notes",
+    );
+  }
+  return notes;
+}
+
+function scheduleRequest(
+  preferredDate: string | undefined,
+  preferredTime: string | undefined,
+  notes: string | undefined,
+  timestamp: string,
+  submittedBy: string,
+): PaymentTrackScheduleRequest {
+  if (!validDeliveryDate(preferredDate) || !validScheduleTime(preferredTime)) {
+    throw new PaymentTrackRepositoryError(
+      "Choose a valid preferred date and time.",
+      400,
+      "invalid_schedule_request",
+    );
+  }
+  return {
+    preferredDate,
+    preferredTime,
+    notes: normalizedScheduleRequestNotes(notes),
+    submittedAt: timestamp,
+    submittedBy,
+  };
+}
+
+function deliveryPreScheduleIsComplete(project: StoredProject) {
+  return normalizedStoredScheduleRequest(project.deliveryScheduleRequest) !== null
+    && validStoredDeliverySelections(project.deliverySelections);
+}
+
+function installationPreScheduleIsComplete(project: StoredProject) {
+  return normalizedStoredScheduleRequest(project.installationScheduleRequest) !== null;
+}
+
+function requireCurrentProjectVersion(project: StoredProject, expectedUpdatedAt: string | undefined) {
+  if (!expectedUpdatedAt || expectedUpdatedAt !== project.updatedAt) {
+    throw new PaymentTrackRepositoryError(
+      "This project changed after you opened it. Reload and review the latest scheduling request before saving.",
+      409,
+      "stale_project",
+    );
+  }
+}
+
 function installationScheduleIsComplete(project: StoredProject) {
   return validDeliveryDate(project.installationScheduledFor)
     && validScheduleTime(project.installationScheduledTime)
@@ -986,14 +1198,75 @@ export function transitionPaymentTrackProject(
       project.deposit.confirmedBy = actor;
       project.stage = "material_delivery";
       project.history.push(historyEntry("deposit_confirmed", timestamp, "admin", actor, `AUD ${(amount / 100).toFixed(2)}`));
-    } else if (action === "schedule_delivery") {
-      requireRole(input.actorRole, ["pm"], "Only the Project Manager can schedule delivery.");
+    } else if (action === "prepare_delivery") {
+      requireRole(input.actorRole, ["sales"], "Only Sales can prepare delivery items.");
       if (project.stage !== "material_delivery"
         || project.deliveredAt
+        || deliveryScheduleIsComplete(project)
+        || normalizedStoredScheduleRequest(project.deliveryScheduleRequest)) {
+        throw new PaymentTrackRepositoryError(
+          "Warehouse items can only be prepared before Sales submits the delivery request.",
+          409,
+          "invalid_transition",
+        );
+      }
+      requireCurrentProjectVersion(project, input.expectedUpdatedAt);
+      project.deliverySelections = normalizedDeliverySelections(input.deliverySelections);
+      project.deliveryPreparedAt = timestamp;
+      project.deliveryPreparedBy = actor;
+      const selectedCount = project.deliverySelections.length;
+      project.history.push(historyEntry(
+        "delivery_items_prepared",
+        timestamp,
+        "sales",
+        actor,
+        `${selectedCount} warehouse item ${selectedCount === 1 ? "line" : "lines"} prepared`,
+      ));
+    } else if (action === "pre_schedule_delivery") {
+      requireRole(input.actorRole, ["sales"], "Only Sales can submit a delivery scheduling request.");
+      if (project.stage !== "material_delivery"
+        || project.deliveredAt
+        || deliveryScheduleIsComplete(project)) {
+        throw new PaymentTrackRepositoryError(
+          "A delivery request can only be submitted before the Project Manager schedules delivery.",
+          409,
+          "invalid_transition",
+        );
+      }
+      requireCurrentProjectVersion(project, input.expectedUpdatedAt);
+      project.deliverySelections = normalizedDeliverySelections(input.deliverySelections);
+      project.deliveryPreparedAt = timestamp;
+      project.deliveryPreparedBy = actor;
+      project.deliveryScheduleRequest = scheduleRequest(
+        input.preferredDate,
+        input.preferredTime,
+        input.notes,
+        timestamp,
+        actor,
+      );
+      // Clear any incomplete legacy final schedule so it cannot be mistaken for
+      // the Project Manager's confirmation of this new Sales request.
+      project.deliveryScheduledFor = null;
+      project.deliveryScheduledTime = null;
+      project.deliveryAssignee = null;
+      const selectedCount = project.deliverySelections.length;
+      project.history.push(historyEntry(
+        "delivery_pre_scheduled",
+        timestamp,
+        "sales",
+        actor,
+        `${input.preferredDate} ${input.preferredTime} · ${selectedCount} chosen warehouse ${selectedCount === 1 ? "line" : "lines"}`,
+      ));
+    } else if (action === "schedule_delivery") {
+      requireRole(input.actorRole, ["pm"], "Only the Project Manager can schedule delivery.");
+      requireCurrentProjectVersion(project, input.expectedUpdatedAt);
+      if (project.stage !== "material_delivery"
+        || project.deliveredAt
+        || (!deliveryPreScheduleIsComplete(project) && !deliveryScheduleIsComplete(project))
         || !validDeliveryDate(input.deliveryDate)
         || !validScheduleTime(input.deliveryTime)
         || !validScheduleAssignee(input.deliveryAssignee)) {
-        throw new PaymentTrackRepositoryError("Choose a valid delivery date, time and assignee before delivery is completed.", 409, "invalid_transition");
+        throw new PaymentTrackRepositoryError("Prepare warehouse items, then choose a valid delivery date, time and assignee.", 409, "invalid_transition");
       }
       project.deliveryScheduledFor = input.deliveryDate || null;
       project.deliveryScheduledTime = input.deliveryTime;
@@ -1034,19 +1307,51 @@ export function transitionPaymentTrackProject(
       project.collection.confirmedAt = timestamp;
       project.collection.confirmedBy = actor;
       project.stage = "installing";
+      project.installationScheduleRequest = null;
       project.installationScheduledFor = null;
       project.installationScheduledTime = null;
       project.installationAssignee = null;
       project.history.push(historyEntry("collection_confirmed", timestamp, "admin", actor, `AUD ${(amount / 100).toFixed(2)}`));
-    } else if (action === "schedule_installation") {
-      requireRole(input.actorRole, ["pm"], "Only the Project Manager can schedule installation.");
+    } else if (action === "pre_schedule_installation") {
+      requireRole(input.actorRole, ["sales"], "Only Sales can submit an installation scheduling request.");
       if (project.stage !== "installing"
         || project.installedAt
+        || installationScheduleIsComplete(project)) {
+        throw new PaymentTrackRepositoryError(
+          "An installation request can only be submitted before the Project Manager schedules installation.",
+          409,
+          "invalid_transition",
+        );
+      }
+      requireCurrentProjectVersion(project, input.expectedUpdatedAt);
+      project.installationScheduleRequest = scheduleRequest(
+        input.preferredDate,
+        input.preferredTime,
+        input.notes,
+        timestamp,
+        actor,
+      );
+      project.installationScheduledFor = null;
+      project.installationScheduledTime = null;
+      project.installationAssignee = null;
+      project.history.push(historyEntry(
+        "installation_pre_scheduled",
+        timestamp,
+        "sales",
+        actor,
+        `${input.preferredDate} ${input.preferredTime}`,
+      ));
+    } else if (action === "schedule_installation") {
+      requireRole(input.actorRole, ["pm"], "Only the Project Manager can schedule installation.");
+      requireCurrentProjectVersion(project, input.expectedUpdatedAt);
+      if (project.stage !== "installing"
+        || project.installedAt
+        || (!installationPreScheduleIsComplete(project) && !installationScheduleIsComplete(project))
         || !validDeliveryDate(input.installationDate)
         || !validScheduleTime(input.installationTime)
         || !validScheduleAssignee(input.installationAssignee)) {
         throw new PaymentTrackRepositoryError(
-          "Choose a valid installation date, time and assignee while the project is installing.",
+          "Choose a valid installation date, time and assignee while the project is in the Installment stage.",
           409,
           "invalid_transition",
         );
@@ -1192,6 +1497,13 @@ export function transitionPaymentTrackProject(
           );
         }
         nextStage = "material_delivery";
+        project.deliverySelections = [];
+        project.deliveryPreparedAt = null;
+        project.deliveryPreparedBy = null;
+        project.deliveryScheduleRequest = null;
+        project.deliveryScheduledFor = null;
+        project.deliveryScheduledTime = null;
+        project.deliveryAssignee = null;
       } else if (skippedStage === "material_delivery") {
         if (project.collection.proof || project.collection.acknowledgedAt) {
           throw new PaymentTrackRepositoryError(
@@ -1205,6 +1517,10 @@ export function transitionPaymentTrackProject(
           populatedFields.push(`deliveredAt=${timestamp}`);
         }
         nextStage = "installing";
+        project.installationScheduleRequest = null;
+        project.installationScheduledFor = null;
+        project.installationScheduledTime = null;
+        project.installationAssignee = null;
       } else if (skippedStage === "installing") {
         if (!project.installedAt) {
           project.installedAt = timestamp;

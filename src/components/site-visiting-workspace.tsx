@@ -671,9 +671,7 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
     <section className={styles.workspace}>
       <header className={styles.hero}>
         <div>
-          <span className={styles.kicker}>FIELD OPERATIONS</span>
           <h1>Site Visiting</h1>
-          <p>Request, approve and schedule each visit before the team captures site conditions.</p>
         </div>
         <button type="button" className={styles.primaryButton} onClick={() => { setError(""); setCreateOpen(true); }}>
           <Plus size={18} />New site visit
@@ -728,7 +726,6 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
         <div className={styles.emptyState}>
           <span><MapPin size={28} /></span>
           <h2>{visits.length ? "No visits match this view" : "Create your first site visit request"}</h2>
-          <p>{visits.length ? "Try another search or status filter." : "Submit the customer request now, then approve and schedule it before the visit."}</p>
           {!visits.length && <button type="button" className={styles.primaryButton} onClick={() => setCreateOpen(true)}><Plus size={18} />New site visit</button>}
         </div>
       )}
@@ -779,7 +776,7 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
 
               <div className={styles.detailGrid}>
                 <section className={styles.panel}>
-                  <div className={styles.panelTitle}><span><FileText size={18} /></span><div><h3>Request details</h3><p>Customer, reason and preferred time</p></div></div>
+                  <div className={styles.panelTitle}><span><FileText size={18} /></span><div><h3>Request details</h3></div></div>
                   <div className={styles.fieldGrid}>
                     <label className={styles.fullField}><span>Customer name</span><input value={detail.projectName} maxLength={160} readOnly={!coreDetailsEditable} onChange={(event) => updateDetail({ projectName: event.target.value }, coreDetailsDirtyKind)} /></label>
                     <label className={styles.fullField}><span>Site address</span><textarea value={detail.address} maxLength={300} rows={2} readOnly={!coreDetailsEditable} onChange={(event) => updateDetail({ address: event.target.value }, coreDetailsDirtyKind)} /></label>
@@ -792,20 +789,19 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
 
                 {detail.status === "pending_approval" ? (
                   <section className={`${styles.panel} ${styles.stagePanel}`}>
-                    <div className={styles.panelTitle}><span><CheckCircle2 size={18} /></span><div><h3>Approval</h3><p>The request must be approved before scheduling</p></div></div>
+                    <div className={styles.panelTitle}><span><CheckCircle2 size={18} /></span><div><h3>Approval</h3></div></div>
                     <div className={styles.stageCallout}>
                       <strong>{canApprove ? "Review this request" : "Awaiting Project Manager approval"}</strong>
-                      <p>{canApprove ? "Confirm the customer details, reason and preferred time, then approve the request." : "A Project Manager will review this request. Site checks and photos unlock after it is scheduled."}</p>
                     </div>
                   </section>
                 ) : detail.status === "cancelled" && !hasActualSchedule(detail) ? (
                   <section className={`${styles.panel} ${styles.stagePanel}`}>
-                    <div className={styles.panelTitle}><span><CircleAlert size={18} /></span><div><h3>Request cancelled</h3><p>This request is no longer active</p></div></div>
-                    <div className={styles.stageCallout}><strong>Cancelled before scheduling</strong><p>{canSchedule ? "Restore the request to return it to its previous stage." : "A Project Manager or Administrator can restore this request."}</p></div>
+                    <div className={styles.panelTitle}><span><CircleAlert size={18} /></span><div><h3>Request cancelled</h3></div></div>
+                    <div className={styles.stageCallout}><strong>Cancelled before scheduling</strong></div>
                   </section>
                 ) : (
                   <section className={`${styles.panel} ${styles.schedulePanel}`}>
-                    <div className={styles.panelTitle}><span><CalendarDays size={18} /></span><div><h3>Visit schedule</h3><p>{detail.status === "approved" ? "Set the confirmed visit time and assignee" : "Confirmed appointment and team member"}</p></div></div>
+                    <div className={styles.panelTitle}><span><CalendarDays size={18} /></span><div><h3>Visit schedule</h3></div></div>
                     {(detail.status === "approved" || detail.status === "scheduled") && canSchedule ? (
                       <form className={styles.scheduleForm} onSubmit={scheduleVisit}>
                         <label><span>Visit date *</span><input type="date" required value={scheduleDraft.scheduledDate} onChange={(event) => setScheduleDraft((current) => ({ ...current, scheduledDate: event.target.value }))} /></label>
@@ -820,7 +816,7 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
                         <div><dt>Assigned to</dt><dd>{detail.assignee || "Not assigned"}</dd></div>
                       </dl>
                     ) : (
-                      <div className={styles.stageCallout}><strong>Approved and ready to schedule</strong><p>A Project Manager or Administrator needs to confirm the date, time and assignee.</p></div>
+                      <div className={styles.stageCallout}><strong>Approved and ready to schedule</strong></div>
                     )}
                   </section>
                 )}
@@ -861,7 +857,7 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
                     <div className={styles.checklist}>
                       {detail.checklist.map((item) => (
                         <article className={styles.checkItem} key={item.id}>
-                          <div><h4>{item.label}</h4><small>Select what you found on site</small></div>
+                          <div><h4>{item.label}</h4></div>
                           <div className={styles.answerGrid}>
                             {ANSWER_OPTIONS.map((option) => (
                               <button
@@ -885,8 +881,8 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
                 <section className={styles.panel}>
                 <div className={styles.panelTitle}><span><Camera size={18} /></span><div><h3>Site photos</h3><p>{detail.photos.length} attached to this visit</p></div></div>
                 {visitEditable ? <div className={styles.photoActions}>
-                  <button type="button" className={styles.cameraButton} onClick={() => cameraInputRef.current?.click()} disabled={busy}><Camera size={20} /><span><strong>Take a photo</strong><small>Open the rear camera</small></span></button>
-                  <button type="button" className={styles.uploadButton} onClick={() => galleryInputRef.current?.click()} disabled={busy}><ImagePlus size={20} /><span><strong>Add from phone</strong><small>Select up to 10 photos</small></span></button>
+                  <button type="button" className={styles.cameraButton} onClick={() => cameraInputRef.current?.click()} disabled={busy}><Camera size={20} /><strong>Take a photo</strong></button>
+                  <button type="button" className={styles.uploadButton} onClick={() => galleryInputRef.current?.click()} disabled={busy}><ImagePlus size={20} /><strong>Add photos (max 10)</strong></button>
                   <input ref={cameraInputRef} className={styles.hiddenInput} tabIndex={-1} aria-hidden="true" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={(event) => void uploadPhotos(event)} />
                   <input ref={galleryInputRef} className={styles.hiddenInput} tabIndex={-1} aria-hidden="true" type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={(event) => void uploadPhotos(event)} />
                 </div> : null}
@@ -903,12 +899,12 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
                     ))}
                   </div>
                 ) : (
-                  <div className={styles.photoEmpty}><Upload size={24} /><span>{visitEditable ? "No photos yet. Use the camera when you arrive on site." : "No photos were attached to this visit."}</span></div>
+                  <div className={styles.photoEmpty}><Upload size={24} /><span>No photos</span></div>
                 )}
               </section>
 
               <section className={styles.panel}>
-                <div className={styles.panelTitle}><span><ClipboardCheck size={18} /></span><div><h3>General notes</h3><p>Observations, measurements and next steps</p></div></div>
+                <div className={styles.panelTitle}><span><ClipboardCheck size={18} /></span><div><h3>General notes</h3></div></div>
                 <textarea className={styles.notesArea} value={detail.notes} maxLength={10000} rows={6} readOnly={!visitEditable} placeholder="Add anything the office or installation team should know…" onChange={(event) => updateDetail({ notes: event.target.value }, "visit")} />
               </section>
                 </>

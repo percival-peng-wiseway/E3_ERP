@@ -33,7 +33,6 @@ export default function LoginPage() {
           <div className={styles.heading}>
             <p className={styles.eyebrow}>E3 Energy workspace</p>
             <h1 id="login-title">Welcome back</h1>
-            <p>Sign in to continue to your business operations workspace.</p>
           </div>
         </header>
 

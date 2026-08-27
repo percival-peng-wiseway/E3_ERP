@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
@@ -112,8 +112,10 @@ async function createInstallingProject(options: {
     actorRole: "admin",
     amountCents: 1_000,
   });
+  project = await preScheduleDelivery(project);
   project = await transitionPaymentTrackProject(project.id, "schedule_delivery", {
     actorRole: "pm",
+    expectedUpdatedAt: project.updatedAt,
     deliveryDate: "2026-08-21",
     deliveryTime: "08:30",
     deliveryAssignee: "Leo",
@@ -138,8 +140,10 @@ async function createInstalledProject(options: {
   contractLines?: string[];
 }) {
   let project = await createInstallingProject(options);
+  project = await preScheduleInstallation(project);
   project = await transitionPaymentTrackProject(project.id, "schedule_installation", {
     actorRole: "pm",
+    expectedUpdatedAt: project.updatedAt,
     installationDate: "2026-08-22",
     installationTime: "09:00",
     installationAssignee: "Daniel",
@@ -175,6 +179,29 @@ function createPmNotesProject() {
     stcSolarRequired: false,
     stcBatteryRequired: false,
     solarRebateRequired: false,
+  });
+}
+
+function preScheduleDelivery(project: Awaited<ReturnType<typeof createPmNotesProject>>) {
+  return transitionPaymentTrackProject(project.id, "pre_schedule_delivery", {
+    actorRole: "sales",
+    actorName: "Sam Sales",
+    expectedUpdatedAt: project.updatedAt,
+    deliverySelections: [{ sku: "TEST-WAREHOUSE-SKU", quantity: 1 }],
+    preferredDate: "2026-08-21",
+    preferredTime: "08:00",
+    notes: "Customer prefers a morning delivery.",
+  });
+}
+
+function preScheduleInstallation(project: Awaited<ReturnType<typeof createPmNotesProject>>) {
+  return transitionPaymentTrackProject(project.id, "pre_schedule_installation", {
+    actorRole: "sales",
+    actorName: "Sam Sales",
+    expectedUpdatedAt: project.updatedAt,
+    preferredDate: "2026-08-22",
+    preferredTime: "08:30",
+    notes: "Customer prefers a morning installation.",
   });
 }
 
@@ -352,8 +379,10 @@ test("stage overrides never bypass a pending deposit or collection payment revie
     reason,
     expectedUpdatedAt: pendingCollection.updatedAt,
   });
+  pendingCollection = await preScheduleDelivery(pendingCollection);
   pendingCollection = await transitionPaymentTrackProject(pendingCollection.id, "schedule_delivery", {
     actorRole: "pm",
+    expectedUpdatedAt: pendingCollection.updatedAt,
     deliveryDate: "2026-08-21",
     deliveryTime: "08:30",
     deliveryAssignee: "Leo",
@@ -386,8 +415,10 @@ test("a stale Administrator stage override cannot skip the newly current stage",
   });
   const staleUpdatedAt = project.updatedAt;
 
+  project = await preScheduleDelivery(project);
   project = await transitionPaymentTrackProject(project.id, "schedule_delivery", {
     actorRole: "pm",
+    expectedUpdatedAt: project.updatedAt,
     deliveryDate: "2026-08-21",
     deliveryTime: "08:30",
     deliveryAssignee: "Leo",
@@ -547,18 +578,28 @@ test("only an Administrator can confirm any customer payment amount", async () =
 });
 
 test("PM installation scheduling saves date, time and assignee without advancing the project", async () => {
-  const installing = await createInstallingProject({
+  let installing = await createInstallingProject({
     stcSolarRequired: false,
     stcBatteryRequired: false,
   });
   assert.equal(installing.stage, "installing");
+  assert.equal(installing.installationScheduleRequest, null);
   assert.equal(installing.installationScheduledFor, null);
   assert.equal(installing.installationScheduledTime, null);
   assert.equal(installing.installationAssignee, null);
 
+  installing = await preScheduleInstallation(installing);
+  const request = installing.installationScheduleRequest;
+  assert.ok(request);
+  assert.equal(request.preferredDate, "2026-08-22");
+  assert.equal(request.preferredTime, "08:30");
+  assert.equal(request.submittedBy, "Sam Sales");
+  assert.equal(installing.history.at(-1)?.action, "installation_pre_scheduled");
+
   const scheduled = await transitionPaymentTrackProject(installing.id, "schedule_installation", {
     actorRole: "pm",
     actorName: "Jamie PM",
+    expectedUpdatedAt: installing.updatedAt,
     installationDate: "2026-09-03",
     installationTime: "09:15",
     installationAssignee: "Leo",
@@ -568,11 +609,13 @@ test("PM installation scheduling saves date, time and assignee without advancing
   assert.equal(scheduled.installationScheduledFor, "2026-09-03");
   assert.equal(scheduled.installationScheduledTime, "09:15");
   assert.equal(scheduled.installationAssignee, "Leo");
+  assert.deepEqual(scheduled.installationScheduleRequest, request);
   assert.equal(scheduled.history.at(-1)?.action, "installation_scheduled");
   assert.equal(scheduled.history.at(-1)?.note, "2026-09-03 09:15 · Leo");
 
   const rescheduled = await transitionPaymentTrackProject(installing.id, "schedule_installation", {
     actorRole: "pm",
+    expectedUpdatedAt: scheduled.updatedAt,
     installationDate: "2026-09-04",
     installationTime: "13:45",
     installationAssignee: "Daniel",
@@ -581,6 +624,7 @@ test("PM installation scheduling saves date, time and assignee without advancing
   assert.equal(rescheduled.installationScheduledFor, "2026-09-04");
   assert.equal(rescheduled.installationScheduledTime, "13:45");
   assert.equal(rescheduled.installationAssignee, "Daniel");
+  assert.deepEqual(rescheduled.installationScheduleRequest, request);
 
   const installed = await transitionPaymentTrackProject(installing.id, "mark_installed", {
     actorRole: "pm",
@@ -591,8 +635,8 @@ test("PM installation scheduling saves date, time and assignee without advancing
   assert.equal(installed.installationAssignee, "Daniel");
 });
 
-test("PM delivery scheduling saves and replaces one date, time and assignee", async () => {
-  const project = await createPmNotesProject();
+test("Sales delivery pre-schedule is retained when PM chooses and later changes the final schedule", async () => {
+  let project = await createPmNotesProject();
   const recordsPath = path.join(testDataDirectory, "records.json");
   const records = JSON.parse(await readFile(recordsPath, "utf8")) as Array<Record<string, unknown>>;
   const storedProject = records.find((candidate) => candidate.id === project.id);
@@ -600,8 +644,19 @@ test("PM delivery scheduling saves and replaces one date, time and assignee", as
   storedProject.stage = "material_delivery";
   await writeFile(recordsPath, `${JSON.stringify(records, null, 2)}\n`, "utf8");
 
+  project = await preScheduleDelivery(project);
+  const request = project.deliveryScheduleRequest;
+  assert.ok(request);
+  assert.equal(request.preferredDate, "2026-08-21");
+  assert.equal(request.preferredTime, "08:00");
+  assert.equal(request.notes, "Customer prefers a morning delivery.");
+  assert.equal(request.submittedBy, "Sam Sales");
+  assert.deepEqual(project.deliverySelections, [{ sku: "TEST-WAREHOUSE-SKU", quantity: 1 }]);
+  assert.equal(project.history.at(-1)?.action, "delivery_pre_scheduled");
+
   const scheduled = await transitionPaymentTrackProject(project.id, "schedule_delivery", {
     actorRole: "pm",
+    expectedUpdatedAt: project.updatedAt,
     deliveryDate: "2026-09-07",
     deliveryTime: "07:30",
     deliveryAssignee: "Leo",
@@ -609,9 +664,11 @@ test("PM delivery scheduling saves and replaces one date, time and assignee", as
   assert.equal(scheduled.deliveryScheduledFor, "2026-09-07");
   assert.equal(scheduled.deliveryScheduledTime, "07:30");
   assert.equal(scheduled.deliveryAssignee, "Leo");
+  assert.deepEqual(scheduled.deliveryScheduleRequest, request);
 
   const rescheduled = await transitionPaymentTrackProject(project.id, "schedule_delivery", {
     actorRole: "pm",
+    expectedUpdatedAt: scheduled.updatedAt,
     deliveryDate: "2026-09-08",
     deliveryTime: "11:00",
     deliveryAssignee: "Daniel",
@@ -619,43 +676,309 @@ test("PM delivery scheduling saves and replaces one date, time and assignee", as
   assert.equal(rescheduled.deliveryScheduledFor, "2026-09-08");
   assert.equal(rescheduled.deliveryScheduledTime, "11:00");
   assert.equal(rescheduled.deliveryAssignee, "Daniel");
+  assert.deepEqual(rescheduled.deliveryScheduleRequest, request);
 });
 
-test("installation scheduling enforces the PM role, date and installing stage", async () => {
+test("legacy complete final schedules can be rescheduled without a Sales pre-schedule request", async () => {
+  const recordsPath = path.join(testDataDirectory, "records.json");
+  const delivery = await createPmNotesProject();
+  let records = JSON.parse(await readFile(recordsPath, "utf8")) as Array<Record<string, unknown>>;
+  const storedDelivery = records.find((candidate) => candidate.id === delivery.id);
+  assert.ok(storedDelivery);
+  storedDelivery.stage = "material_delivery";
+  delete storedDelivery.deliverySelections;
+  storedDelivery.deliveryScheduleRequest = null;
+  storedDelivery.deliveryScheduledFor = "2026-09-01";
+  storedDelivery.deliveryScheduledTime = "08:00";
+  storedDelivery.deliveryAssignee = "Leo";
+  await writeFile(recordsPath, `${JSON.stringify(records, null, 2)}\n`, "utf8");
+
+  const rescheduledDelivery = await transitionPaymentTrackProject(delivery.id, "schedule_delivery", {
+    actorRole: "pm",
+    expectedUpdatedAt: delivery.updatedAt,
+    deliveryDate: "2026-09-02",
+    deliveryTime: "10:30",
+    deliveryAssignee: "Daniel",
+  });
+  assert.equal(rescheduledDelivery.deliveryScheduleRequest, null);
+  assert.deepEqual(rescheduledDelivery.deliverySelections, []);
+  assert.equal(rescheduledDelivery.deliveryScheduledFor, "2026-09-02");
+  assert.equal(rescheduledDelivery.deliveryScheduledTime, "10:30");
+  assert.equal(rescheduledDelivery.deliveryAssignee, "Daniel");
+
   const installing = await createInstallingProject({
     stcSolarRequired: false,
     stcBatteryRequired: false,
   });
+  records = JSON.parse(await readFile(recordsPath, "utf8")) as Array<Record<string, unknown>>;
+  const storedInstallation = records.find((candidate) => candidate.id === installing.id);
+  assert.ok(storedInstallation);
+  storedInstallation.installationScheduleRequest = null;
+  storedInstallation.installationScheduledFor = "2026-09-03";
+  storedInstallation.installationScheduledTime = "09:00";
+  storedInstallation.installationAssignee = "Leo";
+  await writeFile(recordsPath, `${JSON.stringify(records, null, 2)}\n`, "utf8");
+
+  const rescheduledInstallation = await transitionPaymentTrackProject(installing.id, "schedule_installation", {
+    actorRole: "pm",
+    expectedUpdatedAt: installing.updatedAt,
+    installationDate: "2026-09-04",
+    installationTime: "13:00",
+    installationAssignee: "Daniel",
+  });
+  assert.equal(rescheduledInstallation.installationScheduleRequest, null);
+  assert.equal(rescheduledInstallation.installationScheduledFor, "2026-09-04");
+  assert.equal(rescheduledInstallation.installationScheduledTime, "13:00");
+  assert.equal(rescheduledInstallation.installationAssignee, "Daniel");
+});
+
+test("only Sales can save draft delivery items and a draft alone cannot bypass PM pre-schedule review", async () => {
+  let project = await createPmNotesProject();
+  project = await transitionPaymentTrackProject(project.id, "skip_stage", {
+    actorRole: "admin",
+    reason: "Deposit was confirmed in the previous system.",
+    expectedUpdatedAt: project.updatedAt,
+  });
+
+  await assert.rejects(
+    transitionPaymentTrackProject(project.id, "prepare_delivery", {
+      actorRole: "pm",
+      expectedUpdatedAt: project.updatedAt,
+      deliverySelections: [{ sku: "DRAFT-SKU", quantity: 2 }],
+    }),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError && error.code === "role_forbidden",
+  );
+
+  project = await transitionPaymentTrackProject(project.id, "prepare_delivery", {
+    actorRole: "sales",
+    actorName: "Sam Sales",
+    expectedUpdatedAt: project.updatedAt,
+    deliverySelections: [{ sku: "DRAFT-SKU", quantity: 2 }],
+  });
+  assert.deepEqual(project.deliverySelections, [{ sku: "DRAFT-SKU", quantity: 2 }]);
+  assert.equal(project.deliveryPreparedBy, "Sam Sales");
+  assert.equal(project.deliveryScheduleRequest, null);
+  assert.equal(project.history.at(-1)?.action, "delivery_items_prepared");
+  assert.equal(project.history.at(-1)?.actorRole, "sales");
+
+  await assert.rejects(
+    transitionPaymentTrackProject(project.id, "schedule_delivery", {
+      actorRole: "pm",
+      expectedUpdatedAt: project.updatedAt,
+      deliveryDate: "2026-09-07",
+      deliveryTime: "07:30",
+      deliveryAssignee: "Leo",
+    }),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError && error.code === "invalid_transition",
+  );
+});
+
+test("omitted delivery and installation preference notes are stored as empty strings", async () => {
+  let delivery = await createPmNotesProject();
+  delivery = await transitionPaymentTrackProject(delivery.id, "skip_stage", {
+    actorRole: "admin",
+    reason: "Deposit was confirmed in the previous system.",
+    expectedUpdatedAt: delivery.updatedAt,
+  });
+  delivery = await transitionPaymentTrackProject(delivery.id, "pre_schedule_delivery", {
+    actorRole: "sales",
+    expectedUpdatedAt: delivery.updatedAt,
+    deliverySelections: [{ sku: "NO-NOTE-DELIVERY", quantity: 1 }],
+    preferredDate: "2026-09-06",
+    preferredTime: "08:00",
+  });
+  assert.equal(delivery.deliveryScheduleRequest?.notes, "");
+
+  let installation = await createInstallingProject({
+    stcSolarRequired: false,
+    stcBatteryRequired: false,
+  });
+  installation = await transitionPaymentTrackProject(installation.id, "pre_schedule_installation", {
+    actorRole: "sales",
+    expectedUpdatedAt: installation.updatedAt,
+    preferredDate: "2026-09-08",
+    preferredTime: "09:30",
+  });
+  assert.equal(installation.installationScheduleRequest?.notes, "");
+});
+
+test("delivery pre-scheduling enforces Sales, current version, chosen items and PM final review", async () => {
+  const reason = "Deposit was confirmed in the previous system.";
+  let project = await createPmNotesProject();
+  project = await transitionPaymentTrackProject(project.id, "skip_stage", {
+    actorRole: "admin",
+    reason,
+    expectedUpdatedAt: project.updatedAt,
+  });
+
+  await assert.rejects(
+    transitionPaymentTrackProject(project.id, "schedule_delivery", {
+      actorRole: "pm",
+      expectedUpdatedAt: project.updatedAt,
+      deliveryDate: "2026-09-07",
+      deliveryTime: "07:30",
+      deliveryAssignee: "Leo",
+    }),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError && error.code === "invalid_transition",
+  );
+
+  await assert.rejects(
+    transitionPaymentTrackProject(project.id, "pre_schedule_delivery", {
+      actorRole: "pm",
+      expectedUpdatedAt: project.updatedAt,
+      deliverySelections: [{ sku: "WAREHOUSE-1", quantity: 1 }],
+      preferredDate: "2026-09-06",
+      preferredTime: "08:00",
+      notes: "Morning preferred.",
+    }),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError && error.code === "role_forbidden",
+  );
+
+  await assert.rejects(
+    transitionPaymentTrackProject(project.id, "pre_schedule_delivery", {
+      actorRole: "sales",
+      expectedUpdatedAt: "2026-01-01T00:00:00.000Z",
+      deliverySelections: [{ sku: "WAREHOUSE-1", quantity: 1 }],
+      preferredDate: "2026-09-06",
+      preferredTime: "08:00",
+      notes: "Morning preferred.",
+    }),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError && error.code === "stale_project",
+  );
+
+  await assert.rejects(
+    transitionPaymentTrackProject(project.id, "pre_schedule_delivery", {
+      actorRole: "sales",
+      expectedUpdatedAt: project.updatedAt,
+      deliverySelections: [],
+      preferredDate: "2026-09-06",
+      preferredTime: "08:00",
+      notes: "Morning preferred.",
+    }),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError && error.code === "invalid_delivery_items",
+  );
+
+  project = await transitionPaymentTrackProject(project.id, "pre_schedule_delivery", {
+    actorRole: "sales",
+    actorName: "Ruihan Sales",
+    expectedUpdatedAt: project.updatedAt,
+    deliverySelections: [
+      { sku: "WAREHOUSE-PANEL", quantity: 14 },
+      { sku: "WAREHOUSE-INVERTER", quantity: 1 },
+    ],
+    preferredDate: "2026-09-06",
+    preferredTime: "08:00",
+    notes: "  Morning preferred.  ",
+  });
+  assert.equal(project.items.length, 1);
+  assert.deepEqual(project.deliverySelections, [
+    { sku: "WAREHOUSE-PANEL", quantity: 14 },
+    { sku: "WAREHOUSE-INVERTER", quantity: 1 },
+  ]);
+  assert.ok(project.deliveryPreparedAt);
+  assert.equal(project.deliveryPreparedBy, "Ruihan Sales");
+  assert.equal(project.deliveryScheduleRequest?.notes, "Morning preferred.");
+  assert.equal(project.history.at(-1)?.action, "delivery_pre_scheduled");
+
+  await assert.rejects(
+    transitionPaymentTrackProject(project.id, "mark_delivered", { actorRole: "pm" }),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError && error.code === "invalid_transition",
+  );
+
+  await assert.rejects(
+    transitionPaymentTrackProject(project.id, "schedule_delivery", {
+      actorRole: "pm",
+      expectedUpdatedAt: "2026-01-01T00:00:00.000Z",
+      deliveryDate: "2026-09-07",
+      deliveryTime: "07:30",
+      deliveryAssignee: "Leo",
+    }),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError && error.code === "stale_project",
+  );
+});
+
+test("installation pre-scheduling enforces Sales and PM cannot schedule or complete before review", async () => {
+  let installing = await createInstallingProject({
+    stcSolarRequired: false,
+    stcBatteryRequired: false,
+  });
+
+  await assert.rejects(
+    transitionPaymentTrackProject(installing.id, "schedule_installation", {
+      actorRole: "pm",
+      expectedUpdatedAt: installing.updatedAt,
+      installationDate: "2026-09-03",
+      installationTime: "09:00",
+      installationAssignee: "Leo",
+    }),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError && error.code === "invalid_transition",
+  );
+
+  await assert.rejects(
+    transitionPaymentTrackProject(installing.id, "pre_schedule_installation", {
+      actorRole: "pm",
+      expectedUpdatedAt: installing.updatedAt,
+      preferredDate: "2026-09-02",
+      preferredTime: "08:30",
+      notes: "Morning preferred.",
+    }),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError && error.code === "role_forbidden",
+  );
+
+  await assert.rejects(
+    transitionPaymentTrackProject(installing.id, "pre_schedule_installation", {
+      actorRole: "sales",
+      expectedUpdatedAt: "2026-01-01T00:00:00.000Z",
+      preferredDate: "2026-09-02",
+      preferredTime: "08:30",
+      notes: "Morning preferred.",
+    }),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError && error.code === "stale_project",
+  );
+
+  installing = await preScheduleInstallation(installing);
+  await assert.rejects(
+    transitionPaymentTrackProject(installing.id, "mark_installed", { actorRole: "pm" }),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError && error.code === "invalid_transition",
+  );
+
   await assert.rejects(
     transitionPaymentTrackProject(installing.id, "schedule_installation", {
       actorRole: "sales",
+      expectedUpdatedAt: installing.updatedAt,
       installationDate: "2026-09-03",
       installationTime: "09:00",
       installationAssignee: "Leo",
     }),
     (error: unknown) => error instanceof PaymentTrackRepositoryError && error.code === "role_forbidden",
   );
+
   await assert.rejects(
     transitionPaymentTrackProject(installing.id, "schedule_installation", {
       actorRole: "pm",
+      expectedUpdatedAt: installing.updatedAt,
       installationDate: "2026-02-30",
       installationTime: "09:00",
       installationAssignee: "Leo",
     }),
     (error: unknown) => error instanceof PaymentTrackRepositoryError && error.code === "invalid_transition",
   );
+
   await assert.rejects(
     transitionPaymentTrackProject(installing.id, "schedule_installation", {
       actorRole: "pm",
+      expectedUpdatedAt: installing.updatedAt,
       installationDate: "2026-09-03",
       installationTime: "24:00",
       installationAssignee: "Leo",
     }),
     (error: unknown) => error instanceof PaymentTrackRepositoryError && error.code === "invalid_transition",
   );
+
   await assert.rejects(
     transitionPaymentTrackProject(installing.id, "schedule_installation", {
       actorRole: "pm",
+      expectedUpdatedAt: installing.updatedAt,
       installationDate: "2026-09-03",
       installationTime: "09:00",
       installationAssignee: "Alex" as never,
@@ -667,6 +990,7 @@ test("installation scheduling enforces the PM role, date and installing stage", 
   await assert.rejects(
     transitionPaymentTrackProject(unready.id, "schedule_installation", {
       actorRole: "pm",
+      expectedUpdatedAt: unready.updatedAt,
       installationDate: "2026-09-03",
       installationTime: "09:00",
       installationAssignee: "Leo",
@@ -713,8 +1037,10 @@ test("delivery and installation cannot complete from missing or legacy date-only
     (error: unknown) => error instanceof PaymentTrackRepositoryError && error.code === "invalid_transition",
   );
 
+  installing = await preScheduleInstallation(installing);
   installing = await transitionPaymentTrackProject(installing.id, "schedule_installation", {
     actorRole: "pm",
+    expectedUpdatedAt: installing.updatedAt,
     installationDate: "2026-09-10",
     installationTime: "14:00",
     installationAssignee: "Leo",
@@ -733,6 +1059,8 @@ test("listing persistently defaults legacy scheduling details to null", async ()
   assert.ok(storedProject);
   delete storedProject.deliveryScheduledFor;
   delete storedProject.installationScheduledFor;
+  delete storedProject.deliveryScheduleRequest;
+  delete storedProject.installationScheduleRequest;
   delete storedProject.deliveryScheduledTime;
   delete storedProject.deliveryAssignee;
   delete storedProject.installationScheduledTime;
@@ -740,6 +1068,8 @@ test("listing persistently defaults legacy scheduling details to null", async ()
   await writeFile(recordsPath, `${JSON.stringify(records, null, 2)}\n`, "utf8");
 
   const listed = await listPaymentTrackProjects();
+  assert.equal(listed.find((candidate) => candidate.id === project.id)?.deliveryScheduleRequest, null);
+  assert.equal(listed.find((candidate) => candidate.id === project.id)?.installationScheduleRequest, null);
   assert.equal(listed.find((candidate) => candidate.id === project.id)?.deliveryScheduledFor, null);
   assert.equal(listed.find((candidate) => candidate.id === project.id)?.installationScheduledFor, null);
   assert.equal(listed.find((candidate) => candidate.id === project.id)?.deliveryScheduledTime, null);
@@ -747,6 +1077,8 @@ test("listing persistently defaults legacy scheduling details to null", async ()
   assert.equal(listed.find((candidate) => candidate.id === project.id)?.installationScheduledTime, null);
   assert.equal(listed.find((candidate) => candidate.id === project.id)?.installationAssignee, null);
   const persisted = JSON.parse(await readFile(recordsPath, "utf8")) as Array<Record<string, unknown>>;
+  assert.equal(persisted.find((candidate) => candidate.id === project.id)?.deliveryScheduleRequest, null);
+  assert.equal(persisted.find((candidate) => candidate.id === project.id)?.installationScheduleRequest, null);
   assert.equal(persisted.find((candidate) => candidate.id === project.id)?.deliveryScheduledFor, null);
   assert.equal(
     persisted.find((candidate) => candidate.id === project.id)?.installationScheduledFor,
@@ -756,6 +1088,21 @@ test("listing persistently defaults legacy scheduling details to null", async ()
   assert.equal(persisted.find((candidate) => candidate.id === project.id)?.deliveryAssignee, null);
   assert.equal(persisted.find((candidate) => candidate.id === project.id)?.installationScheduledTime, null);
   assert.equal(persisted.find((candidate) => candidate.id === project.id)?.installationAssignee, null);
+});
+
+test("listing does not rewrite canonical empty warehouse selections", async () => {
+  await createPmNotesProject();
+  const recordsPath = path.join(testDataDirectory, "records.json");
+
+  // Finish any one-time migration left by earlier fixtures, then ensure a
+  // second read keeps the already-canonical document untouched.
+  await listPaymentTrackProjects();
+  const before = await stat(recordsPath);
+  await listPaymentTrackProjects();
+  const after = await stat(recordsPath);
+
+  assert.equal(after.ino, before.ino);
+  assert.equal(after.mtimeMs, before.mtimeMs);
 });
 
 test("COES and final payment progress independently through the STC stage", async () => {

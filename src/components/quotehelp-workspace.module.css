@@ -385,19 +385,6 @@
   letter-spacing: -.015em;
 }
 
-.panelHeader > p,
-.sectionHeader p {
-  margin: 0;
-  color: #88909d;
-  font-size: 13px;
-  text-align: right;
-}
-
-.sectionHeader p {
-  margin-top: 3px;
-  text-align: left;
-}
-
 .projectGrid {
   display: grid;
   grid-template-columns: minmax(220px, .75fr) minmax(360px, 1.25fr);
@@ -1335,34 +1322,8 @@
 }
 
 .emptyHistory h3 {
-  margin: 13px 0 4px;
+  margin: 13px 0 14px;
   font-size: 16px;
-}
-
-.emptyHistory p {
-  margin: 0 0 14px;
-  color: #7f8998;
-  font-size: 13px;
-}
-
-.excelNote {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 15px;
-  padding: 10px 12px;
-  border: 1px dashed #d9dde4;
-  border-radius: 8px;
-  color: #727c8d;
-  background: #fafbfc;
-  font-size: 12px;
-}
-
-.excelNote code {
-  padding: 1px 4px;
-  border-radius: 4px;
-  color: #4d56bf;
-  background: #eef0ff;
 }
 
 .settingsGrid {
@@ -1531,30 +1492,6 @@
 .userRole {
   color: #5d6879;
   background: #f1f3f5;
-}
-
-.permissionNote {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  margin-top: 18px;
-  padding: 14px;
-  border: 1px solid #dfe2fc;
-  border-radius: 9px;
-  color: #5660c4;
-  background: #f7f7ff;
-}
-
-.permissionNote b {
-  color: #414aab;
-  font-size: 13px;
-}
-
-.permissionNote p {
-  margin: 3px 0 0;
-  color: #687190;
-  font-size: 12px;
-  line-height: 1.55;
 }
 
 .stateCard,
@@ -1798,10 +1735,6 @@
   .sectionHeader {
     align-items: flex-start;
     flex-direction: column;
-  }
-
-  .panelHeader > p {
-    text-align: left;
   }
 
   .projectGrid,

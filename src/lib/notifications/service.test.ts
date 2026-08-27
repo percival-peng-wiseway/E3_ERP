@@ -45,6 +45,10 @@ function project(overrides: Partial<PaymentTrackProject> = {}): PaymentTrackProj
       confirmedAt: null,
       confirmedBy: null,
     },
+    deliverySelections: [],
+    deliveryPreparedAt: null,
+    deliveryPreparedBy: null,
+    deliveryScheduleRequest: null,
     deliveryScheduledFor: null,
     deliveryScheduledTime: null,
     deliveryAssignee: null,
@@ -60,6 +64,7 @@ function project(overrides: Partial<PaymentTrackProject> = {}): PaymentTrackProj
     installationScheduledFor: null,
     installationScheduledTime: null,
     installationAssignee: null,
+    installationScheduleRequest: null,
     finalPayments: [],
     installedAt: null,
     coesReceivedAt: null,
@@ -97,17 +102,39 @@ function order(overrides: Partial<OperationalOrder> = {}): OperationalOrder {
   };
 }
 
-test("incomplete Project Track delivery plans receive the planning badge and project metadata", () => {
-  const [unscheduled] = buildPaymentTrackNotifications([project()], NOW);
-  assert.equal(unscheduled.badgeLabel, "Delivery plan needed");
-  assert.equal(unscheduled.projectCreatedAt, "2026-08-20T01:02:03.000Z");
-  assert.equal(unscheduled.ownerName, "Percival");
+function scheduleRequest(overrides: Partial<NonNullable<PaymentTrackProject["deliveryScheduleRequest"]>> = {}) {
+  return {
+    preferredDate: "2026-10-10",
+    preferredTime: "09:00",
+    notes: "Please call before arrival.",
+    submittedAt: "2026-08-24T03:00:00.000Z",
+    submittedBy: "Samantha Sales",
+    ...overrides,
+  };
+}
 
-  const [partial] = buildPaymentTrackNotifications([project({
-    deliveryScheduledFor: "2026-10-10",
-    deliveryScheduledTime: "09:00",
+test("delivery without a Sales request stays with Sales in Payments", () => {
+  const [notification] = buildPaymentTrackNotifications([project()], NOW);
+  assert.equal(notification.role, "sales");
+  assert.equal(notification.module, "payments");
+  assert.equal(notification.badgeLabel, "Delivery preference needed");
+  assert.equal(notification.actionLabel, "Prepare delivery");
+  assert.equal(notification.projectCreatedAt, "2026-08-20T01:02:03.000Z");
+  assert.equal(notification.ownerName, "Percival");
+});
+
+test("a delivery pre-schedule always reaches PM review even when the preferred date is far away", () => {
+  const [notification] = buildPaymentTrackNotifications([project({
+    deliveryScheduleRequest: scheduleRequest(),
+    deliverySelections: [{ sku: "SKU-DELIVERY", quantity: 1 }],
   })], NOW);
-  assert.equal(partial.badgeLabel, "Delivery plan needed");
+  assert.equal(notification.role, "pm");
+  assert.equal(notification.module, "projects");
+  assert.equal(notification.badgeLabel, "Delivery pre-scheduled");
+  assert.equal(notification.actionLabel, "Review pre-schedule");
+  assert.equal(notification.ownerName, "Samantha Sales");
+  assert.match(notification.description, /2026-10-10 at 09:00/);
+  assert.match(notification.description, /call before arrival/i);
 });
 
 test("a complete Project Track delivery plan requires date, time and assignee", () => {
@@ -117,10 +144,13 @@ test("a complete Project Track delivery plan requires date, time and assignee", 
     deliveryAssignee: "Leo",
   })], NOW);
   assert.equal(complete.badgeLabel, "Delivery scheduled");
+  assert.equal(complete.role, "pm");
+  assert.equal(complete.module, "projects");
   assert.equal(complete.projectCreatedAt, "2026-08-20T01:02:03.000Z");
   assert.equal(complete.ownerName, "Percival");
 
   const farFuture = buildPaymentTrackNotifications([project({
+    deliveryScheduleRequest: scheduleRequest(),
     deliveryScheduledFor: "2026-10-10",
     deliveryScheduledTime: "09:00",
     deliveryAssignee: "Leo",
@@ -168,13 +198,24 @@ test("deposit and collection confirmations are primarily assigned to Jiaqi", () 
   assert.equal(notificationIsVisibleTo(collection, "admin", "steve"), false);
 });
 
-test("installation reminders use explicit planning status and project metadata", () => {
-  const [needsPlan] = buildPaymentTrackNotifications([project({
+test("installment notifications move from Sales preference to PM review and scheduled reminder", () => {
+  const [needsPreference] = buildPaymentTrackNotifications([project({
     stage: "installing",
   })], NOW);
-  assert.equal(needsPlan.badgeLabel, "Installation plan needed");
-  assert.equal(needsPlan.projectCreatedAt, "2026-08-20T01:02:03.000Z");
-  assert.equal(needsPlan.ownerName, "Percival");
+  assert.equal(needsPreference.role, "sales");
+  assert.equal(needsPreference.module, "payments");
+  assert.equal(needsPreference.badgeLabel, "Installment preference needed");
+  assert.equal(needsPreference.projectCreatedAt, "2026-08-20T01:02:03.000Z");
+  assert.equal(needsPreference.ownerName, "Percival");
+
+  const [review] = buildPaymentTrackNotifications([project({
+    stage: "installing",
+    installationScheduleRequest: scheduleRequest(),
+  })], NOW);
+  assert.equal(review.role, "pm");
+  assert.equal(review.module, "projects");
+  assert.equal(review.badgeLabel, "Installment pre-scheduled");
+  assert.equal(review.actionLabel, "Review pre-schedule");
 
   const [scheduled] = buildPaymentTrackNotifications([project({
     stage: "installing",
@@ -182,7 +223,9 @@ test("installation reminders use explicit planning status and project metadata",
     installationScheduledTime: "09:00",
     installationAssignee: "Daniel",
   })], NOW);
-  assert.equal(scheduled.badgeLabel, "Installation scheduled");
+  assert.equal(scheduled.badgeLabel, "Installment scheduled");
+  assert.equal(scheduled.role, "pm");
+  assert.equal(scheduled.module, "projects");
 });
 
 test("Inventory delivery reminders use the earliest creation time and a consistent owner", () => {

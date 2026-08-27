@@ -129,10 +129,17 @@ type CalendarEntry = (
   | { id: string; source: "custom"; date: string; time: string | null; title: string; location: string; assignee: string; detail: string; completed: boolean; job: ProjectScheduleJob }
 ) & { overrideKey: string | null; cancelled: boolean };
 
-type UnscheduledEntry = (
-  | { id: string; source: "inventory"; title: string; location: string; detail: string; group: DeliveryGroup }
-  | { id: string; source: "material_delivery" | "installing"; title: string; location: string; detail: string; project: ScheduledPaymentProject }
-) & { overrideKey: string; cancelled: boolean };
+type UnscheduledEntry = {
+  id: string;
+  source: "material_delivery" | "installing";
+  pendingStatus: "unscheduled" | "pre_scheduled";
+  title: string;
+  location: string;
+  detail: string;
+  project: ScheduledPaymentProject;
+  overrideKey: string | null;
+  cancelled: boolean;
+};
 
 type OverrideableEntry = Pick<CalendarEntry, "overrideKey" | "cancelled" | "source" | "title">;
 type SourceOverrideAction = "cancel" | "restore" | "delete";
@@ -142,7 +149,7 @@ const EMPTY_OPERATIONS: OperationsState = { orders: [], deliveryHistory: [] };
 const FILTERS: Array<{ id: ScheduleFilter; label: string }> = [
   { id: "all", label: "All" },
   { id: "material_delivery", label: "Material Delivery" },
-  { id: "installing", label: "Installing" },
+  { id: "installing", label: "Installment" },
   { id: "site_visit", label: "Site Visit" },
   { id: "custom", label: "Custom" },
 ];
@@ -259,6 +266,13 @@ function paymentItemLabel(project: ScheduledPaymentProject, itemIndex: number) {
 }
 
 function paymentItemsSummary(project: ScheduledPaymentProject) {
+  const prepared = project.deliverySelections;
+  if (prepared.length) {
+    const visibleItems = prepared.slice(0, 3);
+    const remainingCount = prepared.length - visibleItems.length;
+    const summary = visibleItems.map((item) => `${item.quantity}× ${item.sku}`).join(", ");
+    return `${project.reference} · ${summary}${remainingCount ? `, +${remainingCount} more` : ""}`;
+  }
   if (!project.items.length) return `${project.reference} · No items listed`;
   const visibleItems = project.items.slice(0, 3);
   const remainingCount = project.items.length - visibleItems.length;
@@ -272,6 +286,50 @@ function hasCompletePaymentSchedule(project: ScheduledPaymentProject, kind: Paym
   return kind === "delivery"
     ? Boolean(project.deliveryScheduledFor && project.deliveryScheduledTime && project.deliveryAssignee)
     : Boolean(project.installationScheduledFor && project.installationScheduledTime && project.installationAssignee);
+}
+
+function paymentScheduleRequest(project: ScheduledPaymentProject, kind: PaymentScheduleKind) {
+  return kind === "delivery" ? project.deliveryScheduleRequest : project.installationScheduleRequest;
+}
+
+function hasCompletePaymentScheduleRequest(project: ScheduledPaymentProject, kind: PaymentScheduleKind) {
+  const request = paymentScheduleRequest(project, kind);
+  return Boolean(
+    request?.preferredDate
+    && request.preferredTime
+    && request.submittedAt
+    && request.submittedBy
+    && (kind !== "delivery" || project.deliverySelections.length),
+  );
+}
+
+function submittedAtLabel(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("en-AU", {
+    timeZone: MELBOURNE_TIME_ZONE,
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function scheduleRequestOverrideKey(
+  project: ScheduledPaymentProject,
+  kind: PaymentScheduleKind,
+  submittedAt: string,
+) {
+  const fixedKey = `payment-${kind === "delivery" ? "delivery" : "installation"}:${project.id.toLowerCase()}`;
+  const idParts = project.id.toLowerCase().split("-");
+  const submittedTimestamp = Date.parse(submittedAt);
+  if (idParts.length !== 5 || !Number.isFinite(submittedTimestamp)) return fixedKey;
+  // Source override IDs must retain the accepted UUID shape. Encoding the
+  // submission timestamp in its final segment gives every Sales resubmission
+  // a fresh override identity without changing the final Calendar card key.
+  const requestToken = Math.trunc(submittedTimestamp).toString(16).padStart(12, "0").slice(-12);
+  return `payment-${kind === "delivery" ? "delivery" : "installation"}:${idParts[0]}-${idParts[1]}-${idParts[2]}-${idParts[3]}-${requestToken}`;
 }
 
 function groupOrders(orders: InventoryOrder[]) {
@@ -306,6 +364,7 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
   const [sourceOverridesReady, setSourceOverridesReady] = useState(false);
   const [filter, setFilter] = useState<ScheduleFilter>("all");
   const [view, setView] = useState<ScheduleView>("calendar");
+  const [expandedCompletedDays, setExpandedCompletedDays] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -454,10 +513,6 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
     };
   }, [Boolean(activeModal), busy, closeModal]);
 
-  const unscheduledInventoryGroups = useMemo(
-    () => groupOrders(operations.orders.filter((order) => order.status === "pending" || (order.status === "scheduled" && !order.planned_date))),
-    [operations.orders],
-  );
   const scheduledInventoryGroups = useMemo(
     () => groupOrders(operations.orders.filter((order) => order.status === "scheduled" && order.planned_date)),
     [operations.orders],
@@ -580,7 +635,13 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
       }];
     }) : [];
     return [...inventoryEntries, ...paymentEntries, ...siteVisitEntries, ...customEntries]
-      .sort((left, right) => `${left.date}:${left.time || "99:99"}:${left.title}`.localeCompare(`${right.date}:${right.time || "99:99"}:${right.title}`));
+      .sort((left, right) => {
+        const dateOrder = left.date.localeCompare(right.date);
+        if (dateOrder) return dateOrder;
+        const completionOrder = Number(left.completed && !left.cancelled) - Number(right.completed && !right.cancelled);
+        if (completionOrder) return completionOrder;
+        return `${left.time || "99:99"}:${left.title}`.localeCompare(`${right.time || "99:99"}:${right.title}`);
+      });
   }, [completedInventoryGroups, customJobs, projects, scheduledInventoryGroups, siteVisits, sourceOverrideState, sourceOverridesReady]);
 
   const calendarEntries = useMemo(
@@ -597,38 +658,36 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
   );
 
   const unscheduledEntries = useMemo<UnscheduledEntry[]>(() => {
-    const inventory: UnscheduledEntry[] = sourceOverridesReady ? unscheduledInventoryGroups.flatMap((group) => {
-      const overrideKey = `inventory:${group.key}`;
-      const overrideState = sourceOverrideState.get(overrideKey);
-      if (overrideState === "deleted") return [];
-      return [{
-        id: `pending-inventory:${group.key}`,
-        source: "inventory" as const,
-        title: group.primary.customer,
-        location: group.primary.address || "Address required",
-        detail: group.primary.status === "pending"
-          ? `${group.orders.length} ${group.orders.length === 1 ? "item" : "items"} · From ${group.primary.sales_rep}`
-          : `${group.orders.length} ${group.orders.length === 1 ? "item" : "items"} · Schedule date missing`,
-        group,
-        overrideKey,
-        cancelled: overrideState === "cancelled",
-      }];
-    }) : [];
     const payment: UnscheduledEntry[] = [];
-    for (const project of sourceOverridesReady ? projects : []) {
-      if (project.stage === "material_delivery" && !project.deliveredAt && !hasCompletePaymentSchedule(project, "delivery")) {
-        const overrideKey = `payment-delivery:${project.id.toLowerCase()}`;
-        const overrideState = sourceOverrideState.get(overrideKey);
-        if (overrideState !== "deleted") payment.push({ id: `pending-payment-delivery:${project.id}`, source: "material_delivery", title: customerName(project), location: customerAddress(project) || "Address required", detail: `${paymentItemsSummary(project)} · Schedule material delivery`, project, overrideKey, cancelled: overrideState === "cancelled" });
+    for (const project of projects) {
+      const deliveryRequest = project.deliveryScheduleRequest;
+      if (project.stage === "material_delivery"
+        && !project.deliveredAt
+        && !hasCompletePaymentSchedule(project, "delivery")) {
+        const requestComplete = hasCompletePaymentScheduleRequest(project, "delivery");
+        const overrideKey = requestComplete && sourceOverridesReady
+          ? scheduleRequestOverrideKey(project, "delivery", deliveryRequest?.submittedAt || "")
+          : null;
+        const overrideState = overrideKey ? sourceOverrideState.get(overrideKey) : undefined;
+        if (overrideState !== "deleted") payment.push({ id: `pending-payment-delivery:${project.id}`, source: "material_delivery", pendingStatus: requestComplete ? "pre_scheduled" : "unscheduled", title: customerName(project), location: customerAddress(project) || "Address required", detail: paymentItemsSummary(project), project, overrideKey, cancelled: overrideState === "cancelled" });
       }
-      if (project.stage === "installing" && !project.installedAt && !hasCompletePaymentSchedule(project, "installation")) {
-        const overrideKey = `payment-installation:${project.id.toLowerCase()}`;
-        const overrideState = sourceOverrideState.get(overrideKey);
-        if (overrideState !== "deleted") payment.push({ id: `pending-payment-installation:${project.id}`, source: "installing", title: customerName(project), location: customerAddress(project) || "Address required", detail: `${paymentItemsSummary(project)} · Schedule installation`, project, overrideKey, cancelled: overrideState === "cancelled" });
+      const installationRequest = project.installationScheduleRequest;
+      if (project.stage === "installing"
+        && !project.installedAt
+        && !hasCompletePaymentSchedule(project, "installation")) {
+        const requestComplete = hasCompletePaymentScheduleRequest(project, "installation");
+        const overrideKey = requestComplete && sourceOverridesReady
+          ? scheduleRequestOverrideKey(project, "installation", installationRequest?.submittedAt || "")
+          : null;
+        const overrideState = overrideKey ? sourceOverrideState.get(overrideKey) : undefined;
+        if (overrideState !== "deleted") payment.push({ id: `pending-payment-installation:${project.id}`, source: "installing", pendingStatus: requestComplete ? "pre_scheduled" : "unscheduled", title: customerName(project), location: customerAddress(project) || "Address required", detail: paymentItemsSummary(project), project, overrideKey, cancelled: overrideState === "cancelled" });
       }
     }
-    return [...inventory, ...payment];
-  }, [projects, sourceOverrideState, sourceOverridesReady, unscheduledInventoryGroups]);
+    return payment.sort((left, right) => {
+      const statusOrder = Number(left.pendingStatus === "pre_scheduled") - Number(right.pendingStatus === "pre_scheduled");
+      return statusOrder || `${left.source}:${left.title}`.localeCompare(`${right.source}:${right.title}`);
+    });
+  }, [projects, sourceOverrideState, sourceOverridesReady]);
 
   const visibleEntries = useMemo(() => calendarEntries.filter((entry) => isScheduleFilterMatch(entry.source, filter)), [calendarEntries, filter]);
   const visibleOverdue = useMemo(() => overdueEntries.filter((entry) => isScheduleFilterMatch(entry.source, filter)), [filter, overdueEntries]);
@@ -639,6 +698,25 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
       + overdueEntries.filter((entry) => isScheduleFilterMatch(entry.source, id)).length
       + unscheduledEntries.filter((entry) => isScheduleFilterMatch(entry.source, id)).length,
   ])) as Record<ScheduleFilter, number>, [calendarEntries, overdueEntries, unscheduledEntries]);
+
+  useEffect(() => {
+    const completedDates = new Set(
+      visibleEntries
+        .filter((entry) => entry.completed && !entry.cancelled)
+        .map((entry) => entry.date),
+    );
+    setExpandedCompletedDays((current) => {
+      const retained = Object.fromEntries(
+        Object.entries(current).filter(([date, expanded]) => expanded && completedDates.has(date)),
+      );
+      const currentDates = Object.keys(current);
+      const retainedDates = Object.keys(retained);
+      return currentDates.length === retainedDates.length
+        && currentDates.every((date) => retained[date] === current[date])
+        ? current
+        : retained;
+    });
+  }, [visibleEntries]);
 
   const openInventoryEditor = (group: DeliveryGroup, date?: string) => {
     if (!canManageSchedule) return;
@@ -660,12 +738,19 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
 
   const openPaymentEditor = (project: ScheduledPaymentProject, kind: PaymentScheduleKind, date?: string) => {
     if (!canManageSchedule) return;
+    const hasLegacyFinalSchedule = kind === "delivery" && hasCompletePaymentSchedule(project, "delivery");
+    if (kind === "delivery" && !project.deliverySelections.length && !hasLegacyFinalSchedule) {
+      setError("Prepare this project's warehouse items in Project Track before scheduling material delivery.");
+      return;
+    }
+    setError("");
     returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const request = paymentScheduleRequest(project, kind);
     setPaymentEditor({
       project,
       kind,
-      date: date || (kind === "delivery" ? project.deliveryScheduledFor : project.installationScheduledFor) || today,
-      time: (kind === "delivery" ? project.deliveryScheduledTime : project.installationScheduledTime) || "09:00",
+      date: date || (kind === "delivery" ? project.deliveryScheduledFor : project.installationScheduledFor) || request?.preferredDate || today,
+      time: (kind === "delivery" ? project.deliveryScheduledTime : project.installationScheduledTime) || request?.preferredTime || "09:00",
       assignee: (kind === "delivery" ? project.deliveryAssignee : project.installationAssignee) || "",
     });
   };
@@ -689,6 +774,42 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
     await load(true);
     if (message) setNotice(message);
   };
+
+  async function reloadPaymentScheduleReview() {
+    if (!paymentEditor || busy) return;
+    const currentEditor = paymentEditor;
+    setBusy(true);
+    setError("");
+    try {
+      const response = await fetch("/api/payment-track", { cache: "no-store" });
+      const body = await readJsonResponse<PaymentTrackListResponse & { error?: string }>(response);
+      if (!response.ok) throw new Error(apiMessage(body.error, "Unable to reload the latest Project Track data."));
+      const refreshedProjects = Array.isArray(body.data) ? body.data as ScheduledPaymentProject[] : [];
+      const refreshedProject = refreshedProjects.find((project) => project.id === currentEditor.project.id);
+      if (!refreshedProject) throw new Error("This Project Track project is no longer available.");
+      const request = paymentScheduleRequest(refreshedProject, currentEditor.kind);
+      setProjects(refreshedProjects);
+      setPaymentEditor({
+        project: refreshedProject,
+        kind: currentEditor.kind,
+        date: (currentEditor.kind === "delivery" ? refreshedProject.deliveryScheduledFor : refreshedProject.installationScheduledFor) || request?.preferredDate || today,
+        time: (currentEditor.kind === "delivery" ? refreshedProject.deliveryScheduledTime : refreshedProject.installationScheduledTime) || request?.preferredTime || "09:00",
+        assignee: (currentEditor.kind === "delivery" ? refreshedProject.deliveryAssignee : refreshedProject.installationAssignee) || "",
+      });
+      setNotice("Latest Project Track data loaded. Review the schedule and try again.");
+    } catch (reloadError) {
+      setError(reloadError instanceof Error ? reloadError.message : "Unable to reload the latest Project Track data.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function closePaymentReviewAndRefresh() {
+    if (busy) return;
+    closeModalAfterSuccess();
+    setError("");
+    await refreshAll("Weekly Schedule refreshed from the latest source data.");
+  }
 
   async function saveInventorySchedule(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -776,6 +897,7 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
         body: JSON.stringify({
           action,
           actorRole: "pm",
+          expectedUpdatedAt: paymentEditor.project.updatedAt,
           [dateField]: paymentEditor.date,
           [timeField]: paymentEditor.time,
           [assigneeField]: paymentEditor.assignee,
@@ -784,7 +906,7 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
       const body = await readJsonResponse<{ error?: string }>(response);
       if (!response.ok) throw new Error(apiMessage(body.error, `Unable to schedule ${paymentEditor.kind}.`));
       closeModalAfterSuccess();
-      await refreshAll(paymentEditor.kind === "delivery" ? "Material delivery scheduled." : "Installation scheduled.");
+      await refreshAll(paymentEditor.kind === "delivery" ? "Material delivery scheduled." : "Installment scheduled.");
       window.dispatchEvent(new CustomEvent("erp:payment-track-updated", { detail: { source: "project-management" } }));
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : `Unable to schedule ${paymentEditor.kind}.`);
@@ -807,7 +929,7 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
       });
       const body = await readJsonResponse<{ error?: string }>(response);
       if (!response.ok) throw new Error(apiMessage(body.error, `Unable to complete ${installation ? "installation" : "delivery"}.`));
-      await refreshAll(installation ? "Installation marked complete." : "Material delivery marked complete.");
+      await refreshAll(installation ? "Installment marked complete." : "Material delivery marked complete.");
       window.dispatchEvent(new CustomEvent("erp:payment-track-updated", { detail: { source: "project-management" } }));
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Unable to update the Project Track entry.");
@@ -899,10 +1021,21 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
 
   const sourceLabel = (source: CalendarEntry["source"] | UnscheduledEntry["source"]) => {
     if (source === "material_delivery") return "Material Delivery";
-    if (source === "installing") return "Installing";
+    if (source === "installing") return "Installment";
     if (source === "inventory") return "Material Delivery";
     if (source === "site_visit") return "Site Visit";
     return "Custom";
+  };
+
+  const sourceBadgeClass = (source: CalendarEntry["source"] | UnscheduledEntry["source"]) => {
+    const tone = source === "installing"
+      ? styles.installingBadge
+      : source === "inventory" || source === "material_delivery"
+        ? styles.materialDeliveryBadge
+        : source === "site_visit"
+          ? styles.siteVisitBadge
+          : "";
+    return `${styles.sourceBadge} ${tone}`;
   };
 
   async function updateSourceOverride(entry: OverrideableEntry, action: SourceOverrideAction) {
@@ -981,15 +1114,67 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
     </>
   );
 
+  const renderUnscheduledEntry = (entry: UnscheduledEntry) => {
+    const kind = entry.source === "installing" ? "installation" : "delivery";
+    const request = paymentScheduleRequest(entry.project, kind);
+    const canReview = entry.pendingStatus === "pre_scheduled";
+    return (
+      <article key={entry.id} className={`${styles.unscheduledCard} ${entry.cancelled ? styles.cancelledCard : ""}`}>
+        <div>
+          <div className={styles.cardTopline}>
+            <span className={sourceBadgeClass(entry.source)}>{sourceLabel(entry.source)}</span>
+            {entry.cancelled
+              ? <span className={styles.cancelledBadge}><X size={12} /> Cancelled</span>
+              : canReview
+                ? <span className={styles.preScheduledBadge}><Clock3 size={12} /> Pre-scheduled</span>
+                : <span className={styles.unscheduledBadge}><AlertCircle size={12} /> Unscheduled</span>}
+          </div>
+          <h3>{entry.title}</h3>
+          <p><MapPin size={13} />{entry.location}</p>
+          {canReview && request ? (
+            <div className={styles.requestPreview}>
+              <span><CalendarDays size={13} /><strong>Preferred</strong>{shortDate(request.preferredDate)} · {timeLabel(request.preferredTime)}</span>
+              <span><UserRound size={13} /><strong>Sales</strong>{request.submittedBy}</span>
+              {request.notes ? <small title={request.notes}>{request.notes}</small> : null}
+            </div>
+          ) : (
+            <div className={styles.awaitingSales}>
+              <AlertCircle size={14} />
+              <strong>Waiting for Sales</strong>
+            </div>
+          )}
+          <small>{entry.detail}</small>
+        </div>
+        {(canManageSchedule && canReview && !entry.cancelled)
+          || (authenticatedRole === "admin" && Boolean(entry.overrideKey)) ? (
+          <div className={styles.unscheduledActions}>
+            {canManageSchedule && canReview && !entry.cancelled ? (
+              <button
+                type="button"
+                onClick={() => openPaymentEditor(entry.project, kind)}
+                disabled={busy}
+              >
+                <CalendarCheck2 size={14} /> Review &amp; schedule
+              </button>
+            ) : null}
+            {renderSourceOverrideActions(entry)}
+          </div>
+        ) : null}
+      </article>
+    );
+  };
+
   const renderCalendarEntry = (entry: CalendarEntry) => (
     <article key={entry.id} className={`${styles.scheduleCard} ${styles[entry.source]} ${entry.completed && !entry.cancelled ? styles.completedCard : ""} ${entry.cancelled ? styles.cancelledCard : ""}`}>
       <div className={styles.cardTopline}>
-        <span className={styles.sourceBadge}>{sourceLabel(entry.source)}</span>
+        <span className={sourceBadgeClass(entry.source)}>{sourceLabel(entry.source)}</span>
         {entry.cancelled
           ? <span className={styles.cancelledBadge}><X size={12} /> Cancelled</span>
           : entry.completed
             ? <span className={styles.completedBadge}><Check size={12} /> Complete</span>
-            : null}
+            : entry.source === "site_visit" && entry.visit.status === "in_progress"
+              ? <span className={styles.inProgressBadge}><Wrench size={12} /> In progress</span>
+              : <span className={styles.scheduledBadge}><CalendarCheck2 size={12} /> Scheduled</span>}
       </div>
       <h3>{entry.title}</h3>
       <p><MapPin size={13} />{entry.location}</p>
@@ -1023,6 +1208,21 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
           ) : null}
         </div>
       </header>
+
+      <div className={`${styles.scheduleFrame} ${view === "calendar" ? styles.calendarScheduleFrame : ""}`}>
+      {view === "calendar" ? (
+        <aside className={styles.unscheduledRail} aria-labelledby="unscheduled-column-title">
+          <header>
+            <div><Clock3 size={16} /><strong id="unscheduled-column-title">Pending Schedule</strong></div>
+            <span>{visibleUnscheduled.length}</span>
+          </header>
+          <div className={styles.unscheduledRailEntries}>
+            {visibleUnscheduled.map(renderUnscheduledEntry)}
+            {!visibleUnscheduled.length ? <div className={styles.emptyDay}>No pending Project Track jobs</div> : null}
+          </div>
+        </aside>
+      ) : null}
+      <div className={styles.scheduleMain}>
 
       <div className={styles.weekToolbar}>
         <div className={styles.weekNavigation} aria-label="Week navigation">
@@ -1059,50 +1259,22 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
         <section className={`${styles.traySection} ${styles.overdueSection}`} aria-labelledby="overdue-title">
           <header>
             <div><AlertCircle size={18} /><h2 id="overdue-title">Overdue</h2><span>{visibleOverdue.length}</span></div>
-            <p>Scheduled before this week and still incomplete</p>
           </header>
           <div className={styles.trayList}>{visibleOverdue.map(renderCalendarEntry)}</div>
         </section>
       ) : null}
 
-      <section className={styles.traySection} aria-labelledby="unscheduled-title">
-        <header>
-          <div><Clock3 size={18} /><h2 id="unscheduled-title">Unscheduled</h2><span>{visibleUnscheduled.length}</span></div>
-          <p>Items that need a date from the Project Manager</p>
-        </header>
-        <div className={styles.trayList}>
-          {visibleUnscheduled.map((entry) => (
-            <article key={entry.id} className={`${styles.unscheduledCard} ${styles[entry.source]} ${entry.cancelled ? styles.cancelledCard : ""}`}>
-              <div>
-                <div className={styles.cardTopline}>
-                  <span className={styles.sourceBadge}>{sourceLabel(entry.source)}</span>
-                  {entry.cancelled ? <span className={styles.cancelledBadge}><X size={12} /> Cancelled</span> : null}
-                </div>
-                <h3>{entry.title}</h3>
-                <p><MapPin size={13} />{entry.location}</p>
-                <small>{entry.detail}</small>
-              </div>
-              {(canManageSchedule && !entry.cancelled) || authenticatedRole === "admin" ? (
-                <div className={styles.unscheduledActions}>
-                  {canManageSchedule && !entry.cancelled ? (
-                    <button
-                      type="button"
-                      onClick={() => entry.source === "inventory"
-                        ? openInventoryEditor(entry.group)
-                        : openPaymentEditor(entry.project, entry.source === "installing" ? "installation" : "delivery")}
-                      disabled={busy}
-                    >
-                      <CalendarDays size={14} /> Schedule
-                    </button>
-                  ) : null}
-                  {renderSourceOverrideActions(entry)}
-                </div>
-              ) : null}
-            </article>
-          ))}
-          {!visibleUnscheduled.length ? <div className={styles.emptyTray}><CalendarCheck2 size={20} /> No unscheduled jobs in this view</div> : null}
-        </div>
-      </section>
+      {view === "list" ? (
+        <section className={styles.traySection} aria-labelledby="unscheduled-title">
+          <header>
+            <div><Clock3 size={18} /><h2 id="unscheduled-title">Pending Schedule</h2><span>{visibleUnscheduled.length}</span></div>
+          </header>
+          <div className={styles.trayList}>
+            {visibleUnscheduled.map(renderUnscheduledEntry)}
+            {!visibleUnscheduled.length ? <div className={styles.emptyTray}><CalendarCheck2 size={20} /> No pending Project Track jobs in this view</div> : null}
+          </div>
+        </section>
+      ) : null}
 
       {loading ? (
         <div className={styles.loading}><LoaderCircle size={27} className={styles.spinning} /> Loading weekly schedule…</div>
@@ -1111,6 +1283,10 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
           <div className={styles.calendarGrid} role="region" aria-labelledby="project-schedule-title">
             {days.map((day) => {
               const entries = visibleEntries.filter((entry) => entry.date === day);
+              const activeEntries = entries.filter((entry) => !entry.completed || entry.cancelled);
+              const completedEntries = entries.filter((entry) => entry.completed && !entry.cancelled);
+              const completedExpanded = Boolean(expandedCompletedDays[day]);
+              const completedRegionId = `completed-schedule-${day}`;
               const isToday = day === today;
               return (
                 <section key={day} className={`${styles.dayColumn} ${isToday ? styles.todayColumn : ""}`} aria-labelledby={`schedule-day-${day}`}>
@@ -1119,9 +1295,28 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
                     {isToday ? <small>Today</small> : <span>{entries.length}</span>}
                   </header>
                   <div className={styles.dayEntries}>
-                    {entries.map(renderCalendarEntry)}
+                    {activeEntries.map(renderCalendarEntry)}
                     {!entries.length ? <div className={styles.emptyDay}>No jobs</div> : null}
                     {canManageSchedule ? <button type="button" className={styles.quickAdd} onClick={() => openCustomEditor(undefined, day)}><Plus size={14} /> Add job</button> : null}
+                    {completedEntries.length ? (
+                      <div className={`${styles.completedDayGroup} ${canManageSchedule ? styles.completedDayGroupAfterAdd : ""}`}>
+                        <button
+                          type="button"
+                          className={styles.completedDayToggle}
+                          aria-expanded={completedExpanded}
+                          aria-controls={completedRegionId}
+                          aria-label={`${completedExpanded ? "Collapse" : "Expand"} ${completedEntries.length} completed ${completedEntries.length === 1 ? "job" : "jobs"} for ${dayLabel(day)} ${shortDate(day)}`}
+                          onClick={() => setExpandedCompletedDays((current) => ({ ...current, [day]: !current[day] }))}
+                        >
+                          <span className={styles.completedDayToggleLabel}><CheckCircle2 size={15} aria-hidden="true" /> Completed</span>
+                          <span className={styles.completedDayCount}>{completedEntries.length}</span>
+                          <ChevronRight className={completedExpanded ? styles.completedDayChevronExpanded : styles.completedDayChevron} size={16} aria-hidden="true" />
+                        </button>
+                        <div id={completedRegionId} className={styles.completedDayEntries} hidden={!completedExpanded}>
+                          {completedEntries.map(renderCalendarEntry)}
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 </section>
               );
@@ -1141,7 +1336,7 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
                   <td data-label="Date"><strong>{dayLabel(entry.date)}</strong><span>{shortDate(entry.date)}</span></td>
                   <td data-label="Time">{entry.time ? timeLabel(entry.time) : "All day"}</td>
                   <td data-label="Project or customer"><strong>{entry.title}</strong><small>{entry.detail}</small></td>
-                  <td data-label="Type"><span className={styles.sourceBadge}>{sourceLabel(entry.source)}</span></td>
+                  <td data-label="Type"><span className={sourceBadgeClass(entry.source)}>{sourceLabel(entry.source)}</span></td>
                   <td data-label="Location"><span className={styles.listValue}><MapPin size={13} />{entry.location}</span></td>
                   <td data-label="Assigned to"><span className={styles.listValue}><UserRound size={13} />{entry.assignee}</span></td>
                   <td data-label="Status">{entry.cancelled
@@ -1159,6 +1354,8 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
           </table>
         </div>
       )}
+      </div>
+      </div>
 
       {inventoryEditor ? (
         <div className={styles.modalBackdrop} role="presentation" onMouseDown={modalBackdropClick}>
@@ -1193,11 +1390,15 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
         </div>
       ) : null}
 
-      {paymentEditor ? (
+      {paymentEditor ? (() => {
+        const request = paymentScheduleRequest(paymentEditor.project, paymentEditor.kind);
+        const scheduleLabel = paymentEditor.kind === "delivery" ? "Material Delivery" : "Installment";
+        const finalScheduleComplete = hasCompletePaymentSchedule(paymentEditor.project, paymentEditor.kind);
+        return (
         <div className={styles.modalBackdrop} role="presentation" onMouseDown={modalBackdropClick}>
           <form ref={modalRef} className={`${styles.modal} ${styles.compactModal}`} onSubmit={savePaymentSchedule} role="dialog" aria-modal="true" aria-labelledby="payment-editor-title">
             <header>
-              <div><span>Project Track · {paymentEditor.project.reference}</span><h2 id="payment-editor-title">Schedule {paymentEditor.kind === "delivery" ? "Material Delivery" : "Installation"}</h2></div>
+              <div><span>Project Track · {paymentEditor.project.reference}</span><h2 id="payment-editor-title">Review &amp; Schedule {scheduleLabel}</h2></div>
               <button type="button" onClick={closeModal} disabled={busy} aria-label="Close"><X size={19} /></button>
             </header>
             <div className={styles.modalBody}>
@@ -1205,9 +1406,76 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
                 <span className={styles.projectIcon}>{paymentEditor.kind === "delivery" ? <Truck size={20} /> : <Wrench size={20} />}</span>
                 <div><strong>{customerName(paymentEditor.project)}</strong><span><MapPin size={13} />{customerAddress(paymentEditor.project) || "Address required"}</span></div>
               </div>
+              {error ? (
+                <div className={styles.modalError} role="alert">
+                  <AlertCircle size={18} />
+                  <div className={styles.modalErrorCopy}>
+                    <strong>Schedule was not saved</strong>
+                    <span>{error}</span>
+                  </div>
+                  <div className={styles.modalErrorActions}>
+                    <button type="button" onClick={() => void reloadPaymentScheduleReview()} disabled={busy}>
+                      <RefreshCw size={13} className={busy ? styles.spinning : ""} /> Reload latest
+                    </button>
+                    <button type="button" onClick={() => void closePaymentReviewAndRefresh()} disabled={busy}>Close &amp; refresh</button>
+                  </div>
+                </div>
+              ) : null}
+              <section className={styles.scheduleRequestPanel} aria-label="Sales scheduling preference">
+                <div className={styles.scheduleRequestHeader}>
+                  <div><strong>Sales preference</strong></div>
+                  {finalScheduleComplete
+                    ? <span className={styles.scheduledBadge}><CalendarCheck2 size={12} /> Scheduled</span>
+                    : request
+                      ? <span className={styles.preScheduledBadge}><Clock3 size={12} /> Pre-scheduled</span>
+                      : null}
+                </div>
+                {request ? (
+                  <>
+                    <dl className={styles.scheduleRequestDetails}>
+                      <div><dt>Preferred date</dt><dd>{shortDate(request.preferredDate)}</dd></div>
+                      <div><dt>Preferred time</dt><dd>{timeLabel(request.preferredTime)}</dd></div>
+                      <div><dt>Submitted by</dt><dd>{request.submittedBy}</dd></div>
+                      <div><dt>Submitted</dt><dd>{submittedAtLabel(request.submittedAt)}</dd></div>
+                    </dl>
+                    <div className={styles.scheduleRequestNotes}>
+                      <strong>Sales notes</strong>
+                      <p>{request.notes || "No notes provided."}</p>
+                    </div>
+                  </>
+                ) : (
+                  <p className={styles.legacyScheduleNotice}>No Sales preference was recorded for this existing schedule.</p>
+                )}
+              </section>
+              {paymentEditor.kind === "delivery" ? (
+                <div className={styles.scheduleItemComparison}>
+                  <div className={styles.itemSummary}>
+                    <strong>Chosen warehouse SKUs</strong>
+                    {paymentEditor.project.deliverySelections.length
+                      ? paymentEditor.project.deliverySelections.map((item) => <span key={item.sku}>{item.sku}<b>× {item.quantity}</b></span>)
+                      : <span>No warehouse SKUs chosen</span>}
+                  </div>
+                  <div className={styles.itemSummary}>
+                    <strong>Order items</strong>
+                    {paymentEditor.project.items.length ? paymentEditor.project.items.map((item, index) => (
+                      <span key={item.id}>{paymentItemLabel(paymentEditor.project, index)}<b>× {item.quantity}</b></span>
+                    )) : <span>No items listed</span>}
+                  </div>
+                </div>
+              ) : (
+                <div className={styles.itemSummary}>
+                  <strong>Order items</strong>
+                  {paymentEditor.project.items.length ? paymentEditor.project.items.map((item, index) => (
+                    <span key={item.id}>{paymentItemLabel(paymentEditor.project, index)}<b>× {item.quantity}</b></span>
+                  )) : <span>No items listed</span>}
+                </div>
+              )}
+              <div className={styles.scheduleConfirmationHeading}>
+                <strong>PM confirmation</strong>
+              </div>
               <div className={styles.paymentScheduleFields}>
-                <label className={styles.singleField}>{paymentEditor.kind === "delivery" ? "Delivery date" : "Installation date"}<input type="date" value={paymentEditor.date} onChange={(event) => setPaymentEditor({ ...paymentEditor, date: event.target.value })} required /></label>
-                <label className={styles.singleField}>{paymentEditor.kind === "delivery" ? "Delivery time" : "Installation time"}<input type="time" value={paymentEditor.time} onChange={(event) => setPaymentEditor({ ...paymentEditor, time: event.target.value })} required /></label>
+                <label className={styles.singleField}>{paymentEditor.kind === "delivery" ? "Delivery date" : "Installment date"}<input type="date" value={paymentEditor.date} onChange={(event) => setPaymentEditor({ ...paymentEditor, date: event.target.value })} required /></label>
+                <label className={styles.singleField}>{paymentEditor.kind === "delivery" ? "Delivery time" : "Installment time"}<input type="time" value={paymentEditor.time} onChange={(event) => setPaymentEditor({ ...paymentEditor, time: event.target.value })} required /></label>
                 <label className={`${styles.singleField} ${styles.paymentAssigneeField}`}>
                   {paymentEditor.kind === "delivery" ? "Delivery person" : "Installer"}
                   <select value={paymentEditor.assignee} onChange={(event) => setPaymentEditor({ ...paymentEditor, assignee: event.target.value as PaymentTrackScheduleAssignee | "" })} required>
@@ -1215,12 +1483,6 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
                     {PAYMENT_TRACK_SCHEDULE_ASSIGNEES.map((assignee) => <option key={assignee} value={assignee}>{assignee}</option>)}
                   </select>
                 </label>
-              </div>
-              <div className={styles.itemSummary}>
-                <strong>Task items</strong>
-                {paymentEditor.project.items.length ? paymentEditor.project.items.map((item, index) => (
-                  <span key={item.id}>{paymentItemLabel(paymentEditor.project, index)}<b>× {item.quantity}</b></span>
-                )) : <span>No items listed</span>}
               </div>
             </div>
             <footer>
@@ -1230,7 +1492,8 @@ export function ProjectDeliveryBoard({ authenticatedRole }: { authenticatedRole:
             </footer>
           </form>
         </div>
-      ) : null}
+        );
+      })() : null}
 
       {customEditor ? (
         <div className={styles.modalBackdrop} role="presentation" onMouseDown={modalBackdropClick}>

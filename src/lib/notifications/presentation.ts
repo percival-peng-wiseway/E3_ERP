@@ -49,7 +49,10 @@ export function amountAction(
   return `${amount} · ${cleanText(action, 100)}`;
 }
 
-export function planningDescription(address: string, action: "Delivery planning" | "Installation planning") {
+export function planningDescription(
+  address: string,
+  action: "Delivery planning" | "Installation planning" | "Installment planning",
+) {
   const suffix = ` · ${action}`;
   const addressLabel = cleanText(address, 360 - suffix.length) || "Address required";
   return `${addressLabel}${suffix}`;

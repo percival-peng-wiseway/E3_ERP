@@ -39,8 +39,7 @@
   place-items: center;
 }
 
-.dialog > header span { color: #89949d; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
-.dialog > header h2 { margin: 2px 0 0; color: #202a33; font-size: 21px; line-height: 1.2; }
+.dialog > header h2 { margin: 0; color: #202a33; font-size: 21px; line-height: 1.2; }
 .dialog > header button {
   display: grid;
   width: 34px;

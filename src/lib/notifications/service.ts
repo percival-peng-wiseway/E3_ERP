@@ -188,6 +188,16 @@ function daysUntilDate(value: string | null, now: Date): number | null {
   return Math.round((target - melbourneTodayUtc(now)) / DAY_MS);
 }
 
+function preScheduleDescription(
+  address: string,
+  kind: "Delivery" | "Installation" | "Installment",
+  request: { preferredDate: string; preferredTime: string; notes: string },
+) {
+  const preference = `${cleanText(request.preferredDate, 10)} at ${cleanText(request.preferredTime, 5)}`;
+  const notes = cleanText(request.notes, 140);
+  return [address, `${kind} preference: ${preference}`, notes].filter(Boolean).join(" · ");
+}
+
 async function limitedJson(response: Response, limit: number): Promise<unknown> {
   const declaredLength = Number(response.headers.get("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > limit) throw new Error("Response too large");
@@ -316,6 +326,34 @@ export function buildPaymentTrackNotifications(projects: PaymentTrackProject[], 
           entityId: project.id,
           actionLabel: "Confirm deposit",
         }));
+      } else if (task.action === "pre_schedule_delivery") {
+        items.push(notification({
+          role: task.role,
+          priority: "high",
+          badgeLabel: "Delivery preference needed",
+          projectCreatedAt: project.createdAt,
+          ownerName: project.specialist.name,
+          title: customerName,
+          description: planningDescription(customerAddress, "Delivery planning"),
+          module: "payments",
+          entityId: project.id,
+          actionLabel: "Prepare delivery",
+        }));
+      } else if (task.action === "review_delivery_pre_schedule") {
+        const request = project.deliveryScheduleRequest;
+        if (!request) continue;
+        items.push(notification({
+          role: task.role,
+          priority: "high",
+          badgeLabel: "Delivery pre-scheduled",
+          projectCreatedAt: project.createdAt,
+          ownerName: request.submittedBy || project.specialist.name,
+          title: customerName,
+          description: preScheduleDescription(customerAddress, "Delivery", request),
+          module: "projects",
+          entityId: project.id,
+          actionLabel: "Review pre-schedule",
+        }));
       } else if (task.action === "manage_delivery") {
         const scheduledFor = project.deliveryScheduledFor;
         const daysUntil = daysUntilDate(scheduledFor, now);
@@ -335,7 +373,7 @@ export function buildPaymentTrackNotifications(projects: PaymentTrackProject[], 
           ownerName: project.specialist.name,
           title: customerName,
           description: planningDescription(customerAddress, "Delivery planning"),
-          module: "payments",
+          module: "projects",
           entityId: project.id,
           actionLabel: hasSchedule ? "View delivery schedule" : "Arrange delivery",
         }));
@@ -361,6 +399,34 @@ export function buildPaymentTrackNotifications(projects: PaymentTrackProject[], 
           entityId: project.id,
           actionLabel: "Confirm collection",
         }));
+      } else if (task.action === "pre_schedule_installation") {
+        items.push(notification({
+          role: task.role,
+          priority: "high",
+          badgeLabel: "Installment preference needed",
+          projectCreatedAt: project.createdAt,
+          ownerName: project.specialist.name,
+          title: customerName,
+          description: planningDescription(customerAddress, "Installment planning"),
+          module: "payments",
+          entityId: project.id,
+          actionLabel: "Prepare installment",
+        }));
+      } else if (task.action === "review_installation_pre_schedule") {
+        const request = project.installationScheduleRequest;
+        if (!request) continue;
+        items.push(notification({
+          role: task.role,
+          priority: "high",
+          badgeLabel: "Installment pre-scheduled",
+          projectCreatedAt: project.createdAt,
+          ownerName: request.submittedBy || project.specialist.name,
+          title: customerName,
+          description: preScheduleDescription(customerAddress, "Installment", request),
+          module: "projects",
+          entityId: project.id,
+          actionLabel: "Review pre-schedule",
+        }));
       } else if (task.action === "manage_installation") {
         const scheduledFor = project.installationScheduledFor;
         const daysUntil = daysUntilDate(scheduledFor, now);
@@ -375,14 +441,14 @@ export function buildPaymentTrackNotifications(projects: PaymentTrackProject[], 
         items.push(notification({
           role: task.role,
           priority,
-          badgeLabel: hasSchedule ? "Installation scheduled" : "Installation plan needed",
+          badgeLabel: hasSchedule ? "Installment scheduled" : "Installment plan needed",
           projectCreatedAt: project.createdAt,
           ownerName: project.specialist.name,
           title: customerName,
-          description: planningDescription(customerAddress, "Installation planning"),
+          description: planningDescription(customerAddress, "Installment planning"),
           module: "projects",
           entityId: project.id,
-          actionLabel: hasSchedule ? "View installation schedule" : "Arrange installation",
+          actionLabel: hasSchedule ? "View installment schedule" : "Arrange installment",
         }));
       } else if (task.action === "confirm_solar_stc") {
         items.push(notification({

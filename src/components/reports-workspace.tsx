@@ -7,7 +7,6 @@ import {
   FilePenLine,
   LoaderCircle,
   RotateCw,
-  Sparkles,
 } from "lucide-react";
 import { KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 import { readJsonResponse } from "@/lib/client/http";
@@ -319,18 +318,14 @@ export function ReportsWorkspace() {
           <span>{content.length.toLocaleString("en-AU")} / {MAX_CONTENT_LENGTH.toLocaleString("en-AU")} characters</span>
         </div>
         <div className={styles.editorSurface}>
-          <div className={styles.promptLine}>
-            <span>1</span>
-            <p><Sparkles size={16} />Make life easier，Let me know your needs</p>
-          </div>
           <div className={styles.inputLine}>
-            <span>2</span>
+            <span>1</span>
             <textarea
               value={content}
               onChange={(event) => updateContent(event.target.value)}
               onBlur={() => void saveDocument(contentRef.current)}
               onKeyDown={handleEditorKeyDown}
-              placeholder="Start writing here…\n\nFor example:\n- Add a faster stock lookup\n- Send a reminder before delivery\n- Include another field on quotations"
+              placeholder="Start writing here…"
               aria-label="Your needs"
               maxLength={MAX_CONTENT_LENGTH}
               disabled={!ready}
@@ -339,10 +334,6 @@ export function ReportsWorkspace() {
             />
           </div>
         </div>
-        <footer className={styles.editorFooter}>
-          <span>Changes save automatically after you stop typing.</span>
-          <span><kbd>⌘</kbd><kbd>S</kbd> or <kbd>Ctrl</kbd><kbd>S</kbd> to save now</span>
-        </footer>
       </section>
     </section>
   );
