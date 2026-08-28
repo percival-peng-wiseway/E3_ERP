@@ -81,6 +81,7 @@ const PREVIEW_TYPES = new Set([
 type SortKey = "name" | "updated" | "size";
 type LayoutMode = "list" | "grid";
 type UploadState = "queued" | "uploading" | "complete" | "failed";
+type UploadKnowledgeStatus = "queued" | "ready" | "duplicate" | "not_supported" | "failed";
 
 type FolderDestination = WorkspaceFileFolderOption;
 type UsageSummary = WorkspaceFilesUsage;
@@ -98,11 +99,30 @@ type ItemResponse = {
   code?: string;
 };
 
+type UploadKnowledgeIndex = {
+  eligible: boolean;
+  status: UploadKnowledgeStatus;
+  documentId: string | null;
+  jobId: string | null;
+  errorCode: string | null;
+};
+
+type UploadResponse = {
+  data?: {
+    item?: WorkspaceFileItem;
+    knowledgeIndex?: UploadKnowledgeIndex;
+  };
+  error?: string;
+  code?: string;
+};
+
 type UploadTask = {
   id: string;
   file: File;
   state: UploadState;
   error: string;
+  itemId: string | null;
+  knowledgeIndex: UploadKnowledgeIndex | null;
 };
 
 type KnowledgeFormState = {
@@ -141,6 +161,36 @@ function unwrapItem(value: ItemResponse): WorkspaceFileItem | null {
   if (!value.data || typeof value.data !== "object") return null;
   if ("item" in value.data) return value.data.item || null;
   return value.data as WorkspaceFileItem;
+}
+
+function uploadKnowledgeIndex(value: unknown): UploadKnowledgeIndex | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Partial<UploadKnowledgeIndex>;
+  if (typeof candidate.eligible !== "boolean"
+    || !["queued", "ready", "duplicate", "not_supported", "failed"].includes(candidate.status || "")
+    || !(candidate.documentId === null || typeof candidate.documentId === "string")
+    || !(candidate.jobId === null || typeof candidate.jobId === "string")
+    || !(candidate.errorCode === null || typeof candidate.errorCode === "string")) return null;
+  return candidate as UploadKnowledgeIndex;
+}
+
+function uploadKnowledgeMessage(task: UploadTask, isAdmin: boolean) {
+  if (task.error) return task.error;
+  if (task.state === "queued") return `${formatBytes(task.file.size)} · Waiting`;
+  if (task.state === "uploading") return `${formatBytes(task.file.size)} · Uploading`;
+  if (task.state === "failed") return "Upload failed.";
+  switch (task.knowledgeIndex?.status) {
+    case "queued": return isAdmin
+      ? "File saved · Indexing for Agent"
+      : "File saved · Sent for Agent indexing";
+    case "ready": return "File saved · Ready for Agent";
+    case "duplicate": return "File saved · Same content already available to Agent";
+    case "not_supported": return "File saved · This file type is not indexed for Agent";
+    case "failed": return isAdmin
+      ? "File saved · Agent indexing failed — open the file menu to retry"
+      : "File saved · Agent indexing failed — ask an administrator to retry";
+    default: return `${formatBytes(task.file.size)} · Uploaded`;
+  }
 }
 
 function formatBytes(value: number | null | undefined) {
@@ -303,6 +353,32 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
       }
       if (requestId !== requestIdRef.current) return;
       setItems(body.data.items);
+      setUploadTasks((current) => current.map((task) => {
+        if (task.state !== "complete" || !task.itemId) return task;
+        const uploaded = body.data?.items.find((item) => item.id === task.itemId);
+        const status = uploaded?.knowledge?.status;
+        if (!status || status === "disabled") return task;
+        // A document can exist in pending state when durable job creation failed.
+        // Preserve the upload response's failure until a later authoritative
+        // ready/failed document status proves that indexing was retried.
+        if (task.knowledgeIndex?.status === "failed" && (status === "pending" || status === "indexing")) return task;
+        const nextStatus: UploadKnowledgeStatus = status === "ready"
+          ? "ready"
+          : status === "failed"
+            ? "failed"
+            : "queued";
+        if (task.knowledgeIndex?.status === nextStatus) return task;
+        return {
+          ...task,
+          knowledgeIndex: {
+            eligible: true,
+            status: nextStatus,
+            documentId: uploaded.knowledge?.id || task.knowledgeIndex?.documentId || null,
+            jobId: task.knowledgeIndex?.jobId || null,
+            errorCode: nextStatus === "failed" ? task.knowledgeIndex?.errorCode || "index_failed" : null,
+          },
+        };
+      }));
       setBreadcrumbs(body.data.breadcrumbs);
       setUsage(usageFrom(body.data));
       setFolderDestinations(Array.isArray(body.data.folders) ? body.data.folders : []);
@@ -421,6 +497,10 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
   const currentParentId = parentId === ROOT_PARENT ? null : parentId;
   const uploadingCount = uploadTasks.filter((task) => task.state === "queued" || task.state === "uploading").length;
   const failedCount = uploadTasks.filter((task) => task.state === "failed").length;
+  const indexingCount = currentUser.role === "admin"
+    ? uploadTasks.filter((task) => task.state === "complete" && task.knowledgeIndex?.status === "queued").length
+    : 0;
+  const indexFailedCount = uploadTasks.filter((task) => task.state === "complete" && task.knowledgeIndex?.status === "failed").length;
 
   const switchView = (nextView: WorkspaceFilesView) => {
     if (nextView === view) return;
@@ -663,6 +743,8 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
       file,
       state: file.size > MAX_FILE_BYTES ? "failed" : "queued",
       error: file.size > MAX_FILE_BYTES ? "File exceeds the 20 MB limit." : "",
+      itemId: null,
+      knowledgeIndex: null,
     }));
     const queued = tasks.filter((task) => task.state === "queued");
     setUploadTasks(tasks);
@@ -676,10 +758,17 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
         form.set("file", task.file);
         if (currentParentId) form.set("parentId", currentParentId);
         const response = await fetch("/api/files/upload", { method: "POST", body: form });
-        const body = await readJsonResponse<ItemResponse>(response);
-        if (!response.ok || !unwrapItem(body)) throw new Error(apiError(body, "Upload failed."));
+        const body = await readJsonResponse<UploadResponse>(response);
+        const item = unwrapItem(body as ItemResponse);
+        if (!response.ok || !item) throw new Error(apiError(body, "Upload failed."));
         completed += 1;
-        setUploadTasks((current) => current.map((entry) => entry.id === task.id ? { ...entry, state: "complete", error: "" } : entry));
+        setUploadTasks((current) => current.map((entry) => entry.id === task.id ? {
+          ...entry,
+          state: "complete",
+          error: "",
+          itemId: item.id,
+          knowledgeIndex: uploadKnowledgeIndex(body.data?.knowledgeIndex),
+        } : entry));
       } catch (uploadError) {
         const message = uploadError instanceof Error ? uploadError.message : "Upload failed.";
         setUploadTasks((current) => current.map((entry) => entry.id === task.id ? { ...entry, state: "failed", error: message } : entry));
@@ -687,7 +776,7 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
     }
     setUploading(false);
     if (completed) {
-      setNotice(`${completed} ${completed === 1 ? "file" : "files"} uploaded to ${currentFolderName}.`);
+      setNotice(`${completed} ${completed === 1 ? "file" : "files"} uploaded to ${currentFolderName}. Supported documents are indexed for Agent automatically.`);
       await loadFiles(true);
     }
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -753,8 +842,8 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
       >
         {item.kind === "file" && canPreview(item) ? <button role="menuitem" type="button" onClick={() => openPreview(item)}><Eye size={15} />Preview</button> : null}
         {item.kind === "file" ? <a role="menuitem" href={contentUrl(item, "download")} onClick={() => setMenuItemId("")}><Download size={15} />Download</a> : null}
-        {view === "active" && currentUser.role === "admin" && (item.knowledge || canUseForKnowledge(item)) ? <button role="menuitem" type="button" onClick={() => openKnowledge(item)}><BookOpen size={15} />{item.knowledge ? "Knowledge settings" : "Add to knowledge base"}</button> : null}
-        {view === "active" && currentUser.role === "admin" && canUseForKnowledge(item) && item.knowledge && item.knowledge.status !== "disabled" ? <button role="menuitem" type="button" onClick={() => void changeKnowledgeState(item, "reindex")}><RefreshCw size={15} />Reindex</button> : null}
+        {view === "active" && currentUser.role === "admin" && (item.knowledge || canUseForKnowledge(item)) ? <button role="menuitem" type="button" onClick={() => openKnowledge(item)}><BookOpen size={15} />{item.knowledge ? "Knowledge settings" : "Index for Agent"}</button> : null}
+        {view === "active" && currentUser.role === "admin" && canUseForKnowledge(item) && item.knowledge && (item.knowledge.status === "ready" || item.knowledge.status === "failed") ? <button role="menuitem" type="button" onClick={() => void changeKnowledgeState(item, "reindex")}><RefreshCw size={15} />{item.knowledge.status === "failed" ? "Retry indexing" : "Reindex"}</button> : null}
         {view === "active" && currentUser.role === "admin" && item.knowledge && (item.knowledge.status !== "disabled" || canUseForKnowledge(item)) ? <button role="menuitem" type="button" onClick={() => void changeKnowledgeState(item, item.knowledge?.status === "disabled" ? "enable" : "disable")}><BookOpen size={15} />{item.knowledge.status === "disabled" ? "Enable knowledge" : "Disable knowledge"}</button> : null}
         {view === "active" && item.capabilities.rename ? <button role="menuitem" type="button" onClick={() => openDialog({ type: "rename", item })}><Pencil size={15} />Rename</button> : null}
         {view === "active" && item.capabilities.move ? <button role="menuitem" type="button" onClick={() => openDialog({ type: "move", item })}><Move size={15} />Move</button> : null}
@@ -789,6 +878,11 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
 
   const renderPrimaryItemButton = (item: WorkspaceFileItem, className: string) => {
     const Icon = itemIcon(item);
+    const itemSubtitle = item.knowledge ? <><i className={`${styles.knowledgeStatus} ${styles[`knowledge${knowledgeStatusLabel(item.knowledge.status)}`]}`}>{knowledgeStatusLabel(item.knowledge.status)}</i>{item.knowledge.lastIndexedAt ? ` · Indexed ${formatDate(item.knowledge.lastIndexedAt)}` : " · Agent knowledge"}</>
+      : item.kind === "folder" ? "Folder"
+        : currentUser.role === "admin" && canUseForKnowledge(item) ? <><i className={`${styles.knowledgeStatus} ${styles.knowledgePending}`}>Not indexed</i><span> · Agent knowledge</span></>
+          : !canUseForKnowledge(item) ? <><i className={`${styles.knowledgeStatus} ${styles.knowledgeDisabled}`}>Saved only</i><span> · Not indexed for Agent</span></>
+            : item.contentType || "File";
     if (view === "trash") {
       return (
         <div className={className}>
@@ -802,7 +896,7 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
       return (
         <a className={className} href={contentUrl(item, "download")} aria-label={`Download ${item.name}`}>
           <span className={`${styles.itemIcon} ${itemTone(item)}`}><Icon size={20} /></span>
-          <span className={styles.itemName}><strong>{item.name}</strong><small>{item.knowledge ? <><i className={`${styles.knowledgeStatus} ${styles[`knowledge${knowledgeStatusLabel(item.knowledge.status)}`]}`}>{knowledgeStatusLabel(item.knowledge.status)}</i>{item.knowledge.lastIndexedAt ? ` · Indexed ${formatDate(item.knowledge.lastIndexedAt)}` : " · Knowledge"}</> : item.kind === "folder" ? "Folder" : item.contentType || "File"}</small></span>
+          <span className={styles.itemName}><strong>{item.name}</strong><small>{itemSubtitle}</small></span>
         </a>
       );
     }
@@ -814,7 +908,7 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
         onClick={(event) => opens === "folder" ? navigateFolder(item.id) : openPreview(item, event.currentTarget)}
       >
         <span className={`${styles.itemIcon} ${itemTone(item)}`}><Icon size={20} /></span>
-        <span className={styles.itemName}><strong>{item.name}</strong><small>{item.knowledge ? <><i className={`${styles.knowledgeStatus} ${styles[`knowledge${knowledgeStatusLabel(item.knowledge.status)}`]}`}>{knowledgeStatusLabel(item.knowledge.status)}</i>{item.knowledge.lastIndexedAt ? ` · Indexed ${formatDate(item.knowledge.lastIndexedAt)}` : " · Knowledge"}</> : item.kind === "folder" ? "Folder" : item.contentType || "File"}</small></span>
+        <span className={styles.itemName}><strong>{item.name}</strong><small>{itemSubtitle}</small></span>
       </button>
     );
   };
@@ -981,12 +1075,12 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
 
       {uploadTasks.length ? (
         <aside className={styles.uploadQueue} aria-label="File uploads" aria-live="polite">
-          <header><strong>{uploadingCount ? `Uploading ${uploadingCount} ${uploadingCount === 1 ? "file" : "files"}` : failedCount ? `${failedCount} upload ${failedCount === 1 ? "needs" : "need"} attention` : "Uploads complete"}</strong><button type="button" disabled={uploading} onClick={() => setUploadTasks([])} aria-label="Close upload status"><X size={17} /></button></header>
+          <header><strong>{uploadingCount ? `Uploading ${uploadingCount} ${uploadingCount === 1 ? "file" : "files"}` : failedCount ? `${failedCount} upload ${failedCount === 1 ? "needs" : "need"} attention` : indexingCount ? `Indexing ${indexingCount} ${indexingCount === 1 ? "file" : "files"} for Agent` : indexFailedCount ? `${indexFailedCount} Agent ${indexFailedCount === 1 ? "index needs" : "indexes need"} attention` : "Uploads complete"}</strong><button type="button" disabled={uploading} onClick={() => setUploadTasks([])} aria-label="Close upload status"><X size={17} /></button></header>
           <div className={styles.uploadList}>
             {uploadTasks.map((task) => (
               <div className={styles.uploadRow} key={task.id}>
-                <span className={task.state === "failed" ? styles.uploadFailed : task.state === "complete" ? styles.uploadComplete : ""}>{task.state === "uploading" ? <LoaderCircle className={styles.spinning} size={16} /> : task.state === "complete" ? <CheckCircle2 size={16} /> : task.state === "failed" ? <AlertCircle size={16} /> : <FileIcon size={16} />}</span>
-                <div><strong>{task.file.name}</strong><small>{task.error || `${formatBytes(task.file.size)} · ${task.state === "queued" ? "Waiting" : task.state === "uploading" ? "Uploading" : "Uploaded"}`}</small>{task.state === "uploading" ? <i /> : null}</div>
+                <span className={task.state === "failed" || task.knowledgeIndex?.status === "failed" ? styles.uploadFailed : task.knowledgeIndex?.status === "queued" && currentUser.role === "admin" ? styles.uploadIndexing : task.state === "complete" ? styles.uploadComplete : ""}>{task.state === "uploading" || task.knowledgeIndex?.status === "queued" && currentUser.role === "admin" ? <LoaderCircle className={styles.spinning} size={16} /> : task.state === "complete" && task.knowledgeIndex?.status !== "failed" ? <CheckCircle2 size={16} /> : task.state === "failed" || task.knowledgeIndex?.status === "failed" ? <AlertCircle size={16} /> : <FileIcon size={16} />}</span>
+                <div><strong>{task.file.name}</strong><small>{uploadKnowledgeMessage(task, currentUser.role === "admin")}</small>{task.state === "uploading" ? <i /> : null}</div>
                 {task.state === "failed" && task.file.size <= MAX_FILE_BYTES ? <button type="button" disabled={uploading} onClick={() => retryUpload(task)}>Retry</button> : null}
               </div>
             ))}

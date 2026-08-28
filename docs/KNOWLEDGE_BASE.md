@@ -11,7 +11,8 @@ KV object keys.
 The knowledge pipeline is:
 
 ```text
-Files file + signed administrator session
+Supported Files upload + signed employee session
+  -> server-owned company scope + deterministic default metadata
   -> erp_knowledge_documents + idempotent index job
   -> verified read from ERP_FILES
   -> PDF/DOCX/TXT/Markdown parser
@@ -85,6 +86,15 @@ independently from the normal upload request. The first release deliberately lim
 knowledge sources to the configured parser size/page/chunk limits; Files may
 continue to store larger or unsupported files without indexing them.
 
+Every newly uploaded supported Files document is registered automatically with
+`company` access, so every signed-in employee can retrieve it through Agent. The
+server derives bounded title/type/category/language/version defaults from the Files
+record; an Administrator can refine those settings later. Images, CSV, Excel,
+PowerPoint and other unsupported formats remain valid Files items but are labelled
+as not indexed. A checksum-identical upload reuses the existing searchable evidence
+instead of creating duplicate vectors. A failed knowledge job never rolls back or
+misreports the already successful Files upload.
+
 Central runtime parameters are defined only in `src/lib/knowledge/config.ts`:
 
 | Parameter | Value |
@@ -94,21 +104,24 @@ Central runtime parameters are defined only in `src/lib/knowledge/config.ts`:
 | source/parser ceiling | 20 MiB, 4,000,000 extracted characters / 250 PDF pages |
 | DOCX archive ceiling | 2,048 entries / 32 MiB per entry / 64 MiB expanded total |
 | retrieval | maximum 8 chunks, maximum 3 per document, confidence 0.48 |
-| controlled background index | maximum 8 chunks, concurrency 8 |
+| controlled background index | maximum 24 chunks, upload concurrency 4 |
 | AI Search item poll / job lease | 18 seconds / 45 seconds |
 
-The background path is intentionally one parallel wave within the Worker
-`after()/waitUntil()` budget. A source producing more than eight chunks fails with
-`document_too_large` before any provider upload. It must be split into smaller
-approved files until a durable Queue/Workflow consumer is added. Provider and
-parser failures enter `Failed`; an Administrator retries with **Reindex**. Expired
-running leases are reclaimable, but this first release has no autonomous cron/queue
-wake-up, so the UI/manual retry remains the recovery trigger.
+The background path stays within the Worker `after()/waitUntil()` budget. It
+uploads at most four items concurrently, then polls the complete document
+generation with one AI Search list request per interval and one shared 18-second
+deadline. A source producing more than 24 chunks fails with `document_too_large`
+before any provider upload. It must be split into smaller approved files until a
+durable Queue/Workflow consumer is added. Provider and parser failures enter
+`Failed`; an Administrator retries with **Reindex**. Expired running leases are
+reclaimable, but this release has no autonomous cron/queue wake-up, so the
+UI/manual retry remains the recovery trigger.
 
 ## Access scopes
 
-Access scope is chosen by an Administrator and never accepted from an Agent tool
-call or browser identity claim:
+Automatic Files ingestion always assigns `company`. An Administrator may later
+choose a narrower scope in Knowledge settings. Scope is never accepted from an
+Agent tool call or browser identity claim:
 
 | Scope | Readers |
 | --- | --- |
@@ -165,7 +178,9 @@ not silently replace the production search backend.
 ## Operations
 
 1. Apply D1 migration `0005` before a Worker version that writes knowledge data.
-2. Add a supported Files item and use the Administrator knowledge action.
+2. Upload a supported Files item. It is registered with `company` access and queued
+   automatically; use Administrator Knowledge settings only to refine metadata or
+   narrow access.
 3. Poll the displayed state until `Ready`; investigate the bounded error code on
    `Failed` and use `Reindex` after correcting the source or service.
 4. Moving a file to Trash, disabling it or permanently deleting it makes it
@@ -188,10 +203,10 @@ The repository includes the real two-page PDF
 verifies both page locators, E117 headings, repeated-footer removal and that its six
 chunks fit the controlled indexer. After creating the AI Search instance:
 
-1. Start the application with a signed Administrator account and upload that PDF
-   in Files.
-2. Add it to Knowledge with scope `company`, product `H3 15.0`, region `AU`,
-   effective from `2026-08-01`; wait for `Ready`.
+1. Start the application with a signed employee account and upload that PDF in
+   Files; wait for its automatic company-scope index to reach `Ready`.
+2. As an Administrator, optionally set product `H3 15.0`, region `AU` and effective
+   from `2026-08-01`; wait for the metadata reindex to return to `Ready`.
 3. Ask Chinese and English E117/216–253V questions and verify title, version, page
    and updated time citations plus protected preview/download.
 4. Ask an unsupported question and verify the fixed no-reliable-source response.

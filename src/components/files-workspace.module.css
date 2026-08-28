@@ -744,6 +744,7 @@
 .uploadRow:last-child { border-bottom: 0; }
 .uploadRow > span { display: grid; width: 28px; height: 28px; place-items: center; color: #4d7695; background: #edf3f7; border-radius: 6px; }
 .uploadRow > span.uploadComplete { color: #1d7a5c; background: #e5f6ef; }
+.uploadRow > span.uploadIndexing { color: #286d9f; background: #eaf4fb; }
 .uploadRow > span.uploadFailed { color: #a44740; background: #fdecea; }
 .uploadRow > div { position: relative; min-width: 0; }
 .uploadRow strong,

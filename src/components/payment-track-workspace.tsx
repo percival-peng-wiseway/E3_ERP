@@ -440,7 +440,7 @@ function projectNextStep(project: PaymentTrackProject) {
     return {
       label: hasActiveWorkSchedule(project)
         ? "Complete Scheduled Work"
-        : isPaymentTrackWaitingForRebateQr(project) ? "Upload rebate QR code" : "Schedule Work",
+        : isPaymentTrackWaitingForRebateQr(project) ? "Confirm rebate QR received" : "Schedule Work",
       roles: ["pm"] as PaymentTrackRole[],
     };
   }
@@ -591,7 +591,6 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [proofFile, setProofFile] = useState<File | null>(null);
-  const [rebateQrFile, setRebateQrFile] = useState<File | null>(null);
   const [actionAmount, setActionAmount] = useState("");
   const [deliveryDate, setDeliveryDate] = useState("");
   const [deliveryTime, setDeliveryTime] = useState("");
@@ -876,7 +875,6 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
   const openProject = useCallback((project: PaymentTrackProject, element?: HTMLElement) => {
     returnFocusRef.current = element ?? null;
     setProofFile(null);
-    setRebateQrFile(null);
     setActionAmount("");
     const currentWorkMode = project.deliveredAt && !project.installedAt && project.workMode === "delivery_only"
       ? "installation_only"
@@ -1072,30 +1070,24 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
     }
   };
 
-  const uploadSolarRebateQrCode = async () => {
-    if (!selected || !rebateQrFile) return;
-    if (!PROOF_TYPES.has(rebateQrFile.type) || rebateQrFile.size > MAX_PROOF_SIZE) {
-      setError("Choose a PDF, JPG, PNG or WebP QR code file up to 10 MB.");
-      return;
-    }
+  const confirmSolarRebateQrCodeReceived = async () => {
+    if (!selected) return;
     setBusy(true);
     setError("");
     try {
-      const body = new FormData();
-      body.set("qrCode", rebateQrFile);
-      body.set("actorRole", "pm");
-      body.set("expectedUpdatedAt", selected.updatedAt);
       const response = await fetch(`/api/payment-track/${selected.id}/rebate-qr-code`, {
         method: "POST",
-        body,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ actorRole: "pm", expectedUpdatedAt: selected.updatedAt }),
       });
       const result = await readJsonResponse<PaymentTrackMutationResponse & { error?: string }>(response);
-      if (!response.ok) throw new Error(apiError(result, "Unable to upload the Solar Rebate QR code."));
+      if (!response.ok) throw new Error(apiError(result, "Unable to confirm receipt of the Solar Rebate QR code."));
       updateProject(result.data);
-      setRebateQrFile(null);
-      setNotice("Solar Rebate QR code uploaded. Work is now Unscheduled.");
-    } catch (uploadError) {
-      setError(uploadError instanceof Error ? uploadError.message : "Unable to upload the Solar Rebate QR code.");
+      setNotice("Solar Rebate QR code received. Work is now Unscheduled.");
+    } catch (confirmationError) {
+      setError(confirmationError instanceof Error
+        ? confirmationError.message
+        : "Unable to confirm receipt of the Solar Rebate QR code.");
     } finally {
       setBusy(false);
     }
@@ -1422,13 +1414,16 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
     }
 
     if (project.stage === "working_in_progress") {
-      const waitingForRebateQr = isPaymentTrackWaitingForRebateQr(project);
+      // Do not retroactively block a fully scheduled legacy project. Partial
+      // schedule data still requires PM receipt confirmation first.
+      const waitingForRebateQr = isPaymentTrackWaitingForRebateQr(project)
+        && !hasActiveWorkSchedule(project);
       if (role !== "pm") {
         return (
           <ReadOnlyNextStep
             owner="Project Manager"
             label={waitingForRebateQr
-              ? "Upload the Solar Rebate QR code before scheduling."
+              ? "Waiting for the Project Manager to confirm the Solar Rebate QR code was received."
               : hasActiveWorkSchedule(project) ? "Complete or update the scheduled work." : "Choose the work type, items, time and team."}
             allowContinue={authenticatedRole === "admin"}
             buttonLabel="Continue as Project Manager"
@@ -1438,13 +1433,9 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
       }
       if (waitingForRebateQr) {
         return (
-          <RequiredFileAction
+          <RebateQrConfirmationAction
             busy={busy}
-            file={rebateQrFile}
-            label="Waiting for rebate QR code"
-            buttonLabel="Upload QR code"
-            onFile={setRebateQrFile}
-            onSubmit={() => void uploadSolarRebateQrCode()}
+            onConfirm={() => void confirmSolarRebateQrCodeReceived()}
           />
         );
       }
@@ -2986,58 +2977,28 @@ function ProofAction({
   );
 }
 
-function RequiredFileAction({
+function RebateQrConfirmationAction({
   busy,
-  file,
-  label,
-  buttonLabel,
-  onFile,
-  onSubmit,
+  onConfirm,
 }: {
   busy: boolean;
-  file: File | null;
-  label: string;
-  buttonLabel: string;
-  onFile: (file: File | null) => void;
-  onSubmit: () => void;
+  onConfirm: () => void;
 }) {
   return (
-    <div className={`${styles.actionPanel} ${styles.proofChoicePanel}`} aria-busy={busy}>
-      <div className={styles.proofChoiceHeader}>
+    <div className={`${styles.actionPanel} ${styles.rebateQrConfirmationPanel}`} aria-busy={busy}>
+      <div className={styles.actionHeading}>
         <span><QrCode size={18} /></span>
-        <strong>{label}</strong>
+        <strong>Waiting for rebate QR code</strong>
       </div>
-      <div className={`${styles.proofChoiceGrid} ${styles.requiredFileGrid}`}>
-        <section className={styles.proofChoiceCard} aria-label="Upload Solar Rebate QR code">
-          <div className={styles.proofChoiceCardHeader}>
-            <span className={styles.proofChoiceIcon}><Paperclip size={18} /></span>
-            <strong>Solar Rebate QR code</strong>
-          </div>
-          <div className={styles.proofUploadControls}>
-            <label
-              className={`${styles.fileIconButton} ${file ? styles.fileSelected : ""}`}
-              aria-label={file ? `Change QR code file: ${file.name}` : "Choose QR code file"}
-              title={file ? `Change file: ${file.name}` : "Choose QR code file"}
-            >
-              <input
-                type="file"
-                disabled={busy}
-                accept="application/pdf,image/jpeg,image/png,image/webp,.pdf,.jpg,.jpeg,.png,.webp"
-                onChange={(event) => onFile(event.target.files?.[0] ?? null)}
-              />
-              {file ? <FileCheck2 size={18} /> : <Paperclip size={18} />}
-            </label>
-            <div className={styles.fileSelectionMeta} title={file?.name}>
-              <span>{file?.name || "No file selected"}</span>
-              <small>{file ? fileSize(file.size) : "PDF, JPG, PNG or WebP · up to 10 MB"}</small>
-            </div>
-            <button className={styles.primaryButton} type="button" disabled={busy || !file} onClick={onSubmit}>
-              {busy ? <LoaderCircle className={styles.spinning} size={16} /> : <UploadCloud size={16} />}
-              {buttonLabel}
-            </button>
-          </div>
-        </section>
-      </div>
+      <button
+        className={styles.primaryButton}
+        type="button"
+        disabled={busy}
+        onClick={onConfirm}
+      >
+        {busy ? <LoaderCircle className={styles.spinning} size={16} aria-hidden="true" /> : <CheckCircle2 size={16} aria-hidden="true" />}
+        {busy ? "Confirming…" : "Confirm QR code received"}
+      </button>
     </div>
   );
 }

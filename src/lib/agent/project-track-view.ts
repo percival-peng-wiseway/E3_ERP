@@ -131,6 +131,14 @@ export function projectTrackAgentView(
   project: PaymentTrackProject,
   privacy: AgentProjectPrivacyFlags,
 ) {
+  // Legacy projects used an uploaded file as the readiness signal. Keep that
+  // fact queryable while exposing neither the file nor its private URL.
+  const solarRebateQrConfirmedAt = project.solarRebateQrConfirmedAt
+    || project.solarRebateQrCode?.uploadedAt
+    || null;
+  const solarRebateQrConfirmedBy = project.solarRebateQrConfirmedAt
+    ? project.solarRebateQrConfirmedBy || null
+    : project.solarRebateQrCode?.uploadedByRole || null;
   return {
     reference: project.reference,
     proposalNumber: project.quoteNumber,
@@ -209,7 +217,8 @@ export function projectTrackAgentView(
     stcBatteryRequired: project.stcBatteryRequired,
     solarRebateRequired: project.solarRebateRequired,
     solarRebateQrRequired: project.solarRebateQrRequired,
-    solarRebateQrUploadedAt: project.solarRebateQrCode?.uploadedAt || null,
+    solarRebateQrConfirmedAt,
+    solarRebateQrConfirmedBy,
     stcSolarReceivedAt: project.stcSolarReceivedAt,
     stcBatteryReceivedAt: project.stcBatteryReceivedAt,
     solarRebateReceivedAt: project.solarRebateReceivedAt,
@@ -277,10 +286,12 @@ export function agentProjectWorkModeFilter(rawMessage: string): PaymentTrackWork
 
 export function projectTrackAgentSearchTerms(rawMessage: string) {
   return rawMessage.trim().toLocaleLowerCase("en-AU")
+    .replace(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you|can\s+i)\s+(?:please\s+)?/gu, "")
+    .replace(/^(?:please\s+)?(?:tell\s+me\b|let\s+me\s+(?:see|know)\b)\s*/gu, "")
     .replace(/\bproject\s*track(?:ing)?\b|\bworking\s+in\s+progress\b|\bwaiting\s+coes\b|\bstc\s+rebate\b|\bwaiting[\s_-]*(?:for[\s_-]*)?(?:solar[\s_-]*rebate[\s_-]*)?qr(?:[\s_-]*code)?\b|\bdeposit[\s_-]*(?:not[\s_-]*paid|unpaid)\b|\bpre[\s_-]*scheduled\b/gu, " ")
     .replace(/\b(?:deliver(?:y)?\s*(?:and|&)\s*install(?:ation|ment|ing)?|deliver(?:y)?[\s_-]*only|only[\s_-]*deliver(?:y)?|install(?:ation|ment)?[\s_-]*only|only[\s_-]*install(?:ation|ment)?)\b/gu, " ")
-    .replace(/\b(?:show|list|find|search|get|give|me|what|which|who|when|where|how|many|much|is|are|has|have|the|all|and|or|to|for|of|in|on|at|from|about|with|this|current|next|last|week|today|tomorrow|project|projects|customer|customers|status|stage|workflow|overview|summary|payment|payments|receivable|receivables|outstanding|unpaid|amount|balance|remaining|final|due|wip|schedule|scheduled|unscheduled|delivered|installed|completed|done|date|time|assigned|assignee|driver|installer|item|items|sku|material|materials|warehouse|chosen|selected|note|notes|remark|remarks|instruction|instructions|address|location|phone|email|contact|combined|delivery|deliver|installation|installment|install|only)\b/gu, " ")
-    .replace(/项目追踪|项目跟踪|项目进度|项目看板|给我|查看|显示|列出|查找|所有|全部|客户|项目|状态|阶段|概况|总览|定金未付|预排期|等待补贴二维码|等待返现二维码|二维码|尾款|总额|合计|多少|有多少|收款|欠款|应收|未排期|已排期|已送达|已送货|已安装|完成|谁|什么时候|哪天|日期|几点|时间|本周|上周|下周|安排|负责人|送货人|安装人|物料|商品|仓库|已选|选择|备注|说明|地址|位置|电话|邮箱|联系方式|送装一体|仅送货|只送货|仅配送|只配送|仅安装|只安装|送货|配送|安装|的/gu, " ")
+    .replace(/\b(?:show|list|find|search|get|check|checking|give|tell|let|know|see|please|me|what|which|who|when|where|how|many|much|is|are|do|does|did|has|have|there|any|we|us|our|the|all|each|every|and|or|to|for|of|in|on|at|as|by|from|across|about|with|this|current|currently|next|last|week|today|tomorrow|project|projects|jobs?|work|records?|entries|results?|data|information|details?|reports?|counts?|numbers?|customer|customers|status|stage|workflow|overview|summary|payment|payments|receivable|receivables|outstanding|unpaid|amount|balances?|total|remaining|final|due|wip|schedule|scheduled|unscheduled|delivered|installed|completed|done|date|time|assigned|assignee|driver|installer|item|items|sku|material|materials|warehouse|chosen|selected|note|notes|remark|remarks|instruction|instructions|address|location|phone|email|contact|combined|delivery|deliver|installation|installment|install|only)\b/gu, " ")
+    .replace(/项目追踪|项目跟踪|项目进度|项目看板|请问|请|麻烦|帮我|给我|查看|显示|列出|查找|检查|看看|看一下|查一下|有没有|有哪些|所有|全部|每个|客户|项目|工作|任务|记录|条目|列表|清单|详情|明细|数据|报告|结果|状态|阶段|进行中|概况|总览|汇总|当前|目前|现在|定金未付|预排期|等待补贴二维码|等待返现二维码|二维码|尾款|总额|合计|总共|多少|有多少|几个|数量|收款|欠款|应收|未排期|已排期|已送达|已送货|已安装|完成|谁|什么时候|哪天|日期|几点|时间|本周|上周|下周|安排|负责人|送货人|安装人|物料|商品|仓库|已选|选择|备注|说明|地址|位置|电话|邮箱|联系方式|送装一体|仅送货|只送货|仅配送|只配送|仅安装|只安装|送货|配送|安装|的/gu, " ")
     .replace(/[^\p{L}\p{N}_-]+/gu, " ")
     .replace(/\s+/gu, " ")
     .trim()

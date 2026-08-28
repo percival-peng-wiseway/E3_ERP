@@ -25,6 +25,11 @@ import {
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ERP_ROLE_LABELS, type ErpUser } from "@/lib/auth/types";
+import {
+  knowledgeReadinessPresentation,
+  readAgentKnowledgeReadiness,
+  type AgentKnowledgeReadiness,
+} from "@/lib/agent/knowledge-readiness";
 import { readJsonResponse } from "@/lib/client/http";
 import type { AgentCitation } from "@/lib/erp/types";
 import styles from "./home-collaboration-workspace.module.css";
@@ -454,7 +459,13 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
   const [agentNotice, setAgentNotice] = useState("");
   const [agentConfigured, setAgentConfigured] = useState<boolean | null>(null);
   const [agentModelStatus, setAgentModelStatus] = useState<"available" | "unavailable" | "not_checked">("not_checked");
+  const [agentKnowledgeReadiness, setAgentKnowledgeReadiness] = useState<AgentKnowledgeReadiness>({
+    status: "checking",
+    readyDocuments: 0,
+    activeChunks: 0,
+  });
   const agentAbortRef = useRef<AbortController | null>(null);
+  const agentHealthAbortRef = useRef<AbortController | null>(null);
   const agentConversationRevisionRef = useRef(0);
   const agentStorageClearGuardRef = useRef(false);
   const agentFeedRef = useRef<HTMLDivElement>(null);
@@ -495,6 +506,29 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
     }
   }, []);
 
+  const loadAgentHealth = useCallback(async () => {
+    if (!isAdmin) return;
+    agentHealthAbortRef.current?.abort();
+    const controller = new AbortController();
+    agentHealthAbortRef.current = controller;
+    setAgentKnowledgeReadiness((current) => current.status === "checking"
+      ? current
+      : { ...current, status: "checking" });
+    try {
+      const response = await fetch("/api/agent/health", { cache: "no-store", signal: controller.signal });
+      const body = await readJsonResponse<unknown>(response);
+      if (!mountedRef.current || controller.signal.aborted || agentHealthAbortRef.current !== controller) return;
+      setAgentKnowledgeReadiness(readAgentKnowledgeReadiness(body));
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      if (mountedRef.current && agentHealthAbortRef.current === controller) {
+        setAgentKnowledgeReadiness({ status: "unavailable", readyDocuments: 0, activeChunks: 0 });
+      }
+    } finally {
+      if (agentHealthAbortRef.current === controller) agentHealthAbortRef.current = null;
+    }
+  }, [isAdmin]);
+
   useEffect(() => {
     mountedRef.current = true;
     setAgentHistoryHydrated(false);
@@ -508,7 +542,10 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
     setAgentHydratedStorageKey(agentConversationStorageKey);
     setAgentHistoryHydrated(true);
 
-    const handleSettingsUpdate = () => void loadAgentSettings();
+    const handleSettingsUpdate = () => {
+      void loadAgentSettings();
+      void loadAgentHealth();
+    };
     const handleConversationStorage = (event: StorageEvent) => {
       if (event.key !== agentConversationStorageKey || event.newValue !== null) return;
       agentStorageClearGuardRef.current = true;
@@ -527,19 +564,21 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
       setAgentLoading(false);
     };
     void loadAgentSettings();
+    void loadAgentHealth();
     window.addEventListener("erp:agent-settings-updated", handleSettingsUpdate);
     window.addEventListener("storage", handleConversationStorage);
 
     return () => {
       mountedRef.current = false;
       agentAbortRef.current?.abort();
+      agentHealthAbortRef.current?.abort();
       notificationsAbortRef.current?.abort();
       announcementsAbortRef.current?.abort();
       announcementMutationAbortRef.current?.abort();
       window.removeEventListener("erp:agent-settings-updated", handleSettingsUpdate);
       window.removeEventListener("storage", handleConversationStorage);
     };
-  }, [agentConversationStorageKey, loadAgentSettings]);
+  }, [agentConversationStorageKey, loadAgentHealth, loadAgentSettings]);
 
   useEffect(() => {
     if (!agentHistoryHydrated
@@ -865,6 +904,7 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
       : agentConfigured === true
         ? "Model configured"
         : "Workspace connected";
+  const agentKnowledgeStatus = knowledgeReadinessPresentation(agentKnowledgeReadiness);
   const notificationSyncLabel = notificationsError
     ? "Refresh needed"
     : notificationsGeneratedAt
@@ -1093,9 +1133,21 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
             <div className={styles.panelTitle}>
               <h2>E3 Agent</h2>
             </div>
-            <span className={`${styles.statusBadge} ${agentUsingLocalMode ? styles.localBadge : ""}`}>
+            <span
+              className={`${styles.statusBadge} ${agentUsingLocalMode ? styles.localBadge : ""}`}
+              title="Language model status only"
+            >
               <i />{agentStatusLabel}
             </span>
+            {isAdmin && (
+              <span
+                className={`${styles.statusBadge} ${agentKnowledgeStatus.tone === "error" ? styles.errorBadge : agentKnowledgeStatus.tone === "warning" ? styles.localBadge : ""}`}
+                title={agentKnowledgeStatus.title}
+                aria-label={agentKnowledgeStatus.title}
+              >
+                <i />{agentKnowledgeStatus.label}
+              </span>
+            )}
             <button className={styles.iconButton} type="button" onClick={onOpenSettings} disabled={!onOpenSettings} title="Open Agent settings" aria-label="Open Agent settings">
               <Settings2 size={16} />
             </button>

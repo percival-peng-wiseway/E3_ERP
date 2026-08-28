@@ -51,7 +51,7 @@ export function amountAction(
 
 export function planningDescription(
   address: string,
-  action: "Delivery planning" | "Installation planning" | "Installment planning" | "Delivery & Install planning" | "Work planning" | "Solar Rebate QR code required",
+  action: "Delivery planning" | "Installation planning" | "Installment planning" | "Delivery & Install planning" | "Work planning" | "Solar Rebate QR code receipt confirmation required",
 ) {
   const suffix = ` · ${action}`;
   const addressLabel = cleanText(address, 360 - suffix.length) || "Address required";

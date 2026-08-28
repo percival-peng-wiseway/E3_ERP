@@ -30,14 +30,52 @@ function auth(role: string): AgentAuthContext {
   };
 }
 
+async function waitUntilJobIsAvailable(availableAt: string) {
+  const delay = new Date(availableAt).getTime() - Date.now();
+  if (delay >= 0) await new Promise((resolve) => setTimeout(resolve, delay + 1));
+}
+
 function fakeProvider() {
   const items = new Map<string, { info: ErpAiSearchItem; text: string }>();
   const deleted: string[] = [];
   const searches: Array<Record<string, unknown>> = [];
+  let listCalls = 0;
+  let uploadCalls = 0;
+  let activeUploads = 0;
+  let maximumActiveUploads = 0;
   const provider = {
     items: {
-      async upload(name: string, content: string) {
-        return this.uploadAndPoll(name, content);
+      async list(options?: { search?: string; page?: number; per_page?: number }) {
+        listCalls += 1;
+        const search = options?.search || "";
+        const result = [...items.values()]
+          .map((entry) => entry.info)
+          .filter((item) => !search || item.key.includes(search))
+          .map((item) => ({ ...item, status: "completed" as const }));
+        for (const info of result) {
+          const entry = items.get(info.id);
+          if (entry) entry.info = info;
+        }
+        return {
+          result,
+          result_info: { count: result.length, page: 1, per_page: options?.per_page || 50, total_count: result.length },
+        };
+      },
+      async upload(name: string, content: string, options?: { metadata?: Record<string, unknown> }) {
+        uploadCalls += 1;
+        activeUploads += 1;
+        maximumActiveUploads = Math.max(maximumActiveUploads, activeUploads);
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        const existing = [...items.values()].find((entry) => entry.info.key === name);
+        const info: ErpAiSearchItem = {
+          id: existing?.info.id || randomUUID(),
+          key: name,
+          status: "queued",
+          metadata: options?.metadata,
+        };
+        items.set(info.id, { info, text: content });
+        activeUploads -= 1;
+        return info;
       },
       async uploadAndPoll(name: string, content: string, options?: { metadata?: Record<string, unknown> }) {
         const existing = [...items.values()].find((entry) => entry.info.key === name);
@@ -69,7 +107,14 @@ function fakeProvider() {
       };
     },
   } as unknown as ErpAiSearch;
-  return { provider, items, deleted, searches };
+  return {
+    provider, items, deleted, searches,
+    metrics: {
+      get listCalls() { return listCalls; },
+      get uploadCalls() { return uploadCalls; },
+      get maximumActiveUploads() { return maximumActiveUploads; },
+    },
+  };
 }
 
 test("upload, background index, hybrid retrieval, citations and atomic replacement", async () => {
@@ -113,6 +158,7 @@ test("upload, background index, hybrid retrieval, citations and atomic replaceme
     requestedBy: "sam",
     reason: "document_added",
   });
+  await waitUntilJobIsAvailable(job.availableAt);
   await processKnowledgeIndexJob(job.id, {
     getSource: async () => source,
     getProvider: async () => cloud.provider,
@@ -150,6 +196,7 @@ test("upload, background index, hybrid retrieval, citations and atomic replaceme
     requestedBy: "sam",
     reason: "metadata_updated",
   });
+  await waitUntilJobIsAvailable(replacementJob.availableAt);
   await processKnowledgeIndexJob(replacementJob.id, {
     getSource: async () => source,
     getProvider: async () => cloud.provider,
@@ -158,6 +205,77 @@ test("upload, background index, hybrid retrieval, citations and atomic replaceme
   assert.equal(secondChunks[0].indexedVersion, "2.2");
   assert.notEqual(secondChunks[0].indexItemId, firstChunks[0].indexItemId);
   assert.ok(cloud.deleted.includes(firstChunks[0].indexItemId));
+});
+
+test("a 17-chunk document uses one global provider status poll and activates atomically", async () => {
+  const text = Array.from({ length: 17 }, (_, sectionIndex) => {
+    const procedure = Array.from({ length: 120 }, (_, stepIndex) =>
+      `Check S${sectionIndex + 1}-${stepIndex + 1} before commissioning.`).join(" ");
+    return `## Procedure ${sectionIndex + 1}\n\n${procedure}`;
+  }).join("\n\n");
+  const bytes = new TextEncoder().encode(`# Field manual\n\n${text}`);
+  const checksum = sha256Hex(bytes);
+  const fileId = randomUUID();
+  const document = (await repository.createKnowledgeDocument({
+    fileId,
+    tenantId: "e3",
+    fileVersion: 1,
+    title: "Seventeen procedure manual",
+    fileName: "seventeen.md",
+    sourcePath: "Files / Manuals / seventeen.md",
+    contentType: "text/markdown",
+    documentType: "manual",
+    category: "installation",
+    language: "en-AU",
+    version: "1.0",
+    checksum,
+    createdBy: "admin",
+    accessScope: "pm",
+  })).document;
+  const source = {
+    fileId,
+    name: "seventeen.md",
+    contentType: "text/markdown",
+    size: bytes.byteLength,
+    checksum,
+    version: 1,
+    updatedAt: new Date().toISOString(),
+    sourcePath: "Files / Manuals / seventeen.md",
+    read: async () => bytes,
+  };
+  const cloud = fakeProvider();
+  const job = await repository.enqueueKnowledgeIndexJob({
+    documentId: document.id,
+    tenantId: "e3",
+    requestedBy: "admin",
+    reason: "seventeen_chunk_regression",
+  });
+
+  await waitUntilJobIsAvailable(job.availableAt);
+  await processKnowledgeIndexJob(job.id, {
+    getSource: async () => source,
+    getProvider: async () => cloud.provider,
+  });
+
+  const active = await repository.listActiveKnowledgeChunksForDocument(document.id);
+  assert.equal(active.length, 17);
+  assert.equal(cloud.metrics.uploadCalls, 17);
+  assert.equal(cloud.metrics.maximumActiveUploads, 4);
+  assert.equal(cloud.metrics.listCalls, 1);
+  assert.equal((await repository.getKnowledgeDocument(document.id))?.status, "ready");
+  assert.equal((await repository.getKnowledgeIndexJob(job.id))?.status, "completed");
+
+  const denied = await searchKnowledgeBase({ query: "S1-1", limit: 5 }, auth("sales"), {
+    provider: cloud.provider,
+    getFileSource: async () => source,
+  });
+  assert.deepEqual(denied.data, []);
+  const permitted = await searchKnowledgeBase({ query: "S1-1", limit: 5 }, auth("pm"), {
+    provider: cloud.provider,
+    getFileSource: async () => source,
+  });
+  assert.equal(permitted.data?.length, 1);
+  assert.equal(permitted.data?.[0].document_id, document.id);
 });
 
 test("retrieval fails closed for scopes, Trash, low confidence and provider outages", async () => {
@@ -240,7 +358,7 @@ test("retrieval fails closed for scopes, Trash, low confidence and provider outa
 });
 
 test("the bounded after/waitUntil indexer rejects oversized chunk sets before provider upload", async () => {
-  const text = `# Large manual\n\n${Array.from({ length: 500 }, (_, index) =>
+  const text = `# Large manual\n\n${Array.from({ length: 3_000 }, (_, index) =>
     `Procedure ${index} verifies model H3-15.0 and error E${1000 + index} before energising.`).join(" ")}`;
   const bytes = new TextEncoder().encode(text);
   const checksum = sha256Hex(bytes);
@@ -254,6 +372,7 @@ test("the bounded after/waitUntil indexer rejects oversized chunk sets before pr
     documentId: document.id, tenantId: "e3", requestedBy: "admin", reason: "size_limit_test",
   });
   let providerCalls = 0;
+  await waitUntilJobIsAvailable(job.availableAt);
   await processKnowledgeIndexJob(job.id, {
     getSource: async () => ({
       fileId, name: "large.md", contentType: "text/markdown", size: bytes.byteLength, checksum, version: 1,

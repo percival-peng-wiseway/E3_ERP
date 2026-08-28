@@ -53,8 +53,32 @@ export type ErpAiSearchItem = {
   last_seen_at?: string;
 };
 
+export type ErpAiSearchListItemsParams = {
+  page?: number;
+  per_page?: number;
+  /** Search item keys by name. */
+  search?: string;
+  sort_by?: "status" | "modified_at";
+  status?: ErpAiSearchItemStatus;
+  source?: string;
+  metadata_filter?: string;
+  item_id?: string;
+  key?: string;
+};
+
+export type ErpAiSearchListItemsResponse = {
+  result: ErpAiSearchItem[];
+  result_info?: {
+    count: number;
+    page: number;
+    per_page: number;
+    total_count: number;
+  };
+};
+
 export type ErpAiSearch = {
   items: {
+    list(params?: ErpAiSearchListItemsParams): Promise<ErpAiSearchListItemsResponse>;
     upload(
       name: string,
       content: ReadableStream | ArrayBuffer | string,

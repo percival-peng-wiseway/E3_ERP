@@ -4,8 +4,10 @@ import { listSiteVisits } from "@/lib/site-visits/repository";
 import { listPaymentTrackProjects } from "@/lib/payment-track/repository";
 import { runAgentTool } from "@/lib/agent/tools";
 import { E3_BUSINESS_SKILLS } from "@/lib/agent/skills";
-import { runAgentHealthChecks } from "@/lib/agent/health";
+import { assessKnowledgeReadiness, runAgentHealthChecks } from "@/lib/agent/health";
 import { getERPProvider } from "@/lib/erp";
+import { getKnowledgeReadinessSnapshot } from "@/lib/knowledge/repository";
+import { KNOWLEDGE_TENANT_ID } from "@/lib/knowledge/types";
 import { erpCloudflareBindings } from "@/lib/server/cloudflare-storage";
 
 export const dynamic = "force-dynamic";
@@ -78,10 +80,28 @@ export async function GET(request: Request) {
     source: "Cloudflare AI Search / Files",
     check: async () => {
       const bindings = await erpCloudflareBindings();
-      if (!bindings?.database || !bindings.knowledgeSearch) {
+      if (!bindings?.database || !bindings.files || !bindings.knowledgeSearch) {
         throw new Error("Knowledge search bindings are unavailable.");
       }
+      const readiness = await getKnowledgeReadinessSnapshot(KNOWLEDGE_TENANT_ID);
+      const providerItems = await bindings.knowledgeSearch.items.list({
+        page: 1,
+        per_page: 1,
+        ...(readiness.sampleIndexItemKey ? { key: readiness.sampleIndexItemKey } : {}),
+      });
+      if (!providerItems || !Array.isArray(providerItems.result)
+        || (readiness.sampleIndexItemKey
+          && !providerItems.result.some((item) => (
+            item.key === readiness.sampleIndexItemKey && item.status === "completed"
+          )))) {
+        throw new Error("Knowledge search metadata is unavailable or out of sync.");
+      }
+      return {
+        readyDocuments: readiness.readyDocuments,
+        activeChunks: readiness.activeChunks,
+      };
     },
+    assess: assessKnowledgeReadiness,
   }]);
   return Response.json({
     data: { healthy: health.healthy, skills: E3_BUSINESS_SKILLS.length, sources: health.sources },

@@ -1,91 +1,91 @@
 import { NextRequest } from "next/server";
+import { getErpSession } from "@/lib/auth/session";
 import {
+  confirmPaymentTrackSolarRebateQrReceived,
   PaymentTrackRepositoryError,
-  uploadPaymentTrackSolarRebateQrCode,
 } from "@/lib/payment-track/repository";
 import {
   declaredPaymentTrackBodyTooLarge,
   paymentTrackError,
-  paymentTrackFileSignatureMatches,
   paymentTrackJson,
   PaymentTrackRequestBodyTooLarge,
-  readPaymentTrackForm,
-  safePaymentTrackOriginalName,
-  strictFormFields,
+  readPaymentTrackJson,
 } from "@/lib/payment-track/request";
-import type { PaymentTrackUploadContentType } from "@/lib/payment-track/types";
-import { isAuthorizedActorRequest, isAuthorizedMutationRequest } from "@/lib/server/proxy-security";
+import { parsePaymentTrackQrConfirmation } from "@/lib/payment-track/qr-confirmation";
+import {
+  isAuthorizedActorRequest,
+  isAuthorizedMutationRequest,
+  isSameOriginRequest,
+} from "@/lib/server/proxy-security";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const MAX_QR_CODE_SIZE = 10 * 1024 * 1024;
-const MAX_MULTIPART_SIZE = MAX_QR_CODE_SIZE + 256 * 1024;
-const ACCEPTED_TYPES: PaymentTrackUploadContentType[] = [
-  "application/pdf",
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-];
-
+const MAX_JSON_SIZE = 16 * 1024;
+const ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export async function POST(
   request: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
+  // This employee action intentionally has no bearer-token path: a current
+  // signed-in PM session and a same-origin browser request are both required.
+  const isBrowserRequest = request.headers.has("origin") || request.headers.has("sec-fetch-site");
+  if (!isBrowserRequest || !isSameOriginRequest(request)) {
+    return paymentTrackError(403, "forbidden", "This request is not allowed.");
+  }
+  const session = getErpSession(request);
+  if (!session) {
+    return paymentTrackError(401, "unauthorized", "Sign in again before confirming receipt of the QR code.");
+  }
   if (!isAuthorizedMutationRequest(request)) {
     return paymentTrackError(403, "forbidden", "This request is not allowed.");
   }
-  if (declaredPaymentTrackBodyTooLarge(request, MAX_MULTIPART_SIZE)) {
-    return paymentTrackError(413, "file_too_large", "The QR code file must be 10 MB or smaller.");
+  const contentType = request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+  if (contentType !== "application/json") {
+    return paymentTrackError(415, "unsupported_media_type", "Submit the QR code receipt confirmation as JSON.");
+  }
+  if (declaredPaymentTrackBodyTooLarge(request, MAX_JSON_SIZE)) {
+    return paymentTrackError(413, "request_too_large", "The confirmation request is too large.");
   }
   const { id } = await context.params;
-  if (!/^[0-9a-f-]{36}$/i.test(id)) {
+  if (!ID_PATTERN.test(id)) {
     return paymentTrackError(400, "invalid_id", "The project ID is invalid.");
   }
 
   try {
-    const form = await readPaymentTrackForm(request, MAX_MULTIPART_SIZE);
-    if (!strictFormFields(form, new Set(["qrCode", "actorRole", "expectedUpdatedAt"]))) {
-      return paymentTrackError(400, "invalid_form", "The QR code form contains invalid or duplicate fields.");
+    const body = await readPaymentTrackJson(request, MAX_JSON_SIZE);
+    const confirmation = parsePaymentTrackQrConfirmation(body);
+    if (!confirmation) {
+      return paymentTrackError(
+        400,
+        "invalid_confirmation",
+        "Reload the project and submit the exact QR code receipt confirmation shown, without extra fields.",
+      );
     }
-    if (form.get("actorRole") !== "pm" || !isAuthorizedActorRequest(request, "pm")) {
-      return paymentTrackError(403, "role_forbidden", "Only the Project Manager can upload the Solar Rebate QR code.");
+    if (!isAuthorizedActorRequest(request, "pm")) {
+      return paymentTrackError(
+        403,
+        "role_forbidden",
+        "Only the Project Manager can confirm receipt of the Solar Rebate QR code.",
+      );
     }
-    const expectedUpdatedAt = form.get("expectedUpdatedAt");
-    if (typeof expectedUpdatedAt !== "string"
-      || expectedUpdatedAt.length > 64
-      || !Number.isFinite(Date.parse(expectedUpdatedAt))) {
-      return paymentTrackError(400, "invalid_version", "Reload the project before uploading the QR code.");
-    }
-    const qrCode = form.get("qrCode");
-    if (!(qrCode instanceof File) || qrCode.size < 1 || qrCode.size > MAX_QR_CODE_SIZE) {
-      return paymentTrackError(400, "invalid_qr_code", "Attach one QR code file up to 10 MB.");
-    }
-    if (!ACCEPTED_TYPES.includes(qrCode.type as PaymentTrackUploadContentType)) {
-      return paymentTrackError(415, "unsupported_qr_code", "Use a PDF, JPG, PNG or WebP QR code file.");
-    }
-    const contentType = qrCode.type as PaymentTrackUploadContentType;
-    const bytes = new Uint8Array(await qrCode.arrayBuffer());
-    if (!paymentTrackFileSignatureMatches(contentType, bytes)) {
-      return paymentTrackError(415, "invalid_qr_code_content", "The QR code contents do not match its file type.");
-    }
-    const project = await uploadPaymentTrackSolarRebateQrCode(id, "pm", expectedUpdatedAt, {
-      bytes,
-      originalName: safePaymentTrackOriginalName(qrCode.name, "solar-rebate-qr-code"),
-      contentType,
-      size: qrCode.size,
-    });
+    const project = await confirmPaymentTrackSolarRebateQrReceived(
+      id,
+      "pm",
+      confirmation.expectedUpdatedAt,
+      session.user.displayName,
+    );
     return paymentTrackJson({ data: project });
   } catch (error) {
     if (error instanceof PaymentTrackRepositoryError) {
       return paymentTrackError(error.status, error.code, error.message);
     }
     if (error instanceof PaymentTrackRequestBodyTooLarge) {
-      return paymentTrackError(413, "file_too_large", "The QR code file must be 10 MB or smaller.");
+      return paymentTrackError(413, "request_too_large", "The confirmation request is too large.");
     }
-    if (error instanceof TypeError || error instanceof SyntaxError) {
-      return paymentTrackError(400, "invalid_form", "The QR code form is invalid.");
+    if (error instanceof SyntaxError) {
+      return paymentTrackError(400, "invalid_json", "The QR code receipt confirmation is invalid.");
     }
-    return paymentTrackError(500, "qr_code_failed", "The Solar Rebate QR code could not be uploaded.");
+    return paymentTrackError(500, "qr_confirmation_failed", "Receipt of the Solar Rebate QR code could not be confirmed.");
   }
 }

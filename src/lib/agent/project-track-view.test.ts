@@ -61,6 +61,8 @@ function project(overrides: Partial<PaymentTrackProject> = {}): PaymentTrackProj
     stcBatteryRequired: false,
     solarRebateRequired: false,
     solarRebateQrRequired: false,
+    solarRebateQrConfirmedAt: null,
+    solarRebateQrConfirmedBy: null,
     solarRebateQrCode: null,
     stcSolarReceivedAt: null,
     stcBatteryReceivedAt: null,
@@ -107,7 +109,7 @@ test("derives the WIP unscheduled, scheduled, delivered and installed states", (
   assert.equal(agentProjectWorkflowStatus(project({ workMode: "installation_only", installedAt: "2026-08-28T02:00:00.000Z" })), "installed");
 });
 
-test("reports QR-gated WIP as waiting without exposing the private file URL", () => {
+test("reports QR-gated WIP as waiting, then exposes confirmation facts without a file or URL", () => {
   const waiting = project({
     solarRebateQrRequired: true,
     solarRebateQrCode: null,
@@ -116,7 +118,27 @@ test("reports QR-gated WIP as waiting without exposing the private file URL", ()
   assert.equal(agentProjectMatchesWorkflowFilter(waiting, "waiting_for_rebate_qr_code"), true);
   assert.equal(agentProjectMatchesWorkflowFilter(waiting, "unscheduled"), false);
 
-  const uploaded = project({
+  const partialSchedule = project({
+    workMode: "delivery_only",
+    solarRebateQrRequired: true,
+    deliveryScheduledFor: "2026-08-29",
+  });
+  assert.equal(agentProjectWorkflowStatus(partialSchedule), "waiting_for_rebate_qr_code");
+  assert.equal(agentProjectMatchesWorkflowFilter(partialSchedule, "unscheduled"), false);
+
+  const confirmed = project({
+    solarRebateQrRequired: true,
+    solarRebateQrConfirmedAt: "2026-08-28T02:00:00.000Z",
+    solarRebateQrConfirmedBy: "Kevin PM",
+  });
+  assert.equal(agentProjectWorkflowStatus(confirmed), "unscheduled");
+  const confirmedView = projectTrackAgentView(confirmed, privacy());
+  assert.equal(confirmedView.solarRebateQrConfirmedAt, "2026-08-28T02:00:00.000Z");
+  assert.equal(confirmedView.solarRebateQrConfirmedBy, "Kevin PM");
+  assert.equal("solarRebateQrUploadedAt" in confirmedView, false);
+  assert.equal("solarRebateQrCode" in confirmedView, false);
+
+  const legacyUploaded = project({
     solarRebateQrRequired: true,
     solarRebateQrCode: {
       id: "rebate-qr-1",
@@ -129,8 +151,8 @@ test("reports QR-gated WIP as waiting without exposing the private file URL", ()
       uploadedByRole: "pm",
     },
   });
-  assert.equal(agentProjectWorkflowStatus(uploaded), "unscheduled");
-  const view = projectTrackAgentView(uploaded, privacy({
+  assert.equal(agentProjectWorkflowStatus(legacyUploaded), "unscheduled");
+  const view = projectTrackAgentView(legacyUploaded, privacy({
     includeAssignee: true,
     includeLocation: true,
     includeCustomerContactDetails: true,
@@ -138,7 +160,9 @@ test("reports QR-gated WIP as waiting without exposing the private file URL", ()
   }));
   assert.equal(view.workflowStatus, "unscheduled");
   assert.equal(view.solarRebateQrRequired, true);
-  assert.equal(view.solarRebateQrUploadedAt, "2026-08-28T03:00:00.000Z");
+  assert.equal(view.solarRebateQrConfirmedAt, "2026-08-28T03:00:00.000Z");
+  assert.equal(view.solarRebateQrConfirmedBy, "pm");
+  assert.equal("solarRebateQrUploadedAt" in view, false);
   assert.equal("solarRebateQrCode" in view, false);
   assert.doesNotMatch(JSON.stringify(view), /private-secret|secret-project|customer-rebate-qr\.png/);
 });
@@ -230,15 +254,65 @@ test("keeps delivered and installed completion facts searchable after automatic 
 });
 
 test("removes Project Track intent words without losing a customer search term", () => {
-  assert.deepEqual(projectTrackAgentSearchTerms("Show deposit not paid projects in Project Track"), []);
-  assert.deepEqual(projectTrackAgentSearchTerms("Show pre-scheduled projects in Project Track"), []);
-  assert.deepEqual(projectTrackAgentSearchTerms("给我项目追踪概况"), []);
-  assert.deepEqual(projectTrackAgentSearchTerms("Who is assigned to projects in Project Track?"), []);
-  assert.deepEqual(projectTrackAgentSearchTerms("Show items and notes in Project Track"), []);
-  assert.deepEqual(projectTrackAgentSearchTerms("Show combined WIP projects in Project Track"), []);
+  const genericQueries = [
+    "Show deposit not paid projects in Project Track",
+    "Show pre-scheduled projects in Project Track",
+    "Who is assigned to projects in Project Track?",
+    "Show items and notes in Project Track",
+    "Show combined WIP projects in Project Track",
+    "check Working in Progress",
+    "Show all outstanding balances",
+    "What is the total amount due?",
+    "Please show all projects in Project Track",
+    "Can you list the Project Track projects?",
+    "Can you tell me all outstanding balances?",
+    "Could you please show all outstanding balances?",
+    "Would you tell me the total amount due?",
+    "Can I see all outstanding balances?",
+    "Could you let me see all outstanding balances?",
+    "Would you let me know the total amount due?",
+    "Please let me see all projects in Project Track",
+    "Are there any unscheduled Project Track jobs?",
+    "Give me a Project Track report with the current project count",
+    "给我项目追踪概况",
+    "检查所有 WIP 项目",
+    "请问尾款总额是多少？",
+    "查看进行中的项目",
+    "目前项目追踪有哪些项目？",
+    "请显示所有项目追踪记录和详情",
+  ];
+  for (const query of genericQueries) {
+    assert.deepEqual(projectTrackAgentSearchTerms(query), [], query);
+  }
+
   assert.deepEqual(projectTrackAgentSearchTerms("Which project has chosen SKU CQ7?"), ["cq7"]);
   assert.deepEqual(projectTrackAgentSearchTerms("显示 Sam 的项目"), ["sam"]);
   assert.deepEqual(projectTrackAgentSearchTerms("Show Ian in Project Track"), ["ian"]);
+  assert.deepEqual(projectTrackAgentSearchTerms("Please show Ian's Project Track details"), ["ian"]);
+  assert.deepEqual(projectTrackAgentSearchTerms("Can you find PAY-2026-0031 in Project Track?"), ["pay-2026-0031"]);
+  assert.deepEqual(projectTrackAgentSearchTerms("请查看 Sam 的项目详情"), ["sam"]);
+});
+
+test("generic Project Track wording cannot accidentally reject every repository row", () => {
+  const repositorySearchValues = [
+    "pay-2026-0031 qn202605050003 ian lehmann sam cq7-l4 working_in_progress",
+    "pay-2026-0042 cpec5256 amit singh kadian ruihan kh10 waiting_coes",
+  ];
+  const queries = [
+    "check Working in Progress",
+    "Show all outstanding balances",
+    "What is the total amount due?",
+    "Are there any WIP projects?",
+    "请问目前进行中的项目有哪些？",
+  ];
+
+  for (const query of queries) {
+    const terms = projectTrackAgentSearchTerms(query);
+    const matched = repositorySearchValues.filter((value) => (
+      terms.every((term) => value.includes(term))
+    ));
+    assert.deepEqual(matched, repositorySearchValues, query);
+  }
 });
 
 test("recognizes exact WIP work-mode filters independently of free-text search", () => {

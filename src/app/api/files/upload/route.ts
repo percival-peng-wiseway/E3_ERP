@@ -1,6 +1,12 @@
 import { NextRequest } from "next/server";
 import { getErpSession } from "@/lib/auth/session";
+import { continueKnowledgeIndex } from "@/app/api/knowledge/background";
 import {
+  type AutomaticKnowledgeIndexResult,
+  registerAutomaticKnowledgeIndex,
+} from "@/lib/knowledge/automatic-index";
+import {
+  getWorkspaceFileIndexSource,
   uploadWorkspaceFile,
   WorkspaceFilesRepositoryError,
 } from "@/lib/workspace-files/repository";
@@ -75,7 +81,34 @@ export async function POST(request: NextRequest) {
         size: bytes.byteLength,
       },
     });
-    return workspaceFilesJson({ data: { item } }, { status: 201 });
+    let knowledgeIndex: AutomaticKnowledgeIndexResult;
+    try {
+      const source = await getWorkspaceFileIndexSource(item.id);
+      knowledgeIndex = source
+        ? await registerAutomaticKnowledgeIndex({ file: source, requestedBy: session.user.username })
+        : {
+            eligible: true,
+            status: "failed",
+            documentId: null,
+            jobId: null,
+            errorCode: "source_unavailable",
+          };
+      if (knowledgeIndex.status === "queued" && knowledgeIndex.jobId) {
+        continueKnowledgeIndex(knowledgeIndex.jobId);
+      }
+    } catch {
+      // The Files object and metadata are already durable. Knowledge setup is
+      // deliberately observable but must never turn a successful upload into
+      // a lost or falsely failed file.
+      knowledgeIndex = {
+        eligible: true,
+        status: "failed",
+        documentId: null,
+        jobId: null,
+        errorCode: "knowledge_registration_failed",
+      };
+    }
+    return workspaceFilesJson({ data: { item, knowledgeIndex } }, { status: 201 });
   } catch (error) {
     if (error instanceof WorkspaceFilesRepositoryError) {
       return workspaceFilesError(error.status, error.code, error.message);

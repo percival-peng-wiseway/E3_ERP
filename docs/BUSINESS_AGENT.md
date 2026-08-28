@@ -141,7 +141,7 @@ Known limitations:
 - the current Inventory service does not expose `incoming`, so it is returned as unknown (`null`), never inferred;
 - live DeepSeek compatibility remains a deployment gate because no API key was available here;
 - project and order external snapshot APIs remain optional/unimplemented in this repository; knowledge retrieval is local to the Worker;
-- the first controlled background indexer accepts at most eight application chunks per document and requires Administrator Reindex after a terminal provider failure; larger manuals require the documented Queue/Workflow follow-up.
+- the controlled background indexer accepts at most 24 application chunks per document, uploads four at a time, and requires Administrator Reindex after a terminal provider failure; larger manuals require the documented Queue/Workflow follow-up.
 
 ## Verification
 

@@ -157,6 +157,7 @@ export type PaymentTrackHistoryAction =
   | "deposit_acknowledged"
   | "deposit_confirmed"
   | "solar_rebate_qr_code_uploaded"
+  | "solar_rebate_qr_received_confirmed"
   | "delivery_items_prepared"
   | "delivery_pre_scheduled"
   | "delivery_scheduled"
@@ -233,9 +234,17 @@ export interface PaymentTrackProject {
   /**
    * Snapshot taken when a new project is created. This is intentionally
    * separate from the post-installation Solar Rebate receipt requirement so
-   * uploading a QR code cannot accidentally mark rebate funds as received.
+   * confirming QR code receipt cannot accidentally mark rebate funds as received.
    */
   solarRebateQrRequired: boolean;
+  /**
+   * PM confirmation that the rebate QR code was received. Optional for
+   * callers holding a pre-confirmation project snapshot; repository responses
+   * always normalize these fields to a timestamp/name or null.
+   */
+  solarRebateQrConfirmedAt?: string | null;
+  solarRebateQrConfirmedBy?: string | null;
+  /** Legacy uploaded proof, retained only so old records remain readable. */
   solarRebateQrCode: PaymentTrackFile | null;
   stcSolarReceivedAt: string | null;
   stcBatteryReceivedAt: string | null;
@@ -264,13 +273,19 @@ export function countActivePaymentTrackProjects(
 export function isPaymentTrackWaitingForRebateQr(
   project: Pick<
     PaymentTrackProject,
-    "stage" | "solarRebateQrRequired" | "solarRebateQrCode" | "deliveredAt" | "installedAt"
+    | "stage"
+    | "solarRebateQrRequired"
+    | "solarRebateQrConfirmedAt"
+    | "solarRebateQrCode"
+    | "deliveredAt"
+    | "installedAt"
   >,
 ) {
   return project.stage === "working_in_progress"
     && !project.deliveredAt
     && !project.installedAt
     && project.solarRebateQrRequired
+    && !project.solarRebateQrConfirmedAt
     && !project.solarRebateQrCode;
 }
 

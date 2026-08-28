@@ -67,6 +67,8 @@ function project(overrides: Partial<PaymentTrackProject> = {}): PaymentTrackProj
     stcBatteryRequired: false,
     solarRebateRequired: false,
     solarRebateQrRequired: false,
+    solarRebateQrConfirmedAt: null,
+    solarRebateQrConfirmedBy: null,
     solarRebateQrCode: null,
     stcSolarReceivedAt: null,
     stcBatteryReceivedAt: null,
@@ -238,16 +240,74 @@ test("WIP keeps PM scheduling and continuous payment responsibilities independen
   ]);
 });
 
-test("Solar Rebate WIP assigns QR upload to PM before normal work management", () => {
+test("Solar Rebate WIP assigns QR receipt confirmation to PM before normal work management", () => {
   assert.deepEqual(summary(project({
     stage: "working_in_progress",
     solarRebateQrRequired: true,
     solarRebateQrCode: null,
   })), [
-    "pm:upload_rebate_qr_code",
+    "pm:confirm_rebate_qr_received",
     "sales:record_final_payment",
   ]);
 
+  assert.deepEqual(summary(project({
+    stage: "working_in_progress",
+    solarRebateQrRequired: true,
+    solarRebateQrConfirmedAt: "2026-08-27T03:00:00.000Z",
+    solarRebateQrConfirmedBy: "Kevin PM",
+  })), [
+    "pm:manage_work",
+    "sales:record_final_payment",
+  ]);
+
+  // Do not regress historical inconsistent records that were already fully
+  // scheduled before the confirmation fields existed.
+  assert.deepEqual(summary(project({
+    stage: "working_in_progress",
+    workMode: "delivery_only",
+    solarRebateQrRequired: true,
+    deliveryScheduledFor: "2026-08-29",
+    deliveryScheduledTime: "09:00",
+    deliveryAssignee: "Leo",
+  })), [
+    "pm:manage_work",
+    "sales:record_final_payment",
+  ]);
+
+  assert.deepEqual(summary(project({
+    stage: "working_in_progress",
+    workMode: "delivery_only",
+    solarRebateQrRequired: true,
+    deliveryScheduledFor: "2026-08-29",
+  })), [
+    "pm:confirm_rebate_qr_received",
+    "sales:record_final_payment",
+  ], "a partial historical schedule must not bypass QR receipt confirmation");
+
+  const completeCombinedSchedule = {
+    stage: "working_in_progress" as const,
+    workMode: "delivery_and_installation" as const,
+    solarRebateQrRequired: true,
+    deliveryScheduledFor: "2026-08-29",
+    deliveryScheduledTime: "09:00",
+    deliveryAssignee: "Leo" as const,
+    installationScheduledFor: "2026-08-29",
+    installationScheduledTime: "09:00",
+    installationAssignee: "Daniel" as const,
+  };
+  assert.deepEqual(summary(project(completeCombinedSchedule)), [
+    "pm:manage_work",
+    "sales:record_final_payment",
+  ]);
+  assert.deepEqual(summary(project({
+    ...completeCombinedSchedule,
+    installationScheduledTime: "10:00",
+  })), [
+    "pm:confirm_rebate_qr_received",
+    "sales:record_final_payment",
+  ], "a mismatched combined schedule must not bypass QR receipt confirmation");
+
+  // A historical uploaded file remains an effective receipt confirmation.
   assert.deepEqual(summary(project({
     stage: "working_in_progress",
     solarRebateQrRequired: true,

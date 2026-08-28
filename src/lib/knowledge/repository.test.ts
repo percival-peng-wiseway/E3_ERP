@@ -54,6 +54,7 @@ function indexedChunk(id: string, text: string): KnowledgeIndexedChunkDraft {
 }
 
 test("knowledge repository checksum, generations, jobs and atomic chunk activation", async () => {
+  const readinessBefore = await repository.getKnowledgeReadinessSnapshot();
   const input = createInput();
   const created = await repository.createKnowledgeDocument(input);
   assert.equal(created.action, "created");
@@ -77,6 +78,10 @@ test("knowledge repository checksum, generations, jobs and atomic chunk activati
   assert.equal(firstSwap.retiredChunks.length, 0);
   await repository.completeKnowledgeIndexJob(firstJob.id, "worker-1");
   assert.equal((await repository.getKnowledgeDocument(moved.document.id))?.status, "ready");
+  const readinessAfter = await repository.getKnowledgeReadinessSnapshot();
+  assert.equal(readinessAfter.readyDocuments, readinessBefore.readyDocuments + 1);
+  assert.equal(readinessAfter.activeChunks, readinessBefore.activeChunks + 1);
+  assert.equal(readinessAfter.sampleIndexItemKey !== null, true);
 
   const manualJob = await repository.enqueueKnowledgeIndexJob({ documentId: moved.document.id, tenantId: "e3", requestedBy: "jerry", reason: "manual_reindex" });
   assert.equal(manualJob.indexGeneration, 3);

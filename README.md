@@ -241,10 +241,10 @@ Project Track rejects repeated Proposal Numbers across both PDF imports and manu
 | `GET/POST/PUT/DELETE /api/quotehelp/*` | Controlled proxy for native QuoteHelp operations |
 | `GET /api/files` | Browse, search and inspect the shared Files workspace or Trash |
 | `POST /api/files/folders` | Create a folder as the signed-in employee |
-| `POST /api/files/upload` | Upload one validated file up to 20 MiB |
+| `POST /api/files/upload` | Upload one validated file up to 20 MiB; PDF/DOCX/TXT/Markdown are automatically queued for company-wide Agent search |
 | `PATCH/DELETE /api/files/items/:id` | Rename, move, trash, restore or Admin-purge an item |
 | `GET /api/files/items/:id/content` | Protected preview or download of a stored file |
-| `POST /api/knowledge/documents` | Add a supported Files item to the knowledge base as Administrator |
+| `POST /api/knowledge/documents` | Manually register or refine a supported Files knowledge item as Administrator |
 | `PATCH /api/knowledge/documents/:id` | Edit metadata or enable/disable a knowledge document as Administrator |
 | `POST /api/knowledge/documents/:id/reindex` | Retry or explicitly reindex a knowledge document as Administrator |
 | `GET /api/inventory` | Unified read-only inventory list |

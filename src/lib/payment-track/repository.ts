@@ -69,6 +69,8 @@ type StoredProject = Omit<
   | "solarRebateRequired"
   | "solarRebateReceivedAt"
   | "solarRebateQrRequired"
+  | "solarRebateQrConfirmedAt"
+  | "solarRebateQrConfirmedBy"
   | "solarRebateQrCode"
   | "pmNotes"
   | "pmNotesUpdatedAt"
@@ -98,6 +100,8 @@ type StoredProject = Omit<
   // Missing on records created before the QR scheduling gate. Those records
   // migrate to `false` so an existing schedule is never retroactively blocked.
   solarRebateQrRequired?: boolean;
+  solarRebateQrConfirmedAt?: string | null;
+  solarRebateQrConfirmedBy?: string | null;
   solarRebateQrCode?: StoredFile | null;
   // Internal schema marker. Missing means an imported contract has not yet
   // been evaluated with the authoritative Solar Rebate price-line rule.
@@ -393,6 +397,12 @@ function publicProject(project: StoredProject): PaymentTrackProject {
       ? project.solarRebateReceivedAt
       : null,
     solarRebateQrRequired: project.solarRebateQrRequired === true,
+    solarRebateQrConfirmedAt: storedPmNotesTimestamp(project.solarRebateQrConfirmedAt)
+      ? project.solarRebateQrConfirmedAt
+      : null,
+    solarRebateQrConfirmedBy: typeof project.solarRebateQrConfirmedBy === "string"
+      ? project.solarRebateQrConfirmedBy
+      : null,
     solarRebateQrCode: publicFile(project.id, project.solarRebateQrCode || null),
     pmNotes: typeof project.pmNotes === "string" ? project.pmNotes : "",
     pmNotesUpdatedAt: typeof project.pmNotesUpdatedAt === "string"
@@ -740,6 +750,31 @@ async function migrateLegacyProjectStages(projects: StoredProject[], fallbackTim
       project.solarRebateQrRequired = false;
       changed = true;
     }
+    if (!storedPmNotesTimestamp(project.solarRebateQrConfirmedAt)) {
+      if (project.solarRebateQrConfirmedAt !== null) {
+        project.solarRebateQrConfirmedAt = null;
+        changed = true;
+      }
+    }
+    if (typeof project.solarRebateQrConfirmedBy !== "string"
+      || !project.solarRebateQrConfirmedBy.trim()
+      || project.solarRebateQrConfirmedBy.trim().length > 120
+      || /[\u0000-\u001F\u007F]/.test(project.solarRebateQrConfirmedBy)) {
+      if (project.solarRebateQrConfirmedBy !== null) {
+        project.solarRebateQrConfirmedBy = null;
+        changed = true;
+      }
+    } else if (project.solarRebateQrConfirmedBy !== project.solarRebateQrConfirmedBy.trim()) {
+      project.solarRebateQrConfirmedBy = project.solarRebateQrConfirmedBy.trim();
+      changed = true;
+    }
+    // A confirmation timestamp without an actor (or vice versa) is not a
+    // complete auditable confirmation. Clear both malformed legacy values.
+    if (Boolean(project.solarRebateQrConfirmedAt) !== Boolean(project.solarRebateQrConfirmedBy)) {
+      project.solarRebateQrConfirmedAt = null;
+      project.solarRebateQrConfirmedBy = null;
+      changed = true;
+    }
     if (project.solarRebateQrCode === undefined) {
       project.solarRebateQrCode = null;
       changed = true;
@@ -877,6 +912,8 @@ function buildProject(
     stcBatteryRequired: input.stcBatteryRequired,
     solarRebateRequired: input.solarRebateRequired === true,
     solarRebateQrRequired: input.solarRebateQrRequired === true,
+    solarRebateQrConfirmedAt: null,
+    solarRebateQrConfirmedBy: null,
     solarRebateQrCode: null,
     stcSolarReceivedAt: null,
     stcBatteryReceivedAt: null,
@@ -1022,11 +1059,11 @@ export function uploadPaymentTrackProof(
   });
 }
 
-export function uploadPaymentTrackSolarRebateQrCode(
+export function confirmPaymentTrackSolarRebateQrReceived(
   id: string,
   role: PaymentTrackRole,
   expectedUpdatedAt: string,
-  upload: PaymentTrackUpload,
+  suppliedActor?: string,
 ) {
   return withMutation(async () => {
     const storedDocument = await readStoredProjectDocument();
@@ -1036,42 +1073,36 @@ export function uploadPaymentTrackSolarRebateQrCode(
     if (index < 0) throw new PaymentTrackRepositoryError("Project not found.", 404, "not_found");
     const project = projects[index];
 
-    requireRole(role, ["pm"], "Only the Project Manager can upload the Solar Rebate QR code.");
+    requireRole(role, ["pm"], "Only the Project Manager can confirm receipt of the Solar Rebate QR code.");
     requireCurrentProjectVersion(project, expectedUpdatedAt);
     if (project.stage !== "working_in_progress"
       || !project.solarRebateQrRequired
+      || project.solarRebateQrConfirmedAt
+      || project.solarRebateQrCode
       || project.deliveredAt
       || project.installedAt
       || workScheduleIsComplete(project)) {
       throw new PaymentTrackRepositoryError(
-        "The Solar Rebate QR code can only be uploaded before WIP scheduling.",
+        "Receipt of the Solar Rebate QR code can only be confirmed once before WIP scheduling.",
         409,
         "invalid_transition",
       );
     }
 
-    const previous = project.solarRebateQrCode || null;
     const timestamp = nextProjectTimestamp(project);
-    const actor = actorName(role);
-    const stored = await storedUpload("solar_rebate_qr_code", role, upload, timestamp);
-    project.solarRebateQrCode = stored.file;
+    const actor = actorName(role, suppliedActor);
+    project.solarRebateQrConfirmedAt = timestamp;
+    project.solarRebateQrConfirmedBy = actor;
     project.updatedAt = timestamp;
     project.history.push(historyEntry(
-      "solar_rebate_qr_code_uploaded",
+      "solar_rebate_qr_received_confirmed",
       timestamp,
       "pm",
       actor,
-      upload.originalName,
     ));
 
-    try {
-      projects[index] = project;
-      await writeStoredProjects(projects, storedDocument.version);
-    } catch (error) {
-      await deleteStoredFile(stored.file).catch(() => undefined);
-      throw error;
-    }
-    if (previous) await deleteStoredFile(previous).catch(() => undefined);
+    projects[index] = project;
+    await writeStoredProjects(projects, storedDocument.version);
     return publicProject(project);
   });
 }
@@ -1215,7 +1246,7 @@ function installationPreScheduleIsComplete(project: StoredProject) {
 function requireCurrentProjectVersion(project: StoredProject, expectedUpdatedAt: string | undefined) {
   if (!expectedUpdatedAt || expectedUpdatedAt !== project.updatedAt) {
     throw new PaymentTrackRepositoryError(
-      "This project changed after you opened it. Reload and review the latest scheduling request before saving.",
+      "This project changed after you opened it. Reload and review the latest project details before saving.",
       409,
       "stale_project",
     );
@@ -1298,9 +1329,10 @@ function rebateRequirementsComplete(project: StoredProject) {
 function requireSolarRebateQrBeforeScheduling(project: StoredProject) {
   if (project.stage === "working_in_progress"
     && project.solarRebateQrRequired
+    && !project.solarRebateQrConfirmedAt
     && !project.solarRebateQrCode) {
     throw new PaymentTrackRepositoryError(
-      "Upload the Solar Rebate QR code before scheduling this project.",
+      "Confirm receipt of the Solar Rebate QR code before scheduling this project.",
       409,
       "solar_rebate_qr_required",
     );

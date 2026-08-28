@@ -76,6 +76,8 @@ function project(overrides: Partial<PaymentTrackProject> = {}): PaymentTrackProj
     stcBatteryRequired: false,
     solarRebateRequired: false,
     solarRebateQrRequired: false,
+    solarRebateQrConfirmedAt: null,
+    solarRebateQrConfirmedBy: null,
     solarRebateQrCode: null,
     stcSolarReceivedAt: null,
     stcBatteryReceivedAt: null,
@@ -308,7 +310,7 @@ test("payment notifications can be generated only for the signed-in role", () =>
   );
 });
 
-test("Solar Rebate WIP reminds PM to upload the QR code before scheduling work", () => {
+test("Solar Rebate WIP reminds PM to confirm QR receipt before scheduling work", () => {
   const waitingNotifications = buildPaymentTrackNotifications([project({
     stage: "working_in_progress",
     solarRebateQrRequired: true,
@@ -319,12 +321,25 @@ test("Solar Rebate WIP reminds PM to upload the QR code before scheduling work",
   assert.equal(waitingReminder.module, "payments");
   assert.equal(waitingReminder.entityId, "PAY-TEST-1");
   assert.equal(waitingReminder.badgeLabel, "Waiting for rebate QR code");
-  assert.equal(waitingReminder.actionLabel, "Upload QR code");
+  assert.equal(waitingReminder.actionLabel, "Confirm QR code received");
   assert.equal(waitingReminder.priority, "high");
   assert.equal(waitingReminder.ownerName, "Percival");
-  assert.match(waitingReminder.description, /Solar Rebate QR code required/);
+  assert.match(waitingReminder.description, /Solar Rebate QR code receipt confirmation required/);
 
-  const uploadedNotifications = buildPaymentTrackNotifications([project({
+  const confirmedNotifications = buildPaymentTrackNotifications([project({
+    stage: "working_in_progress",
+    solarRebateQrRequired: true,
+    solarRebateQrConfirmedAt: "2026-08-25T01:00:00.000Z",
+    solarRebateQrConfirmedBy: "Kevin PM",
+  })], NOW);
+  const confirmedManageWorkReminder = confirmedNotifications.find((item) => item.role === "pm");
+  assert.ok(confirmedManageWorkReminder);
+  assert.equal(confirmedManageWorkReminder.badgeLabel, "WIP unscheduled");
+  assert.equal(confirmedManageWorkReminder.actionLabel, "Schedule work");
+  assert.equal(confirmedNotifications.some((item) => item.actionLabel === "Confirm QR code received"), false);
+
+  // Legacy uploaded QR records continue to unlock scheduling.
+  const legacyNotifications = buildPaymentTrackNotifications([project({
     stage: "working_in_progress",
     solarRebateQrRequired: true,
     solarRebateQrCode: {
@@ -338,12 +353,12 @@ test("Solar Rebate WIP reminds PM to upload the QR code before scheduling work",
       uploadedByRole: "pm",
     },
   })], NOW);
-  const manageWorkReminder = uploadedNotifications.find((item) => item.role === "pm");
+  const manageWorkReminder = legacyNotifications.find((item) => item.role === "pm");
   assert.ok(manageWorkReminder);
   assert.equal(manageWorkReminder.badgeLabel, "WIP unscheduled");
   assert.equal(manageWorkReminder.actionLabel, "Schedule work");
   assert.equal(manageWorkReminder.module, "payments");
-  assert.equal(uploadedNotifications.some((item) => item.actionLabel === "Upload QR code"), false);
+  assert.equal(legacyNotifications.some((item) => item.actionLabel === "Confirm QR code received"), false);
 });
 
 test("installment notifications move from Sales preference to PM review and scheduled reminder", () => {

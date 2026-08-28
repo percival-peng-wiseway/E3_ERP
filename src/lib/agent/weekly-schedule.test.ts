@@ -69,6 +69,8 @@ function project(overrides: Partial<PaymentTrackProject> = {}): PaymentTrackProj
     stcBatteryRequired: false,
     solarRebateRequired: false,
     solarRebateQrRequired: false,
+    solarRebateQrConfirmedAt: null,
+    solarRebateQrConfirmedBy: null,
     solarRebateQrCode: null,
     stcSolarReceivedAt: null,
     stcBatteryReceivedAt: null,
@@ -243,7 +245,7 @@ test("derives WIP and legacy pending, scheduled and completed Project Track entr
   assert.equal(result.entries[0].scheduledDate, null, "pre-scheduled work remains in the persistent pending column");
 });
 
-test("excludes QR-gated WIP until upload, then emits exactly one unscheduled entry", () => {
+test("excludes QR-gated WIP until receipt confirmation, then emits exactly one unscheduled entry", () => {
   const waiting = project({
     solarRebateQrRequired: true,
     solarRebateQrCode: null,
@@ -257,7 +259,36 @@ test("excludes QR-gated WIP until upload, then emits exactly one unscheduled ent
   assert.equal(waitingResult.statusCounts.unscheduled, 0);
   assert.deepEqual(waitingResult.entries, []);
 
-  const uploaded = project({
+  const partialScheduleResult = aggregateWeeklySchedule(
+    { projects: [project({
+      workMode: "delivery_only",
+      solarRebateQrRequired: true,
+      deliveryScheduledFor: "2026-08-29",
+    })] },
+    args({ source: "project_track" }),
+  );
+  assert.equal(partialScheduleResult.count, 0);
+  assert.equal(partialScheduleResult.pendingCount, 0);
+  assert.deepEqual(partialScheduleResult.entries, []);
+
+  const confirmed = project({
+    solarRebateQrRequired: true,
+    solarRebateQrConfirmedAt: "2026-08-28T02:00:00.000Z",
+    solarRebateQrConfirmedBy: "Kevin PM",
+  });
+  const confirmedResult = aggregateWeeklySchedule(
+    { projects: [confirmed] },
+    args({ source: "project_track" }),
+  );
+  assert.equal(confirmedResult.count, 1);
+  assert.equal(confirmedResult.pendingCount, 1);
+  assert.equal(confirmedResult.statusCounts.unscheduled, 1);
+  assert.deepEqual(confirmedResult.entries.map(({ reference, status, kind }) => ({ reference, status, kind })), [
+    { reference: "CPEC-1001", status: "unscheduled", kind: "deliver_and_install" },
+  ]);
+
+  // Historical file-based confirmation remains compatible.
+  const legacyUploaded = project({
     solarRebateQrRequired: true,
     solarRebateQrCode: {
       id: "rebate-qr-1",
@@ -270,14 +301,14 @@ test("excludes QR-gated WIP until upload, then emits exactly one unscheduled ent
       uploadedByRole: "pm",
     },
   });
-  const uploadedResult = aggregateWeeklySchedule(
-    { projects: [uploaded] },
+  const legacyResult = aggregateWeeklySchedule(
+    { projects: [legacyUploaded] },
     args({ source: "project_track" }),
   );
-  assert.equal(uploadedResult.count, 1);
-  assert.equal(uploadedResult.pendingCount, 1);
-  assert.equal(uploadedResult.statusCounts.unscheduled, 1);
-  assert.deepEqual(uploadedResult.entries.map(({ reference, status, kind }) => ({ reference, status, kind })), [
+  assert.equal(legacyResult.count, 1);
+  assert.equal(legacyResult.pendingCount, 1);
+  assert.equal(legacyResult.statusCounts.unscheduled, 1);
+  assert.deepEqual(legacyResult.entries.map(({ reference, status, kind }) => ({ reference, status, kind })), [
     { reference: "CPEC-1001", status: "unscheduled", kind: "deliver_and_install" },
   ]);
 });

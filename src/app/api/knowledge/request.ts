@@ -1,4 +1,5 @@
 import { KNOWLEDGE_ACCESS_SCOPES, type KnowledgeAccessScope } from "@/lib/knowledge/types";
+export { isSupportedKnowledgeFile } from "@/lib/knowledge/file-metadata";
 import { objectHasExactFields, workspaceFileId } from "@/lib/workspace-files/request";
 
 export const KNOWLEDGE_ROUTE_BODY_BYTES = 8 * 1024;
@@ -12,14 +13,6 @@ export const KNOWLEDGE_DOCUMENT_TYPES = [
   "delivery_process",
 ] as const;
 export const KNOWLEDGE_LANGUAGES = ["en", "zh", "multilingual"] as const;
-
-export function isSupportedKnowledgeFile(name: string, contentType: string) {
-  return contentType === "application/pdf"
-    || contentType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    || contentType === "text/plain" && /\.txt$/i.test(name)
-    || (contentType === "text/plain" || contentType === "text/markdown" || contentType === "text/x-markdown")
-      && /\.md$/i.test(name);
-}
 
 type KnowledgeMetadataRequest = {
   title: string;

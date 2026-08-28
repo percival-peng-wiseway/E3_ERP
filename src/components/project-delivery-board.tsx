@@ -807,8 +807,8 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget }: {
 
   const openPaymentEditor = (project: ScheduledPaymentProject, kind: PaymentScheduleKind, date?: string) => {
     if (!canManageSchedule) return;
-    if (isPaymentTrackWaitingForRebateQr(project)) {
-      setError("Upload this project's Solar Rebate QR code in Project Track before scheduling work.");
+    if (isPaymentTrackWaitingForRebateQr(project) && !hasCompletePaymentSchedule(project, kind)) {
+      setError("Confirm receipt of this project's Solar Rebate QR code in Project Track before scheduling work.");
       return;
     }
     const includesDelivery = kind === "delivery" || kind === "combined";

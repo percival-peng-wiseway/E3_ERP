@@ -14,7 +14,7 @@ export type PaymentTrackResponsibilityAction =
   | "pre_schedule_installation"
   | "review_installation_pre_schedule"
   | "manage_installation"
-  | "upload_rebate_qr_code"
+  | "confirm_rebate_qr_received"
   | "manage_work"
   | "record_final_payment"
   | "confirm_final_payment"
@@ -54,6 +54,16 @@ function installationScheduleIsComplete(project: PaymentTrackProject) {
   );
 }
 
+function existingWipScheduleIsComplete(project: PaymentTrackProject) {
+  if (project.workMode === "delivery_only") return deliveryScheduleIsComplete(project);
+  if (project.workMode === "installation_only") return installationScheduleIsComplete(project);
+  if (project.workMode !== "delivery_and_installation") return false;
+  return deliveryScheduleIsComplete(project)
+    && installationScheduleIsComplete(project)
+    && project.deliveryScheduledFor === project.installationScheduledFor
+    && project.deliveryScheduledTime === project.installationScheduledTime;
+}
+
 /** Returns only the next role-owned work for a Project Track project. */
 export function paymentTrackResponsibilities(project: PaymentTrackProject): PaymentTrackResponsibility[] {
   if (project.stage === "deposit_not_paid") {
@@ -65,8 +75,10 @@ export function paymentTrackResponsibilities(project: PaymentTrackProject): Paym
 
   const tasks: PaymentTrackResponsibility[] = [];
   if (project.stage === "working_in_progress" && !project.installedAt) {
+    const needsQrReceiptConfirmation = isPaymentTrackWaitingForRebateQr(project)
+      && !existingWipScheduleIsComplete(project);
     tasks.push({
-      action: isPaymentTrackWaitingForRebateQr(project) ? "upload_rebate_qr_code" : "manage_work",
+      action: needsQrReceiptConfirmation ? "confirm_rebate_qr_received" : "manage_work",
       role: "pm",
     });
   }

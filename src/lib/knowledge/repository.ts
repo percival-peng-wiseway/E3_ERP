@@ -237,7 +237,7 @@ export async function getKnowledgeDocumentByFileId(fileId: string, tenantId: Kno
   return row ? documentFromRow(row) : null;
 }
 
-async function getActiveKnowledgeDocumentByChecksum(checksum: string, tenantId: KnowledgeTenantId) {
+export async function getActiveKnowledgeDocumentByChecksum(checksum: string, tenantId: KnowledgeTenantId) {
   const database = await d1();
   if (!database) {
     return (await readLocalState()).documents.find((document) => document.tenantId === tenantId
@@ -571,6 +571,44 @@ export async function listActiveKnowledgeChunksForDocument(documentId: string, t
   const result = await database.prepare(`SELECT ${CHUNK_COLUMNS} FROM erp_knowledge_chunks WHERE document_id=?1 AND tenant_id=?2 AND active=1 ORDER BY chunk_index`).bind(documentId,tenantId).all();
   if (!result.success) throw new KnowledgeRepositoryError(result.error || "Knowledge chunk read failed.",503,"storage_unavailable");
   return (result.results || []).map((row)=>chunkFromRow(row as Record<string,unknown>));
+}
+
+/**
+ * Small readiness projection for health checks. It deliberately avoids loading
+ * chunk text or issuing one query per document. The sample key lets the caller
+ * verify that D1's active generation still exists in the bound AI Search instance.
+ */
+export async function getKnowledgeReadinessSnapshot(tenantId: KnowledgeTenantId = KNOWLEDGE_TENANT_ID) {
+  const database = await d1();
+  if (!database) {
+    const state = await readLocalState();
+    const activeChunks = state.chunks.filter((chunk) => chunk.tenantId === tenantId && chunk.active);
+    return {
+      readyDocuments: new Set(activeChunks.map((chunk) => chunk.documentId)).size,
+      activeChunks: activeChunks.length,
+      sampleIndexItemKey: activeChunks[0]?.indexItemKey || null,
+    };
+  }
+  const row = await database.prepare(`SELECT
+      COUNT(DISTINCT document_id) AS ready_documents,
+      COUNT(*) AS active_chunks,
+      MIN(index_item_key) AS sample_index_item_key
+    FROM erp_knowledge_chunks WHERE tenant_id=?1 AND active=1`)
+    .bind(tenantId)
+    .first<Record<string, unknown>>();
+  const readyDocuments = Number(row?.ready_documents);
+  const activeChunks = Number(row?.active_chunks);
+  const sampleIndexItemKey = row?.sample_index_item_key;
+  if (!Number.isSafeInteger(readyDocuments) || readyDocuments < 0
+    || !Number.isSafeInteger(activeChunks) || activeChunks < 0
+    || !(sampleIndexItemKey === null || sampleIndexItemKey === undefined || typeof sampleIndexItemKey === "string")) {
+    throw new KnowledgeRepositoryError("Knowledge readiness metadata is invalid.", 503, "storage_unavailable");
+  }
+  return {
+    readyDocuments,
+    activeChunks,
+    sampleIndexItemKey: typeof sampleIndexItemKey === "string" && sampleIndexItemKey ? sampleIndexItemKey : null,
+  };
 }
 
 export async function listKnowledgeChunksByKeys(keys: readonly string[], options: { tenantId?: KnowledgeTenantId } = {}) {

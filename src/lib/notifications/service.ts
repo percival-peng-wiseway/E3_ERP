@@ -485,7 +485,7 @@ export function buildPaymentTrackNotifications(
           entityId: project.id,
           actionLabel: hasSchedule ? "View installment schedule" : "Arrange installment",
         }));
-      } else if (task.action === "upload_rebate_qr_code") {
+      } else if (task.action === "confirm_rebate_qr_received") {
         items.push(notification({
           role: task.role,
           priority: "high",
@@ -493,10 +493,10 @@ export function buildPaymentTrackNotifications(
           projectCreatedAt: project.createdAt,
           ownerName: project.specialist.name,
           title: customerName,
-          description: planningDescription(customerAddress, "Solar Rebate QR code required"),
+          description: planningDescription(customerAddress, "Solar Rebate QR code receipt confirmation required"),
           module: "payments",
           entityId: project.id,
-          actionLabel: "Upload QR code",
+          actionLabel: "Confirm QR code received",
         }));
       } else if (task.action === "manage_work") {
         const deliveredAwaitingInstall = Boolean(project.deliveredAt && !project.installedAt && project.workMode === "delivery_only");
