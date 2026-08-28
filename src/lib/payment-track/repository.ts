@@ -396,6 +396,9 @@ function publicProject(project: StoredProject): PaymentTrackProject {
     solarRebateReceivedAt: typeof project.solarRebateReceivedAt === "string"
       ? project.solarRebateReceivedAt
       : null,
+    stcSolarReceivedAmountCents: normalizedRebateReceiptAmount(project.stcSolarReceivedAmountCents),
+    stcBatteryReceivedAmountCents: normalizedRebateReceiptAmount(project.stcBatteryReceivedAmountCents),
+    solarRebateReceivedAmountCents: normalizedRebateReceiptAmount(project.solarRebateReceivedAmountCents),
     solarRebateQrRequired: project.solarRebateQrRequired === true,
     solarRebateQrConfirmedAt: storedPmNotesTimestamp(project.solarRebateQrConfirmedAt)
       ? project.solarRebateQrConfirmedAt
@@ -643,6 +646,18 @@ async function migrateLegacyProjectStages(projects: StoredProject[], fallbackTim
         changed = true;
       } else if (receipt.reportedAmountCents === undefined) {
         receipt.reportedAmountCents = null;
+        changed = true;
+      }
+    }
+    const rebateAmountFields = [
+      "stcSolarReceivedAmountCents",
+      "stcBatteryReceivedAmountCents",
+      "solarRebateReceivedAmountCents",
+    ] as const;
+    for (const field of rebateAmountFields) {
+      const normalized = normalizedRebateReceiptAmount(project[field]);
+      if (project[field] !== normalized) {
+        project[field] = normalized;
         changed = true;
       }
     }
@@ -918,6 +933,9 @@ function buildProject(
     stcSolarReceivedAt: null,
     stcBatteryReceivedAt: null,
     solarRebateReceivedAt: null,
+    stcSolarReceivedAmountCents: null,
+    stcBatteryReceivedAmountCents: null,
+    solarRebateReceivedAmountCents: null,
     solarRebateAssessmentVersion: SOLAR_REBATE_ASSESSMENT_VERSION,
     pmNotes: "",
     pmNotesUpdatedAt: null,
@@ -1116,6 +1134,26 @@ function validateNonNegativeAmount(value: number | undefined) {
     throw new PaymentTrackRepositoryError("Enter a valid non-negative amount.", 400, "invalid_amount");
   }
   return value as number;
+}
+
+function normalizedRebateReceiptAmount(value: unknown) {
+  return Number.isSafeInteger(value)
+    && (value as number) > 0
+    && (value as number) <= 100_000_000_000
+    ? value as number
+    : null;
+}
+
+function validatePositiveRebateReceiptAmount(value: number | undefined) {
+  const amount = normalizedRebateReceiptAmount(value);
+  if (amount === null) {
+    throw new PaymentTrackRepositoryError(
+      "Enter the positive amount received for this rebate.",
+      400,
+      "invalid_amount",
+    );
+  }
+  return amount;
 }
 
 function validDeliveryDate(value: unknown): value is string {
@@ -1784,24 +1822,47 @@ export function transitionPaymentTrackProject(
           "invalid_transition",
         );
       }
+      requireCurrentProjectVersion(project, input.expectedUpdatedAt);
+      const amount = validatePositiveRebateReceiptAmount(input.amountCents);
       if (action === "confirm_stc_solar") {
         if (!project.stcSolarRequired || project.stcSolarReceivedAt) {
           throw new PaymentTrackRepositoryError("Solar STC is not awaiting confirmation.", 409, "invalid_transition");
         }
         project.stcSolarReceivedAt = timestamp;
-        project.history.push(historyEntry("stc_solar_confirmed", timestamp, input.actorRole, actor));
+        project.stcSolarReceivedAmountCents = amount;
+        project.history.push(historyEntry(
+          "stc_solar_confirmed",
+          timestamp,
+          input.actorRole,
+          actor,
+          `AUD ${(amount / 100).toFixed(2)}`,
+        ));
       } else if (action === "confirm_stc_battery") {
         if (!project.stcBatteryRequired || project.stcBatteryReceivedAt) {
           throw new PaymentTrackRepositoryError("Battery STC is not awaiting confirmation.", 409, "invalid_transition");
         }
         project.stcBatteryReceivedAt = timestamp;
-        project.history.push(historyEntry("stc_battery_confirmed", timestamp, input.actorRole, actor));
+        project.stcBatteryReceivedAmountCents = amount;
+        project.history.push(historyEntry(
+          "stc_battery_confirmed",
+          timestamp,
+          input.actorRole,
+          actor,
+          `AUD ${(amount / 100).toFixed(2)}`,
+        ));
       } else {
         if (!project.solarRebateRequired || project.solarRebateReceivedAt) {
           throw new PaymentTrackRepositoryError("Solar Rebate is not awaiting confirmation.", 409, "invalid_transition");
         }
         project.solarRebateReceivedAt = timestamp;
-        project.history.push(historyEntry("solar_rebate_confirmed", timestamp, input.actorRole, actor));
+        project.solarRebateReceivedAmountCents = amount;
+        project.history.push(historyEntry(
+          "solar_rebate_confirmed",
+          timestamp,
+          input.actorRole,
+          actor,
+          `AUD ${(amount / 100).toFixed(2)}`,
+        ));
       }
       completeProjectIfRequirementsMet(project, timestamp, input.actorRole, actor);
     } else if (action === "skip_stage") {

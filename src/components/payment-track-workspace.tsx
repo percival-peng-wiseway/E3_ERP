@@ -84,6 +84,8 @@ type WorkflowConfirmation = {
   confirmLabel: string;
   successMessage: string;
   requiresReason?: boolean;
+  requiresAmount?: boolean;
+  amountLabel?: string;
   expectedUpdatedAt?: string;
 };
 
@@ -140,6 +142,16 @@ function formatMoney(cents: number) {
     currency: "AUD",
     minimumFractionDigits: 2,
   }).format(cents / 100);
+}
+
+function positiveMoneyCents(value: string) {
+  const normalized = value.trim();
+  if (!/^(?:0|[1-9]\d{0,9})(?:\.\d{1,2})?$/.test(normalized)) return null;
+  const [whole, fraction = ""] = normalized.split(".");
+  const cents = Number(whole) * 100 + Number(fraction.padEnd(2, "0"));
+  return Number.isSafeInteger(cents) && cents > 0 && cents <= 100_000_000_000
+    ? cents
+    : null;
 }
 
 function formatDate(value: string | null, includeTime = false) {
@@ -571,6 +583,37 @@ function confirmedPaymentRecords(project: PaymentTrackProject): ConfirmedPayment
   return records.sort((left, right) => left.confirmedAt.localeCompare(right.confirmedAt));
 }
 
+type ConfirmedRebateReceiptRecord = {
+  id: string;
+  label: string;
+  amountCents: number | null;
+  confirmedAt: string;
+};
+
+function confirmedRebateReceiptRecords(project: PaymentTrackProject): ConfirmedRebateReceiptRecord[] {
+  return [
+    {
+      id: `${project.id}:solar-stc`,
+      label: "Solar STC receipt",
+      amountCents: project.stcSolarReceivedAmountCents ?? null,
+      confirmedAt: project.stcSolarReceivedAt,
+    },
+    {
+      id: `${project.id}:battery-stc`,
+      label: "Battery STC receipt",
+      amountCents: project.stcBatteryReceivedAmountCents ?? null,
+      confirmedAt: project.stcBatteryReceivedAt,
+    },
+    {
+      id: `${project.id}:solar-rebate`,
+      label: "Solar Rebate receipt",
+      amountCents: project.solarRebateReceivedAmountCents ?? null,
+      confirmedAt: project.solarRebateReceivedAt,
+    },
+  ].filter((record): record is ConfirmedRebateReceiptRecord => Boolean(record.confirmedAt))
+    .sort((left, right) => left.confirmedAt.localeCompare(right.confirmedAt));
+}
+
 export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
   authenticatedRole: ErpRole;
   openEntityTarget?: { entityId: string; requestId: number };
@@ -592,6 +635,7 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [proofFile, setProofFile] = useState<File | null>(null);
   const [actionAmount, setActionAmount] = useState("");
+  const [rebateReceiptAmount, setRebateReceiptAmount] = useState("");
   const [deliveryDate, setDeliveryDate] = useState("");
   const [deliveryTime, setDeliveryTime] = useState("");
   const [deliveryNotes, setDeliveryNotes] = useState("");
@@ -627,6 +671,10 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
   );
   const paymentRecords = useMemo(
     () => selected ? confirmedPaymentRecords(selected) : [],
+    [selected],
+  );
+  const rebateReceiptRecords = useMemo(
+    () => selected ? confirmedRebateReceiptRecords(selected) : [],
     [selected],
   );
 
@@ -1099,6 +1147,7 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
     successMessage = "Project updated.",
   ) => {
     if (!selected) return;
+    const preserveAmountConfirmationOnError = workflowConfirmation?.requiresAmount === true;
     setBusy(true);
     setError("");
     try {
@@ -1111,6 +1160,7 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
       if (!response.ok) throw new Error(apiError(result, "Unable to update this project."));
       updateProject(result.data);
       setActionAmount("");
+      setRebateReceiptAmount("");
       setDeliveryDate(result.data.deliveryScheduledFor || result.data.deliveryScheduleRequest?.preferredDate || deliveryDate);
       setDeliveryTime(result.data.deliveryScheduledTime || result.data.deliveryScheduleRequest?.preferredTime || deliveryTime);
       setDeliveryNotes(result.data.deliveryScheduleRequest?.notes || deliveryNotes);
@@ -1122,15 +1172,21 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
       setInstallationAssignee(result.data.installationAssignee || installationAssignee);
       setWorkflowConfirmation(null);
       setWorkflowReason("");
-      if (action === "acknowledge_payment" || action === "confirm_final_payment") {
+      if (action === "acknowledge_payment"
+        || action === "confirm_final_payment"
+        || action === "confirm_stc_solar"
+        || action === "confirm_stc_battery"
+        || action === "confirm_solar_rebate") {
         setSelectedId(result.data.id);
       } else {
         setSelectedId(null);
       }
       setNotice(successMessage);
     } catch (actionError) {
-      setWorkflowConfirmation(null);
-      setWorkflowReason("");
+      if (!preserveAmountConfirmationOnError) {
+        setWorkflowConfirmation(null);
+        setWorkflowReason("");
+      }
       setError(actionError instanceof Error ? actionError.message : "Unable to update this project.");
     } finally {
       setBusy(false);
@@ -1206,6 +1262,7 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
   const closeWorkflowConfirmation = () => {
     setWorkflowConfirmation(null);
     setWorkflowReason("");
+    setRebateReceiptAmount("");
   };
 
   const closeFromBackdrop = (event: ReactMouseEvent<HTMLDivElement>) => {
@@ -1226,6 +1283,7 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
   const requestWorkflowConfirmation = (confirmation: WorkflowConfirmation) => {
     setError("");
     setWorkflowReason("");
+    setRebateReceiptAmount("");
     setWorkflowConfirmation(confirmation);
   };
 
@@ -1241,12 +1299,31 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
       setError("Reload this project before using the Administrator stage override.");
       return;
     }
+    const rebateAmountCents = workflowConfirmation.requiresAmount
+      ? positiveMoneyCents(rebateReceiptAmount)
+      : null;
+    if (workflowConfirmation.requiresAmount && rebateAmountCents === null) {
+      setError("Enter the positive amount received, using no more than two decimal places.");
+      return;
+    }
+    if (workflowConfirmation.requiresAmount && !workflowConfirmation.expectedUpdatedAt) {
+      setError("Reload this project before recording the rebate receipt.");
+      return;
+    }
+    const successMessage = workflowConfirmation.requiresAmount && rebateAmountCents !== null
+      ? `${workflowConfirmation.amountLabel || "Rebate"} payment of ${formatMoney(rebateAmountCents)} recorded.`
+      : workflowConfirmation.successMessage;
     void performAction(
       workflowConfirmation.action,
       workflowConfirmation.requiresReason
         ? { reason, expectedUpdatedAt: workflowConfirmation.expectedUpdatedAt || "" }
-        : {},
-      workflowConfirmation.successMessage,
+        : workflowConfirmation.requiresAmount
+          ? {
+              amount: rebateReceiptAmount,
+              expectedUpdatedAt: workflowConfirmation.expectedUpdatedAt || "",
+            }
+          : {},
+      successMessage,
     );
   };
 
@@ -1980,6 +2057,8 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
                   label="Solar STC"
                   required={project.stcSolarRequired}
                   received={Boolean(project.stcSolarReceivedAt)}
+                  receivedAt={project.stcSolarReceivedAt}
+                  amountCents={project.stcSolarReceivedAmountCents ?? null}
                   busy={busy}
                   canConfirm={canConfirmStc}
                   canSwitchRole={authenticatedRole === "admin"}
@@ -1989,6 +2068,9 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
                     description: "Only confirm after the Solar STC payment has been received. If this is the final required rebate receipt, the project will move to Done.",
                     confirmLabel: "Confirm Solar STC",
                     successMessage: "Solar STC payment confirmed.",
+                    requiresAmount: true,
+                    amountLabel: "Solar STC",
+                    expectedUpdatedAt: project.updatedAt,
                   })}
                   onSwitchRole={() => selectRole("admin")}
                 />
@@ -1996,6 +2078,8 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
                   label="Battery STC"
                   required={project.stcBatteryRequired}
                   received={Boolean(project.stcBatteryReceivedAt)}
+                  receivedAt={project.stcBatteryReceivedAt}
+                  amountCents={project.stcBatteryReceivedAmountCents ?? null}
                   busy={busy}
                   canConfirm={canConfirmStc}
                   canSwitchRole={authenticatedRole === "admin"}
@@ -2005,6 +2089,9 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
                     description: "Only confirm after the Battery STC payment has been received. If this is the final required rebate receipt, the project will move to Done.",
                     confirmLabel: "Confirm Battery STC",
                     successMessage: "Battery STC payment confirmed.",
+                    requiresAmount: true,
+                    amountLabel: "Battery STC",
+                    expectedUpdatedAt: project.updatedAt,
                   })}
                   onSwitchRole={() => selectRole("admin")}
                 />
@@ -2012,6 +2099,8 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
                   label="Solar Rebate"
                   required={project.solarRebateRequired}
                   received={Boolean(project.solarRebateReceivedAt)}
+                  receivedAt={project.solarRebateReceivedAt}
+                  amountCents={project.solarRebateReceivedAmountCents ?? null}
                   busy={busy}
                   canConfirm={canConfirmStc}
                   canSwitchRole={authenticatedRole === "admin"}
@@ -2021,6 +2110,9 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
                     description: "Only confirm after the Solar Rebate payment has been received. If this is the final required rebate receipt, the project will move to Done.",
                     confirmLabel: "Confirm Solar Rebate",
                     successMessage: "Solar Rebate payment confirmed.",
+                    requiresAmount: true,
+                    amountLabel: "Solar Rebate",
+                    expectedUpdatedAt: project.updatedAt,
                   })}
                   onSwitchRole={() => selectRole("admin")}
                 />
@@ -2393,6 +2485,30 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
               <span className={styles.confirmationIcon}><BadgeCheck size={24} /></span>
               <div className={styles.confirmationContent}>
                 <p id="workflow-confirmation-description">{workflowConfirmation.description}</p>
+                {workflowConfirmation.requiresAmount ? (
+                  <label className={styles.actionField}>
+                    {workflowConfirmation.amountLabel || "Rebate"} amount received (AUD)
+                    <span className={styles.moneyField}>
+                      <b>$</b>
+                      <input
+                        autoFocus
+                        required
+                        inputMode="decimal"
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        value={rebateReceiptAmount}
+                        aria-invalid={rebateReceiptAmount !== "" && positiveMoneyCents(rebateReceiptAmount) === null}
+                        aria-describedby="workflow-rebate-amount-help"
+                        onChange={(event) => {
+                          setRebateReceiptAmount(event.target.value);
+                          setError("");
+                        }}
+                      />
+                    </span>
+                    <small id="workflow-rebate-amount-help">Record the actual third-party receipt. This does not reduce the customer outstanding balance.</small>
+                  </label>
+                ) : null}
                 {workflowConfirmation.requiresReason ? (
                   <label className={styles.overrideReasonField}>
                     Override reason
@@ -2408,11 +2524,14 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
                     <small>{workflowReason.trim().length} / {PAYMENT_TRACK_STAGE_SKIP_REASON_MAX_LENGTH}</small>
                   </label>
                 ) : null}
+                {workflowConfirmation.requiresAmount && error ? (
+                  <div className={styles.confirmationError} role="alert"><AlertCircle size={15} /> {error}</div>
+                ) : null}
               </div>
             </div>
             <footer className={styles.confirmationFooter}>
               <button
-                autoFocus={!workflowConfirmation.requiresReason}
+                autoFocus={!workflowConfirmation.requiresReason && !workflowConfirmation.requiresAmount}
                 className={styles.secondaryButton}
                 type="button"
                 disabled={busy}
@@ -2423,7 +2542,11 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
               <button
                 className={styles.primaryButton}
                 type="button"
-                disabled={busy || Boolean(workflowConfirmation.requiresReason && !workflowReason.trim())}
+                disabled={
+                  busy
+                  || Boolean(workflowConfirmation.requiresReason && !workflowReason.trim())
+                  || Boolean(workflowConfirmation.requiresAmount && positiveMoneyCents(rebateReceiptAmount) === null)
+                }
                 onClick={confirmWorkflowAction}
               >
                 {busy ? <LoaderCircle className={styles.spinning} size={16} /> : <CheckCircle2 size={16} />}
@@ -2821,6 +2944,26 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
                 </section>
               ) : null}
 
+              {rebateReceiptRecords.length ? (
+                <section className={styles.detailSection}>
+                  <h3><BadgeCheck size={16} /> Rebate Receipts <span>{rebateReceiptRecords.length}</span></h3>
+                  <div className={styles.paymentLedger}>
+                    {rebateReceiptRecords.map((receipt) => (
+                      <article key={receipt.id}>
+                        <div>
+                          <strong>{receipt.label}</strong>
+                          <small>Third-party funding receipt</small>
+                        </div>
+                        <div className={styles.confirmedPayment}>
+                          <strong>{receipt.amountCents === null ? "Amount not recorded" : formatMoney(receipt.amountCents)}</strong>
+                          <small>Admin confirmed {formatDate(receipt.confirmedAt, true)}</small>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
+
               {authenticatedRole === "admin" ? (
                 <div className={styles.dangerZone}>
                   <button className={styles.dangerButton} type="button" disabled={busy} onClick={() => void deleteProject()}>
@@ -3067,6 +3210,8 @@ function StcAction({
   label,
   required,
   received,
+  receivedAt,
+  amountCents,
   busy,
   canConfirm,
   canSwitchRole,
@@ -3076,6 +3221,8 @@ function StcAction({
   label: string;
   required: boolean;
   received: boolean;
+  receivedAt: string | null;
+  amountCents: number | null;
   busy: boolean;
   canConfirm: boolean;
   canSwitchRole: boolean;
@@ -3083,7 +3230,20 @@ function StcAction({
   onSwitchRole: () => void;
 }) {
   if (!required) return <div className={styles.stcRow}><span>{label}</span><small>Not applicable</small></div>;
-  if (received) return <div className={`${styles.stcRow} ${styles.received}`}><span>{label}</span><small><CheckCircle2 size={14} /> Received</small></div>;
+  if (received) {
+    return (
+      <div className={`${styles.stcRow} ${styles.received}`}>
+        <span>{label}</span>
+        <small>
+          <CheckCircle2 size={14} />
+          <span>
+            {amountCents === null ? "Received · Amount not recorded" : `Received ${formatMoney(amountCents)}`}
+            {receivedAt ? <em>{formatDate(receivedAt, true)}</em> : null}
+          </span>
+        </small>
+      </div>
+    );
+  }
   if (!canConfirm && !canSwitchRole) {
     return <div className={styles.stcRow}><span>{label}</span><small>Waiting for Administrator</small></div>;
   }

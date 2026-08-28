@@ -831,6 +831,10 @@
 }
 
 .confirmationContent { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 14px; }
+.confirmationContent .actionField { width: 100%; min-width: 0; }
+.confirmationContent .actionField > small { color: #78858e; font-size: 11px; font-weight: 520; line-height: 1.45; }
+.confirmationError { display: flex; align-items: flex-start; padding: 9px 10px; gap: 7px; color: #a33b35; background: #fff1ef; border: 1px solid #f3cbc6; border-radius: 7px; font-size: 12px; line-height: 1.4; }
+.confirmationError svg { flex: 0 0 auto; margin-top: 1px; }
 .overrideReasonField { display: flex; min-width: 0; flex-direction: column; gap: 6px; color: #46535d; font-size: 12px; font-weight: 720; }
 .overrideReasonField textarea { width: 100%; min-height: 84px; padding: 10px 11px; resize: vertical; color: #33414a; background: #fff; border: 1px solid #ccd5db; border-radius: 7px; outline: 0; font: inherit; font-size: 13px; font-weight: 450; line-height: 1.45; }
 .overrideReasonField textarea:focus { border-color: #6979d6; box-shadow: 0 0 0 3px rgba(89, 105, 211, .12); }
@@ -1979,6 +1983,8 @@
 .stcRow button:focus-visible { outline: 2px solid rgba(32, 115, 95, .35); outline-offset: 2px; }
 .stcRow.received { color: #28715d; background: #edf8f4; border-color: #cce8de; }
 .stcRow.received small { color: #28715d; background: rgba(255, 255, 255, .62); }
+.stcRow.received small > span { display: flex; min-width: 0; align-items: center; flex-direction: column; text-align: center; line-height: 1.35; }
+.stcRow.received small em { color: #708078; font-size: 10px; font-style: normal; font-weight: 560; }
 
 .detailColumns { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 
@@ -2191,6 +2197,7 @@
   .modalFooter button { width: 100%; }
   .confirmationFooter { align-items: stretch; flex-direction: column-reverse; }
   .confirmationFooter button { width: 100%; }
+  .stcActions { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 480px) {

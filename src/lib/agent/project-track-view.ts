@@ -222,6 +222,29 @@ export function projectTrackAgentView(
     stcSolarReceivedAt: project.stcSolarReceivedAt,
     stcBatteryReceivedAt: project.stcBatteryReceivedAt,
     solarRebateReceivedAt: project.solarRebateReceivedAt,
+    rebateReceipts: {
+      solarStc: {
+        required: project.stcSolarRequired,
+        receivedAt: project.stcSolarReceivedAt,
+        amount: typeof project.stcSolarReceivedAmountCents === "number"
+          ? project.stcSolarReceivedAmountCents / 100
+          : null,
+      },
+      batteryStc: {
+        required: project.stcBatteryRequired,
+        receivedAt: project.stcBatteryReceivedAt,
+        amount: typeof project.stcBatteryReceivedAmountCents === "number"
+          ? project.stcBatteryReceivedAmountCents / 100
+          : null,
+      },
+      solarRebate: {
+        required: project.solarRebateRequired,
+        receivedAt: project.solarRebateReceivedAt,
+        amount: typeof project.solarRebateReceivedAmountCents === "number"
+          ? project.solarRebateReceivedAmountCents / 100
+          : null,
+      },
+    },
     items: project.items.slice(0, 15).map((item) => ({
       category: item.category,
       description: item.description,

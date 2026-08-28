@@ -372,6 +372,9 @@ test("skipping STC Rebate records every required receipt before completion", asy
   assert.ok(project.stcSolarReceivedAt);
   assert.ok(project.stcBatteryReceivedAt);
   assert.ok(project.solarRebateReceivedAt);
+  assert.equal(project.stcSolarReceivedAmountCents, null);
+  assert.equal(project.stcBatteryReceivedAmountCents, null);
+  assert.equal(project.solarRebateReceivedAmountCents, null);
   assert.ok(project.completedAt);
   const audit = project.history.filter((entry) => entry.action === "stage_skipped").at(-1);
   assert.match(audit?.note || "", new RegExp(`stcSolarReceivedAt=${project.stcSolarReceivedAt}`));
@@ -1189,7 +1192,11 @@ test("COES and final payment progress independently through the STC stage", asyn
   assert.equal(project.stage, "stc_rebate");
 
   await assert.rejects(
-    transitionPaymentTrackProject(project.id, "confirm_solar_rebate", { actorRole: "admin" }),
+    transitionPaymentTrackProject(project.id, "confirm_solar_rebate", {
+      actorRole: "admin",
+      amountCents: 140_000,
+      expectedUpdatedAt: project.updatedAt,
+    }),
     (error: unknown) => (
       typeof error === "object"
       && error !== null
@@ -1200,9 +1207,13 @@ test("COES and final payment progress independently through the STC stage", asyn
 
   project = await transitionPaymentTrackProject(project.id, "confirm_stc_solar", {
     actorRole: "admin",
+    amountCents: 320_000,
+    expectedUpdatedAt: project.updatedAt,
   });
   assert.equal(project.stage, "done");
   assert.equal(project.outstandingCents, 5_500);
+  assert.equal(project.stcSolarReceivedAmountCents, 320_000);
+  assert.equal(project.history.findLast((entry) => entry.action === "stc_solar_confirmed")?.note, "AUD 3200.00");
 
   project = await transitionPaymentTrackProject(project.id, "acknowledge_payment", {
     actorRole: "sales",
@@ -1268,6 +1279,7 @@ test("all required STC and Solar Rebate receipts are independent completion gate
     actorRole: "pm",
   });
   assert.equal(project.stage, "stc_rebate");
+  const customerOutstanding = project.outstandingCents;
 
   await assert.rejects(
     transitionPaymentTrackProject(project.id, "confirm_solar_rebate", { actorRole: "pm" }),
@@ -1290,14 +1302,50 @@ test("all required STC and Solar Rebate receipts are independent completion gate
       && error.code === "role_forbidden"
     ),
   );
+
+  await assert.rejects(
+    transitionPaymentTrackProject(project.id, "confirm_stc_solar", {
+      actorRole: "admin",
+      amountCents: 0,
+      expectedUpdatedAt: project.updatedAt,
+    }),
+    (error: unknown) => (
+      typeof error === "object"
+      && error !== null
+      && "code" in error
+      && error.code === "invalid_amount"
+    ),
+  );
+
+  await assert.rejects(
+    transitionPaymentTrackProject(project.id, "confirm_stc_solar", {
+      actorRole: "admin",
+      amountCents: 310_025,
+      expectedUpdatedAt: "2026-08-01T00:00:00.000Z",
+    }),
+    (error: unknown) => (
+      typeof error === "object"
+      && error !== null
+      && "code" in error
+      && error.code === "stale_project"
+    ),
+  );
   project = await transitionPaymentTrackProject(project.id, "confirm_stc_solar", {
     actorRole: "admin",
+    amountCents: 310_025,
+    expectedUpdatedAt: project.updatedAt,
   });
   assert.equal(project.stage, "stc_rebate");
+  assert.equal(project.stcSolarReceivedAmountCents, 310_025);
+  assert.equal(project.outstandingCents, customerOutstanding);
   project = await transitionPaymentTrackProject(project.id, "confirm_stc_battery", {
     actorRole: "admin",
+    amountCents: 145_050,
+    expectedUpdatedAt: project.updatedAt,
   });
   assert.equal(project.stage, "stc_rebate");
+  assert.equal(project.stcBatteryReceivedAmountCents, 145_050);
+  assert.equal(project.outstandingCents, customerOutstanding);
 
   await assert.rejects(
     transitionPaymentTrackProject(project.id, "confirm_solar_rebate", { actorRole: "sales" }),
@@ -1311,9 +1359,13 @@ test("all required STC and Solar Rebate receipts are independent completion gate
 
   project = await transitionPaymentTrackProject(project.id, "confirm_solar_rebate", {
     actorRole: "admin",
+    amountCents: 140_000,
+    expectedUpdatedAt: project.updatedAt,
   });
   assert.equal(project.stage, "done");
   assert.ok(project.solarRebateReceivedAt);
+  assert.equal(project.solarRebateReceivedAmountCents, 140_000);
+  assert.equal(project.outstandingCents, customerOutstanding);
   assert.equal(
     project.history.filter((entry) => entry.action === "solar_rebate_confirmed").length,
     1,
@@ -1343,6 +1395,8 @@ test("a Solar-Rebate-only project waits for Administrator confirmation", async (
   assert.equal(project.stage, "stc_rebate");
   project = await transitionPaymentTrackProject(project.id, "confirm_solar_rebate", {
     actorRole: "admin",
+    amountCents: 140_000,
+    expectedUpdatedAt: project.updatedAt,
   });
   assert.equal(project.stage, "done");
   assert.ok(project.solarRebateReceivedAt);
@@ -1428,6 +1482,9 @@ test("listing persistently defaults legacy Solar Rebate fields without changing 
   assert.ok(storedProject);
   delete storedProject.solarRebateRequired;
   delete storedProject.solarRebateReceivedAt;
+  delete storedProject.stcSolarReceivedAmountCents;
+  delete storedProject.stcBatteryReceivedAmountCents;
+  delete storedProject.solarRebateReceivedAmountCents;
   delete storedProject.solarRebateQrRequired;
   delete storedProject.solarRebateQrConfirmedAt;
   delete storedProject.solarRebateQrConfirmedBy;
@@ -1441,12 +1498,18 @@ test("listing persistently defaults legacy Solar Rebate fields without changing 
   const secondProject = secondList.find((candidate) => candidate.id === project.id);
   assert.equal(firstProject?.solarRebateRequired, false);
   assert.equal(firstProject?.solarRebateReceivedAt, null);
+  assert.equal(firstProject?.stcSolarReceivedAmountCents, null);
+  assert.equal(firstProject?.stcBatteryReceivedAmountCents, null);
+  assert.equal(firstProject?.solarRebateReceivedAmountCents, null);
   assert.equal(firstProject?.solarRebateQrRequired, false);
   assert.equal(firstProject?.solarRebateQrConfirmedAt, null);
   assert.equal(firstProject?.solarRebateQrConfirmedBy, null);
   assert.equal(firstProject?.solarRebateQrCode, null);
   assert.equal(secondProject?.solarRebateRequired, false);
   assert.equal(secondProject?.solarRebateReceivedAt, null);
+  assert.equal(secondProject?.stcSolarReceivedAmountCents, null);
+  assert.equal(secondProject?.stcBatteryReceivedAmountCents, null);
+  assert.equal(secondProject?.solarRebateReceivedAmountCents, null);
   assert.equal(secondProject?.solarRebateQrRequired, false);
   assert.equal(secondProject?.solarRebateQrConfirmedAt, null);
   assert.equal(secondProject?.solarRebateQrConfirmedBy, null);

@@ -298,6 +298,32 @@ test("generic Project Track questions use the live repository workflow without a
   assert.equal(trace.snapshot().steps[0]?.name, "project_track.live_query");
 });
 
+test("rebate receipt amount questions use the deterministic Project Track workflow", async () => {
+  for (const message of [
+    "How much Solar Rebate was received?",
+    "What Solar STC amount was paid?",
+    "STC rebate 收了多少钱",
+  ]) {
+    let paymentCalls = 0;
+    const trace = new AgentTrace();
+    const result = await runDeterministicWorkflow(
+      provider(),
+      message,
+      trace,
+      dependencies({
+        fastPaymentTrackAnswer: async () => {
+          paymentCalls += 1;
+          return { mode: "local", answer: "Third-party funding total.", suggestions: [] };
+        },
+      }),
+    );
+    assert.equal(result?.workflow, "project_track_query", message);
+    assert.equal(result?.answer, "Third-party funding total.", message);
+    assert.equal(paymentCalls, 1, message);
+    assert.equal(trace.snapshot().steps[0]?.name, "project_track.live_query", message);
+  }
+});
+
 test("Weekly Schedule questions use the live aggregate workflow without a model", async () => {
   let weeklyCalls = 0;
   const trace = new AgentTrace();

@@ -44,6 +44,18 @@ const PAYMENT_CONFIRMATION_ACTIONS = new Set<PaymentTrackAction>([
   "confirm_stc_battery",
   "confirm_solar_rebate",
 ]);
+const REBATE_RECEIPT_ACTIONS = new Set<PaymentTrackAction>([
+  "confirm_stc_solar",
+  "confirm_stc_battery",
+  "confirm_solar_rebate",
+]);
+const REBATE_RECEIPT_FIELDS = new Set([
+  "action",
+  "actorRole",
+  "actorName",
+  "amount",
+  "expectedUpdatedAt",
+]);
 const INSTALLATION_SCHEDULE_FIELDS = new Set([
   "action",
   "actorRole",
@@ -252,14 +264,32 @@ export async function PATCH(
     }
 
     let amountCents: number | undefined;
-    if (action === "confirm_deposit" || action === "confirm_collection" || action === "confirm_final_payment" || action === "acknowledge_payment") {
+    if (action === "confirm_deposit"
+      || action === "confirm_collection"
+      || action === "confirm_final_payment"
+      || action === "acknowledge_payment"
+      || REBATE_RECEIPT_ACTIONS.has(action)) {
       const parsed = paymentTrackAmountToCents(body.amount);
-      if (parsed === null || (action === "acknowledge_payment" && parsed <= 0)) {
-        return paymentTrackError(400, "invalid_amount", action === "acknowledge_payment"
-          ? "Enter the positive amount Sales believes was received."
-          : "Enter a non-negative amount, including 0 if nothing was received.");
+      const requiresPositiveAmount = action === "acknowledge_payment" || REBATE_RECEIPT_ACTIONS.has(action);
+      if (parsed === null || (requiresPositiveAmount && parsed <= 0)) {
+        return paymentTrackError(400, "invalid_amount", REBATE_RECEIPT_ACTIONS.has(action)
+          ? "Enter the positive amount received for this rebate."
+          : action === "acknowledge_payment"
+            ? "Enter the positive amount Sales believes was received."
+            : "Enter a non-negative amount, including 0 if nothing was received.");
       }
       amountCents = parsed;
+    }
+    if (REBATE_RECEIPT_ACTIONS.has(action)) {
+      if (!Object.keys(body).every((field) => REBATE_RECEIPT_FIELDS.has(field))
+        || !paymentTrackUpdatedAtIsValid(body.expectedUpdatedAt)) {
+        return paymentTrackError(
+          400,
+          "invalid_rebate_receipt",
+          "Enter the received amount against the latest project version, without extra fields.",
+        );
+      }
+      expectedUpdatedAt = body.expectedUpdatedAt;
     }
     let paymentId: string | undefined;
     if (action === "confirm_final_payment") {

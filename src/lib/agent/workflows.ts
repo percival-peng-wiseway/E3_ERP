@@ -1,6 +1,8 @@
 import type { AgentAnswer, ERPProvider, QuotationStatus } from "@/lib/erp";
 // @ts-expect-error -- focused Node ESM tests require the explicit extension.
 import { hasInventoryUsageReference, inventorySkuCandidates, isBareInventorySkuLookup, isInventoryStockIntent, isInventoryUsageIntent } from "./inventory-usage.ts";
+// @ts-expect-error -- focused Node ESM tests require the explicit extension.
+import { isRebateReceiptAmountIntent } from "./rebate-receipts.ts";
 import type { AgentTrace } from "./trace";
 
 export type DeterministicWorkflowName =
@@ -98,7 +100,8 @@ function hasInventoryIdentifier(message: string): boolean {
 }
 
 function hasProjectTrackIntent(message: string): boolean {
-  return /\b(?:project\s*track(?:ing)?|working\s+in\s+progress|wip|waiting\s+coes|stc\s+rebate|pay[-_][a-z0-9_-]*\d|cpec[-_]?\d+)\b|项目(?:追踪|跟踪|进度)|项目看板/u.test(message)
+  return isRebateReceiptAmountIntent(message)
+    || /\b(?:project\s*track(?:ing)?|working\s+in\s+progress|wip|waiting\s+coes|stc\s+rebate|pay[-_][a-z0-9_-]*\d|cpec[-_]?\d+)\b|项目(?:追踪|跟踪|进度)|项目看板/u.test(message)
     || /(?:show|list|find|search|get|what|which|how\s+many|give\s+me|查看|显示|列出|查找).{0,24}(?:projects?|项目)/u.test(message);
 }
 

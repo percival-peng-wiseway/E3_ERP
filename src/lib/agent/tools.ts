@@ -40,6 +40,10 @@ import {
 } from "./inventory-usage";
 import { normalizedInventoryArgs } from "./tool-input";
 import {
+  formatRebateReceiptAmountAnswer,
+  isRebateReceiptAmountIntent,
+} from "./rebate-receipts";
+import {
   aggregateWeeklySchedule,
   normalizedWeeklyScheduleArgs,
   weeklyScheduleKindFromMessage,
@@ -1530,7 +1534,8 @@ function requestedProjectWorkflowStatus(message: string) {
 
 export async function fastPaymentTrackAnswer(rawMessage: string) {
   const asksOutstanding = asksForOutstandingPayment(rawMessage);
-  if (!asksOutstanding && !asksForProjectTrack(rawMessage)) return null;
+  const asksRebateReceiptAmount = isRebateReceiptAmountIntent(rawMessage);
+  if (!asksOutstanding && !asksForProjectTrack(rawMessage) && !asksRebateReceiptAmount) return null;
 
   const message = normalizedSearch(rawMessage);
   const asksScheduleDetails = /\b(?:when|date|time|schedule|scheduled|pre[\s_-]*scheduled|unscheduled)\b|什么时候|哪天|日期|几点|时间|排期|安排/u.test(message);
@@ -1544,6 +1549,9 @@ export async function fastPaymentTrackAnswer(rawMessage: string) {
   const asksProjectDetails = asksScheduleDetails || asksAssignee || asksItems || asksNotes
     || asksAddress || asksPhone || asksEmail || asksGeneralContact;
   const projects = await listPaymentTrackProjects();
+  if (asksRebateReceiptAmount) {
+    return formatRebateReceiptAmountAnswer(rawMessage, projects);
+  }
   const specificallyMentioned = projects.filter((project) => [
     project.reference,
     project.quoteNumber,

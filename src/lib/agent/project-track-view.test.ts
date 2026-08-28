@@ -192,6 +192,28 @@ test("preserves legacy pre-scheduled state and exposes complete schedule facts",
   assert.equal("pmNotes" in view, false);
 });
 
+test("projects expose rebate receipts separately from customer payments", () => {
+  const value = project({
+    stage: "done",
+    stcSolarRequired: true,
+    stcBatteryRequired: true,
+    solarRebateRequired: true,
+    stcSolarReceivedAt: "2026-08-28T01:00:00.000Z",
+    stcBatteryReceivedAt: "2026-08-28T02:00:00.000Z",
+    solarRebateReceivedAt: "2026-08-28T03:00:00.000Z",
+    stcSolarReceivedAmountCents: 310_025,
+    stcBatteryReceivedAmountCents: 145_050,
+    solarRebateReceivedAmountCents: 140_000,
+  });
+
+  const view = projectTrackAgentView(value, privacy());
+  assert.equal(view.rebateReceipts.solarStc.amount, 3100.25);
+  assert.equal(view.rebateReceipts.batteryStc.amount, 1450.5);
+  assert.equal(view.rebateReceipts.solarRebate.amount, 1400);
+  assert.deepEqual(view.confirmedPayments, []);
+  assert.equal(view.amountDue, 50);
+});
+
 test("projects expose assignee, location and customer contact details independently", () => {
   const value = project({
     customer: {

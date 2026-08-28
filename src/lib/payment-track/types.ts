@@ -249,6 +249,16 @@ export interface PaymentTrackProject {
   stcSolarReceivedAt: string | null;
   stcBatteryReceivedAt: string | null;
   solarRebateReceivedAt: string | null;
+  /**
+   * Third-party rebate receipts are recorded independently from customer
+   * payments. They must never reduce `outstandingCents`, because proposal
+   * balances already include the corresponding rebate deductions.
+   * Optional for callers holding a legacy project snapshot; repository
+   * responses always normalize these values to cents or null.
+   */
+  stcSolarReceivedAmountCents?: number | null;
+  stcBatteryReceivedAmountCents?: number | null;
+  solarRebateReceivedAmountCents?: number | null;
   pmNotes: string;
   pmNotesUpdatedAt: string | null;
   pmNotesUpdatedBy: string | null;
