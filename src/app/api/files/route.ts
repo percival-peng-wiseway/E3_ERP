@@ -1,5 +1,9 @@
 import { NextRequest } from "next/server";
 import { getErpSession } from "@/lib/auth/session";
+import { canAccessKnowledgeScope } from "@/lib/knowledge/config";
+import { KNOWLEDGE_TENANT_ID } from "@/lib/knowledge/types";
+import { listKnowledgeDocuments } from "@/lib/knowledge/repository";
+import { knowledgeDocumentView } from "@/app/api/knowledge/view";
 import {
   listWorkspaceFiles,
   WorkspaceFilesRepositoryError,
@@ -27,6 +31,21 @@ export async function GET(request: NextRequest) {
       actor: session.user,
       ...query,
     });
+    const documents = await listKnowledgeDocuments({
+      tenantId: KNOWLEDGE_TENANT_ID,
+      includeDisabled: true,
+    });
+    const knowledgeByFileId = new Map(documents.map((document) => [document.fileId, document]));
+    listing.items = listing.items
+      .filter((item) => {
+        const document = knowledgeByFileId.get(item.id);
+        return !document || canAccessKnowledgeScope(session.user.role, document.accessScope);
+      })
+      .map((item) => {
+        if (session.user.role !== "admin") return item;
+        const document = knowledgeByFileId.get(item.id);
+        return { ...item, knowledge: document ? knowledgeDocumentView(document) : null };
+      });
     return workspaceFilesJson({ data: listing });
   } catch (error) {
     if (error instanceof WorkspaceFilesRepositoryError) {

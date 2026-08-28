@@ -141,6 +141,8 @@ test("content types require both an allowed extension and a compatible declarati
   assert.equal(workspaceFileUploadType("report.PDF", "application/pdf"), "application/pdf");
   assert.equal(workspaceFileUploadType("report.pdf", "application/octet-stream"), "application/pdf");
   assert.equal(workspaceFileUploadType("report.csv", ""), "text/csv");
+  assert.equal(workspaceFileUploadType("guide.md", "text/markdown; charset=utf-8"), "text/plain");
+  assert.equal(workspaceFileUploadType("guide.md", "text/x-markdown"), "text/plain");
   assert.equal(workspaceFileUploadType("report.pdf.exe", "application/pdf"), null);
   assert.equal(workspaceFileUploadType("report.svg", "image/svg+xml"), null);
   assert.equal(workspaceFileUploadType("report.html", "text/html"), null);

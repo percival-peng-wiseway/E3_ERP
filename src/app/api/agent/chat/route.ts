@@ -4,6 +4,7 @@ import { chatWithBusinessAgent } from "@/lib/business-agent/service";
 import { resolveDeepSeekSettings } from "@/lib/agent/settings";
 import { AgentRequestBodyTooLarge, readLimitedAgentJson, requestHasJsonContentType } from "@/lib/agent/request";
 import { getERPProvider } from "@/lib/erp";
+import { searchKnowledgeBase } from "@/lib/knowledge/search-service";
 import { isAuthorizedMutationRequest } from "@/lib/server/proxy-security";
 
 export const dynamic = "force-dynamic";
@@ -42,7 +43,7 @@ export async function POST(request: Request) {
     return json(await chatWithBusinessAgent({
       input,
       auth,
-      dataProvider: new LiveBusinessDataProvider(getERPProvider(request)),
+      dataProvider: new LiveBusinessDataProvider(getERPProvider(request), searchKnowledgeBase),
       deepSeekConfig: deepSeek.apiKey ? {
         apiKey: deepSeek.apiKey,
         baseUrl: deepSeek.baseUrl,

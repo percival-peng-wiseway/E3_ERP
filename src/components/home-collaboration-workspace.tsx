@@ -4,6 +4,9 @@ import {
   AlertCircle,
   BellRing,
   Bot,
+  Download,
+  Eye,
+  FileText,
   LoaderCircle,
   Megaphone,
   RefreshCw,
@@ -23,6 +26,7 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ERP_ROLE_LABELS, type ErpUser } from "@/lib/auth/types";
 import { readJsonResponse } from "@/lib/client/http";
+import type { AgentCitation } from "@/lib/erp/types";
 import styles from "./home-collaboration-workspace.module.css";
 
 type AgentRole = "user" | "assistant";
@@ -31,6 +35,7 @@ type AgentMessage = {
   id: string;
   role: AgentRole;
   content: string;
+  citations?: AgentCitation[];
 };
 
 type NotificationRole = "all" | "sales" | "specialist" | "pm" | "admin";
@@ -69,7 +74,7 @@ type HomeCollaborationWorkspaceProps = {
 const DEFAULT_SUGGESTIONS = [
   "Which inventory items need attention?",
   "Summarise current payment collections",
-  "What deliveries are waiting for PM review?",
+  "Show unscheduled Weekly Schedule work",
 ];
 const LEGACY_AGENT_CONVERSATION_STORAGE_KEY = "e3-agent-conversation:v1";
 const AGENT_CONVERSATION_STORAGE_VERSION = 1;
@@ -77,6 +82,8 @@ const MAX_MESSAGE_LENGTH = 2_000;
 const MAX_AGENT_HISTORY_MESSAGES = 100;
 const MAX_AGENT_HISTORY_CHARACTERS = 200_000;
 const MAX_AGENT_HISTORY_MESSAGE_CHARACTERS = 50_000;
+const MAX_AGENT_CITATIONS = 8;
+const WORKSPACE_FILE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const NOTIFICATION_REFRESH_INTERVAL_MS = 30_000;
 const ANNOUNCEMENT_REFRESH_INTERVAL_MS = 60_000;
 
@@ -100,6 +107,52 @@ const NOTIFICATION_PRIORITY_ORDER: Record<NotificationPriority, number> = {
   normal: 2,
 };
 
+function citationText(value: unknown, maximum: number) {
+  return typeof value === "string" && value.trim() && value.length <= maximum ? value.trim() : null;
+}
+
+function readAgentCitation(value: unknown): AgentCitation | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const item = value as Record<string, unknown>;
+  const documentId = citationText(item.documentId, 100);
+  const title = citationText(item.title, 300);
+  const version = citationText(item.version, 80);
+  const source = citationText(item.source, 100);
+  if (!documentId || !title || !version || !source) return null;
+  const chunkId = citationText(item.chunkId, 160);
+  const fileId = citationText(item.fileId, 100);
+  const effectiveFrom = item.effectiveFrom === null ? null : citationText(item.effectiveFrom, 50);
+  const pageNumber = item.pageNumber === null ? null
+    : typeof item.pageNumber === "number" && Number.isSafeInteger(item.pageNumber)
+      && item.pageNumber >= 1 && item.pageNumber <= 100_000 ? item.pageNumber : undefined;
+  const sourcePath = item.sourcePath === null ? null : citationText(item.sourcePath, 1_000);
+  const headingPath = Array.isArray(item.headingPath)
+    ? item.headingPath.map((entry) => citationText(entry, 300)).filter((entry): entry is string => Boolean(entry)).slice(0, 12)
+    : undefined;
+  const updatedAt = citationText(item.updatedAt, 50);
+  return {
+    documentId, title, version, source, effectiveFrom,
+    ...(chunkId ? { chunkId } : {}),
+    ...(fileId && WORKSPACE_FILE_ID_PATTERN.test(fileId) ? { fileId: fileId.toLocaleLowerCase("en-AU") } : {}),
+    ...(pageNumber !== undefined ? { pageNumber } : {}),
+    ...(sourcePath !== undefined ? { sourcePath } : {}),
+    ...(headingPath?.length ? { headingPath } : {}),
+    ...(updatedAt ? { updatedAt } : {}),
+  };
+}
+
+function readAgentCitations(value: unknown): AgentCitation[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  return value.map(readAgentCitation).filter((citation): citation is AgentCitation => {
+    if (!citation) return false;
+    const key = `${citation.documentId}:${citation.chunkId || "document"}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, MAX_AGENT_CITATIONS);
+}
+
 function readAgentMessage(value: unknown): AgentMessage | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const item = value as Record<string, unknown>;
@@ -114,7 +167,11 @@ function readAgentMessage(value: unknown): AgentMessage | null {
   ) {
     return null;
   }
-  return { id: item.id, role: item.role, content: item.content };
+  const citations = item.role === "assistant" ? readAgentCitations(item.citations) : [];
+  return {
+    id: item.id, role: item.role, content: item.content,
+    ...(citations.length ? { citations } : {}),
+  };
 }
 
 function limitAgentContent(content: string) {
@@ -131,7 +188,8 @@ function limitAgentMessages(messages: readonly unknown[]) {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = readAgentMessage(messages[index]);
     if (!message || ids.has(message.id)) continue;
-    const nextCharacterCount = characterCount + message.id.length + message.content.length;
+    const citationCharacters = message.citations ? JSON.stringify(message.citations).length : 0;
+    const nextCharacterCount = characterCount + message.id.length + message.content.length + citationCharacters;
     if (limited.length >= MAX_AGENT_HISTORY_MESSAGES || nextCharacterCount > MAX_AGENT_HISTORY_CHARACTERS) break;
     limited.push(message);
     ids.add(message.id);
@@ -155,14 +213,9 @@ function readAgentConversation(rawValue: string | null) {
 }
 
 function safeMarkdownUrl(value: string) {
-  try {
-    const url = new URL(value);
-    if (url.protocol === "http:" || url.protocol === "https:" || url.protocol === "mailto:") {
-      return value;
-    }
-  } catch {
-    // Agent links must be absolute and use one of the explicitly allowed protocols.
-  }
+  // Model-authored links are never navigable. Trusted file actions are rendered
+  // separately from server-verified citation fields below.
+  void value;
   return "";
 }
 
@@ -227,6 +280,17 @@ function formatAnnouncementDate(value: string) {
     hour: "numeric",
     minute: "2-digit",
   }).format(date);
+}
+
+function formatCitationDate(value?: string) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "short", year: "numeric" }).format(date);
+}
+
+function workspaceFileCitationHref(fileId: string, mode: "preview" | "download") {
+  return `/api/files/items/${encodeURIComponent(fileId)}/content?mode=${mode}`;
 }
 
 function formatProjectCreatedAt(value?: string) {
@@ -414,7 +478,7 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
     ? "sales"
     : currentUser.role;
   const isAdmin = currentUser.role === "admin";
-  const agentConversationStorageKey = `${LEGACY_AGENT_CONVERSATION_STORAGE_KEY}:${encodeURIComponent(currentUser.username.toLocaleLowerCase("en-AU"))}`;
+  const agentConversationStorageKey = `${LEGACY_AGENT_CONVERSATION_STORAGE_KEY}:${encodeURIComponent(currentUser.username.toLocaleLowerCase("en-AU"))}:${encodeURIComponent(currentUser.role)}`;
 
   const loadAgentSettings = useCallback(async () => {
     try {
@@ -703,7 +767,7 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
         throw new Error("E3 Agent returned an invalid response. Please try again.");
       }
       const body = rawBody as {
-        data?: { answer?: unknown; response?: unknown; suggestions?: unknown; mode?: unknown };
+        data?: { answer?: unknown; response?: unknown; suggestions?: unknown; mode?: unknown; citations?: unknown };
         answer?: unknown;
         response?: unknown;
         suggestions?: unknown;
@@ -728,6 +792,7 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
         if (nextSuggestions.length) setAgentSuggestions(nextSuggestions);
       }
       const mode = typeof body.data?.mode === "string" ? body.data.mode : "";
+      const citations = readAgentCitations(body.data?.citations);
       if (typeof body.meta?.configured === "boolean") {
         setAgentConfigured(body.meta.configured);
       } else if (mode === "openai" || mode === "deepseek") {
@@ -740,6 +805,7 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
           id: createId("agent-assistant"),
           role: "assistant",
           content: limitAgentContent(answerValue.trim()),
+          ...(citations.length ? { citations } : {}),
         },
       ]));
     } catch (error) {
@@ -1046,16 +1112,55 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
                 <div>
                   <strong className={styles.messageAuthor}>{message.role === "assistant" ? "E3 Agent" : "You"}</strong>
                   {message.role === "assistant" ? (
-                    <div className={styles.assistantBubble}>
-                      <ReactMarkdown
-                        remarkPlugins={[remarkGfm]}
-                        components={AGENT_MARKDOWN_COMPONENTS}
-                        skipHtml
-                        urlTransform={safeMarkdownUrl}
-                      >
-                        {message.content}
-                      </ReactMarkdown>
-                    </div>
+                    <>
+                      <div className={styles.assistantBubble}>
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm]}
+                          components={AGENT_MARKDOWN_COMPONENTS}
+                          skipHtml
+                          urlTransform={safeMarkdownUrl}
+                        >
+                          {message.content}
+                        </ReactMarkdown>
+                      </div>
+                      {Boolean(message.citations?.length) && (
+                        <section className={styles.citationPanel} aria-label="Knowledge sources">
+                          <strong><FileText size={14} aria-hidden="true" /> Sources</strong>
+                          <ol>
+                            {message.citations?.map((citation) => {
+                              const updated = formatCitationDate(citation.updatedAt);
+                              return (
+                                <li key={`${citation.documentId}:${citation.chunkId || "document"}`}>
+                                  <div>
+                                    <b>{citation.title}</b>
+                                    <span>
+                                      v{citation.version}
+                                      {citation.pageNumber ? ` · Page ${citation.pageNumber}` : ""}
+                                      {updated ? ` · Updated ${updated}` : ""}
+                                    </span>
+                                    {citation.headingPath?.length ? <small>{citation.headingPath.join(" › ")}</small> : null}
+                                  </div>
+                                  {citation.fileId && (
+                                    <span className={styles.citationActions}>
+                                      <a
+                                        href={workspaceFileCitationHref(citation.fileId, "preview")}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        aria-label={`Preview source: ${citation.title}`}
+                                      ><Eye size={13} aria-hidden="true" /> Preview</a>
+                                      <a
+                                        href={workspaceFileCitationHref(citation.fileId, "download")}
+                                        aria-label={`Download source: ${citation.title}`}
+                                      ><Download size={13} aria-hidden="true" /> Download</a>
+                                    </span>
+                                  )}
+                                </li>
+                              );
+                            })}
+                          </ol>
+                        </section>
+                      )}
+                    </>
                   ) : (
                     <p className={styles.userBubble}>{message.content}</p>
                   )}

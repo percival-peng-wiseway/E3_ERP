@@ -13,6 +13,7 @@ import type {
   WorkspaceFileCapabilities,
   WorkspaceFileContent,
   WorkspaceFileFolderOption,
+  WorkspaceFileIndexSource,
   WorkspaceFileItem,
   WorkspaceFilesListing,
   WorkspaceFilesView,
@@ -1142,4 +1143,54 @@ export async function getWorkspaceFileContent(input: {
     item: publicItem(items, item, actor),
     read: () => readStoredObject(storageKey, item.sizeBytes!, item.checksum!),
   };
+}
+
+/**
+ * Resolve an active Files object for server-side indexing without manufacturing
+ * a browser actor. The returned storage reader still performs checksum and size
+ * verification before exposing bytes.
+ */
+export async function getWorkspaceFileIndexSource(fileId: string): Promise<WorkspaceFileIndexSource | null> {
+  return (await listWorkspaceFileIndexSources([fileId])).get(fileId) || null;
+}
+
+/** Resolve multiple active Files sources with one metadata read for retrieval validation. */
+export async function listWorkspaceFileIndexSources(fileIds: readonly string[]): Promise<Map<string, WorkspaceFileIndexSource>> {
+  if (fileIds.length > 100 || fileIds.some((fileId) => !ID_PATTERN.test(fileId))) {
+    throw new WorkspaceFilesRepositoryError("The file IDs are invalid.", 400, "invalid_id");
+  }
+  const requestedIds = new Set(fileIds);
+  if (!requestedIds.size) return new Map();
+  const { items } = await readStore();
+  const sources = new Map<string, WorkspaceFileIndexSource>();
+  for (const item of items) {
+    if (!requestedIds.has(item.id) || item.kind !== "file" || item.trashedAt) continue;
+    const parent = item.parentId ? items.find((candidate) => candidate.id === item.parentId) || null : null;
+    const sourcePath = ["Files", ...breadcrumbsFor(items, parent).map(({ name }) => name), item.name].join(" / ");
+    sources.set(item.id, {
+      fileId: item.id,
+      name: item.name,
+      contentType: item.contentType!,
+      size: item.sizeBytes!,
+      checksum: item.checksum!,
+      version: item.version,
+      updatedAt: item.updatedAt,
+      sourcePath,
+      read: () => readStoredObject(item.storageKey!, item.sizeBytes!, item.checksum!),
+    });
+  }
+  return sources;
+}
+
+/** Server-only helper for Files lifecycle hooks (folders include nested files). */
+export async function listWorkspaceFileSubtreeIds(itemId: string): Promise<string[]> {
+  if (!ID_PATTERN.test(itemId)) {
+    throw new WorkspaceFilesRepositoryError("The item ID is invalid.", 400, "invalid_id");
+  }
+  const { items } = await readStore();
+  const root = items.find((candidate) => candidate.id === itemId);
+  if (!root) throw new WorkspaceFilesRepositoryError("The item was not found.", 404, "not_found");
+  return subtree(items, root)
+    .filter((candidate) => candidate.kind === "file")
+    .map((candidate) => candidate.id);
 }

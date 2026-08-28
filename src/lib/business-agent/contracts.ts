@@ -45,6 +45,8 @@ export type InventoryRecord = {
 
 export type KnowledgeDocument = {
   document_id: string;
+  chunk_id?: string;
+  file_id?: string;
   title: string;
   version: string;
   product: string | null;
@@ -52,6 +54,9 @@ export type KnowledgeDocument = {
   effective_from: string | null;
   effective_to: string | null;
   access_scope: string;
+  page_number?: number | null;
+  source_path?: string | null;
+  heading_path?: string[];
   updated_at: string;
   excerpt: string;
 };
@@ -88,10 +93,16 @@ export type OrderFinanceDetails = {
 
 export type Citation = {
   document_id: string;
+  chunk_id?: string;
+  file_id?: string;
   title: string;
   version: string;
   effective_from: string | null;
   source: string;
+  page_number?: number | null;
+  source_path?: string | null;
+  heading_path?: string[];
+  updated_at?: string;
 };
 
 export type AgentChatResponse = {

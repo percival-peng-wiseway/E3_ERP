@@ -27,6 +27,7 @@ function dependencies(
   return {
     fastInventoryAnswer: async () => null,
     fastPaymentTrackAnswer: async () => null,
+    fastWeeklyScheduleAnswer: async () => null,
     runAgentTool: async () => JSON.stringify({ count: 0, orders: [] }),
     listSiteVisits: async () => [],
     listReimbursements: async () => [],
@@ -35,8 +36,8 @@ function dependencies(
   };
 }
 
-test("registers exactly seven read-only E3 business skills", () => {
-  assert.equal(E3_BUSINESS_SKILLS.length, 7);
+test("registers exactly eight read-only E3 business skills", () => {
+  assert.equal(E3_BUSINESS_SKILLS.length, 8);
   assert.ok(E3_BUSINESS_SKILLS.every((skill) => skill.readOnly));
 });
 
@@ -48,13 +49,14 @@ test("the Skill registry uses the workflow names emitted by the harness", () => 
   assert.deepEqual(getBusinessSkill("inventory").deterministicWorkflows, ["inventory_query"]);
   assert.deepEqual(getBusinessSkill("quotations").deterministicWorkflows, ["quotation_summary"]);
   assert.deepEqual(getBusinessSkill("project_management").deterministicWorkflows, ["pending_deliveries"]);
-  assert.deepEqual(getBusinessSkill("project_track").deterministicWorkflows, ["outstanding_payments"]);
+  assert.deepEqual(getBusinessSkill("project_track").deterministicWorkflows, ["project_track_query", "outstanding_payments"]);
+  assert.deepEqual(getBusinessSkill("weekly_schedule").deterministicWorkflows, ["weekly_schedule_query"]);
   assert.deepEqual(getBusinessSkill("site_visits").deterministicWorkflows, ["site_visit_summary"]);
   assert.deepEqual(getBusinessSkill("reimbursements").deterministicWorkflows, ["reimbursement_summary"]);
   assert.deepEqual(getBusinessSkill("reports").deterministicWorkflows, ["reports_status"]);
   assert.equal(
     new Set(E3_BUSINESS_SKILLS.flatMap((skill) => skill.deterministicWorkflows)).size,
-    7,
+    9,
   );
 });
 
@@ -139,4 +141,111 @@ test("Project Track references do not get misrouted as inventory SKUs", async ()
   assert.equal(result?.workflow, "outstanding_payments");
   assert.equal(inventoryCalls, 0);
   assert.equal(paymentCalls, 1);
+});
+
+test("generic Project Track questions use the live repository workflow without a model", async () => {
+  let paymentCalls = 0;
+  const trace = new AgentTrace();
+  const result = await runDeterministicWorkflow(
+    provider(),
+    "Show the projects in Project Track",
+    trace,
+    dependencies({
+      fastPaymentTrackAnswer: async () => {
+        paymentCalls += 1;
+        return { mode: "local", answer: "Three live projects.", suggestions: [] };
+      },
+    }),
+  );
+  assert.equal(result?.workflow, "project_track_query");
+  assert.equal(result?.answer, "Three live projects.");
+  assert.equal(paymentCalls, 1);
+  assert.equal(trace.snapshot().steps[0]?.name, "project_track.live_query");
+});
+
+test("Weekly Schedule questions use the live aggregate workflow without a model", async () => {
+  let weeklyCalls = 0;
+  const trace = new AgentTrace();
+  const result = await runDeterministicWorkflow(
+    provider(),
+    "What is on the weekly schedule?",
+    trace,
+    dependencies({
+      fastWeeklyScheduleAnswer: async () => {
+        weeklyCalls += 1;
+        return { mode: "local", answer: "Five scheduled jobs.", suggestions: [] };
+      },
+    }),
+  );
+  assert.equal(result?.workflow, "weekly_schedule_query");
+  assert.equal(result?.answer, "Five scheduled jobs.");
+  assert.equal(weeklyCalls, 1);
+  assert.equal(trace.snapshot().steps[0]?.name, "weekly_schedule.live_query");
+});
+
+test("last-week and overdue wording stays on the Weekly Schedule workflow", async () => {
+  for (const message of ["Show completed jobs last week", "Show deliveries last week", "Show overdue Weekly Schedule work", "显示上周安装任务"]) {
+    let weeklyCalls = 0;
+    const result = await runDeterministicWorkflow(
+      provider(),
+      message,
+      new AgentTrace(),
+      dependencies({
+        fastWeeklyScheduleAnswer: async () => {
+          weeklyCalls += 1;
+          return { mode: "local", answer: "Live weekly result.", suggestions: [] };
+        },
+      }),
+    );
+    assert.equal(result?.workflow, "weekly_schedule_query", message);
+    assert.equal(weeklyCalls, 1, message);
+  }
+});
+
+test("explicit Project Track unscheduled questions are not misrouted to Weekly Schedule", async () => {
+  let weeklyCalls = 0;
+  let paymentCalls = 0;
+  const result = await runDeterministicWorkflow(
+    provider(),
+    "Show unscheduled projects in Project Track",
+    new AgentTrace(),
+    dependencies({
+      fastWeeklyScheduleAnswer: async () => {
+        weeklyCalls += 1;
+        return null;
+      },
+      fastPaymentTrackAnswer: async () => {
+        paymentCalls += 1;
+        return { mode: "local", answer: "One unscheduled project.", suggestions: [] };
+      },
+    }),
+  );
+  assert.equal(result?.workflow, "project_track_query");
+  assert.equal(weeklyCalls, 0);
+  assert.equal(paymentCalls, 1);
+});
+
+test("dated Project Track schedule questions use the Weekly aggregate", async () => {
+  for (const message of ["Show Project Track projects scheduled this week", "Project Track installations tomorrow", "显示项目追踪上周送货任务"]) {
+    let weeklyCalls = 0;
+    let paymentCalls = 0;
+    const result = await runDeterministicWorkflow(
+      provider(),
+      message,
+      new AgentTrace(),
+      dependencies({
+        fastWeeklyScheduleAnswer: async () => {
+          weeklyCalls += 1;
+          return { mode: "local", answer: "Dated Project Track schedule.", suggestions: [] };
+        },
+        fastPaymentTrackAnswer: async () => {
+          paymentCalls += 1;
+          return null;
+        },
+      }),
+    );
+    assert.equal(result?.workflow, "weekly_schedule_query", message);
+    assert.equal(weeklyCalls, 1, message);
+    assert.equal(paymentCalls, 0, message);
+  }
 });

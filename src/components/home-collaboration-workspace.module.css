@@ -497,6 +497,98 @@
   font-style: italic;
 }
 
+.citationPanel {
+  margin-top: 7px;
+  padding: 8px 9px;
+  color: #46545e;
+  background: #f7f9ff;
+  border: 1px solid #dce2f4;
+  border-radius: 7px;
+  text-align: left;
+}
+
+.citationPanel > strong {
+  display: flex;
+  align-items: center;
+  margin-bottom: 6px;
+  gap: 5px;
+  color: #4d5bb8;
+  font-size: 12px;
+}
+
+.citationPanel ol {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  gap: 6px;
+  list-style: none;
+}
+
+.citationPanel li {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 6px;
+  gap: 8px;
+  border-top: 1px solid #e3e7f3;
+}
+
+.citationPanel li:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.citationPanel li > div {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.citationPanel li b {
+  overflow: hidden;
+  color: #34414b;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.citationPanel li span,
+.citationPanel li small {
+  overflow: hidden;
+  color: #75828d;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.citationActions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 4px;
+}
+
+.citationActions a {
+  display: inline-flex;
+  min-height: 25px;
+  align-items: center;
+  padding: 0 6px;
+  gap: 3px;
+  color: #5262c8;
+  background: #fff;
+  border: 1px solid #d8def1;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.citationActions a:hover {
+  background: #eef1ff;
+  border-color: #c8d0ef;
+}
+
 .messageAvatar {
   display: grid;
   width: 28px;
@@ -1174,6 +1266,9 @@
   .notificationFeed { padding-right: 10px; padding-left: 10px; }
   .announcementFeed { padding-right: 10px; padding-left: 10px; }
   .agentMessage { max-width: 97%; }
+  .citationPanel li { align-items: flex-start; flex-direction: column; }
+  .citationActions { width: 100%; }
+  .citationActions a { flex: 1; justify-content: center; }
   .notificationFilters { padding-right: 10px; padding-left: 10px; }
   .notificationCard { padding-right: 10px; padding-left: 10px; }
   .notificationMetadata { width: 100%; }

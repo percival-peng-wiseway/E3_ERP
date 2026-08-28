@@ -1,7 +1,21 @@
 import { NextRequest } from "next/server";
 import { getErpSession } from "@/lib/auth/session";
+import { canAccessKnowledgeScope } from "@/lib/knowledge/config";
+import {
+  createKnowledgeDocument,
+  disableKnowledgeForFile,
+  enqueueKnowledgeIndexJob,
+  KnowledgeRepositoryError,
+  listKnowledgeDocuments,
+  reactivateKnowledgeForFile,
+} from "@/lib/knowledge/repository";
+import { KNOWLEDGE_TENANT_ID } from "@/lib/knowledge/types";
+import { continueKnowledgeIndex } from "@/app/api/knowledge/background";
+import { isSupportedKnowledgeFile } from "@/app/api/knowledge/request";
 import {
   moveWorkspaceItem,
+  getWorkspaceFileIndexSource,
+  listWorkspaceFileSubtreeIds,
   purgeWorkspaceItem,
   renameWorkspaceItem,
   restoreWorkspaceItem,
@@ -30,6 +44,11 @@ const MAX_DELETE_SIZE = 1024;
 async function itemId(context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
   return workspaceFileId(id);
+}
+
+async function knowledgeDocumentsByFileId() {
+  const documents = await listKnowledgeDocuments({ tenantId: KNOWLEDGE_TENANT_ID, includeDisabled: true });
+  return new Map(documents.map((document) => [document.fileId, document]));
 }
 
 export async function PATCH(
@@ -62,7 +81,18 @@ export async function PATCH(
       return workspaceFilesError(400, "invalid_action", "Choose a valid file action and current version.");
     }
 
+    const targetFileIds = await listWorkspaceFileSubtreeIds(id);
+    const targetKnowledgeByFileId = await knowledgeDocumentsByFileId();
+    const targetKnowledgeDocuments = targetFileIds.map((fileId) => targetKnowledgeByFileId.get(fileId) || null);
+    if (targetKnowledgeDocuments.some((document) => document
+      && !canAccessKnowledgeScope(session.user.role, document.accessScope))) {
+      return workspaceFilesError(404, "not_found", "File not found.");
+    }
+
     let item;
+    const lifecycleFileIds = action.action === "trash" || action.action === "restore"
+      ? targetFileIds
+      : [];
     if (action.action === "rename") {
       item = await renameWorkspaceItem({ actor: session.user, id, ...action });
     } else if (action.action === "move") {
@@ -71,11 +101,112 @@ export async function PATCH(
       item = action.action === "trash"
         ? await trashWorkspaceItem({ actor: session.user, id, expectedVersion: action.expectedVersion })
         : await restoreWorkspaceItem({ actor: session.user, id, expectedVersion: action.expectedVersion });
+      const lifecycleKnowledgeByFileId = action.action === "trash"
+        ? targetKnowledgeByFileId
+        : await knowledgeDocumentsByFileId();
+      await Promise.all(lifecycleFileIds.map(async (fileId) => {
+        if (action.action === "trash") {
+          await disableKnowledgeForFile(fileId, "file_moved_to_trash", KNOWLEDGE_TENANT_ID, session.user.username);
+          return;
+        }
+        const document = lifecycleKnowledgeByFileId.get(fileId);
+        if (document?.disabledReason === "file_moved_to_trash") {
+          const source = await getWorkspaceFileIndexSource(fileId);
+          if (!source) return;
+          const refreshed = await createKnowledgeDocument({
+            tenantId: KNOWLEDGE_TENANT_ID,
+            fileId,
+            fileVersion: source.version,
+            fileName: source.name,
+            sourcePath: source.sourcePath,
+            contentType: source.contentType,
+            checksum: source.checksum,
+            createdBy: session.user.username,
+            title: document.title,
+            documentType: document.documentType,
+            category: document.category,
+            language: document.language,
+            version: document.version,
+            accessScope: document.accessScope,
+            product: document.product,
+            region: document.region,
+            effectiveFrom: document.effectiveFrom,
+            effectiveTo: document.effectiveTo,
+            tags: document.tags,
+          });
+          const reactivated = refreshed.document.status === "disabled"
+            ? await reactivateKnowledgeForFile(fileId, KNOWLEDGE_TENANT_ID, session.user.username)
+            : refreshed.document;
+          const job = await enqueueKnowledgeIndexJob({
+            documentId: reactivated.id,
+            tenantId: KNOWLEDGE_TENANT_ID,
+            requestedBy: session.user.username,
+            reason: "file_restored",
+          });
+          continueKnowledgeIndex(job.id);
+        }
+      }));
+    }
+
+    if (action.action === "rename" || action.action === "move") {
+      const currentKnowledgeByFileId = await knowledgeDocumentsByFileId();
+      await Promise.all(targetFileIds.map(async (fileId) => {
+        const currentDocument = currentKnowledgeByFileId.get(fileId);
+        if (!currentDocument) return;
+        const source = await getWorkspaceFileIndexSource(fileId);
+        if (!source) return;
+        if (!isSupportedKnowledgeFile(source.name, source.contentType)) {
+          await disableKnowledgeForFile(fileId, "unsupported_file_type", KNOWLEDGE_TENANT_ID, session.user.username);
+          return;
+        }
+        const result = await createKnowledgeDocument({
+          tenantId: KNOWLEDGE_TENANT_ID,
+          fileId,
+          fileVersion: source.version,
+          fileName: source.name,
+          sourcePath: source.sourcePath,
+          contentType: source.contentType,
+          checksum: source.checksum,
+          createdBy: session.user.username,
+          title: currentDocument.title,
+          documentType: currentDocument.documentType,
+          category: currentDocument.category,
+          language: currentDocument.language,
+          version: currentDocument.version,
+          accessScope: currentDocument.accessScope,
+          product: currentDocument.product,
+          region: currentDocument.region,
+          effectiveFrom: currentDocument.effectiveFrom,
+          effectiveTo: currentDocument.effectiveTo,
+          tags: currentDocument.tags,
+        });
+        if (currentDocument.status === "disabled" && currentDocument.disabledReason !== "unsupported_file_type") {
+          await disableKnowledgeForFile(
+            fileId,
+            currentDocument.disabledReason || "disabled_by_admin",
+            KNOWLEDGE_TENANT_ID,
+            session.user.username,
+          );
+          return;
+        }
+        if (result.action !== "unchanged") {
+          const job = await enqueueKnowledgeIndexJob({
+            documentId: result.document.id,
+            tenantId: KNOWLEDGE_TENANT_ID,
+            requestedBy: session.user.username,
+            reason: "file_metadata_updated",
+          });
+          continueKnowledgeIndex(job.id);
+        }
+      }));
     }
 
     return workspaceFilesJson({ data: { item } });
   } catch (error) {
     if (error instanceof WorkspaceFilesRepositoryError) {
+      return workspaceFilesError(error.status, error.code, error.message);
+    }
+    if (error instanceof KnowledgeRepositoryError) {
       return workspaceFilesError(error.status, error.code, error.message);
     }
     if (error instanceof WorkspaceFilesRequestBodyTooLarge) {
@@ -120,10 +251,20 @@ export async function DELETE(
     if (!expectedVersion) {
       return workspaceFilesError(400, "invalid_delete", "Provide the current file version before deleting it.");
     }
+    const lifecycleFileIds = await listWorkspaceFileSubtreeIds(id);
+    await Promise.all(lifecycleFileIds.map((fileId) => disableKnowledgeForFile(
+      fileId,
+      "file_permanently_deleted",
+      KNOWLEDGE_TENANT_ID,
+      session.user.username,
+    )));
     const result = await purgeWorkspaceItem({ actor: session.user, id, expectedVersion });
     return workspaceFilesJson({ data: result });
   } catch (error) {
     if (error instanceof WorkspaceFilesRepositoryError) {
+      return workspaceFilesError(error.status, error.code, error.message);
+    }
+    if (error instanceof KnowledgeRepositoryError) {
       return workspaceFilesError(error.status, error.code, error.message);
     }
     if (error instanceof WorkspaceFilesRequestBodyTooLarge) {

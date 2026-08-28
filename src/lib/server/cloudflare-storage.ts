@@ -33,9 +33,91 @@ export type ErpFileNamespace = {
   delete(key: string): Promise<void>;
 };
 
+export type ErpAiSearchItemStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "error"
+  | "skipped"
+  | "outdated";
+
+export type ErpAiSearchItem = {
+  id: string;
+  key: string;
+  status: ErpAiSearchItemStatus;
+  chunks_count?: number;
+  file_size?: number;
+  metadata?: Record<string, unknown>;
+  source_id?: string;
+  created_at?: string;
+  last_seen_at?: string;
+};
+
+export type ErpAiSearch = {
+  items: {
+    upload(
+      name: string,
+      content: ReadableStream | ArrayBuffer | string,
+      options?: { metadata?: Record<string, unknown> },
+    ): Promise<ErpAiSearchItem>;
+    uploadAndPoll(
+      name: string,
+      content: ReadableStream | Blob | string,
+      options?: {
+        metadata?: Record<string, unknown>;
+        pollIntervalMs?: number;
+        timeoutMs?: number;
+      },
+    ): Promise<ErpAiSearchItem>;
+    delete(itemId: string): Promise<void>;
+    get(itemId: string): { info(): Promise<ErpAiSearchItem> };
+  };
+  search(input: {
+    query: string;
+    ai_search_options?: {
+      retrieval?: {
+        retrieval_type?: "vector" | "keyword" | "hybrid";
+        match_threshold?: number;
+        max_num_results?: number;
+        filters?: Record<string, unknown>;
+        fusion_method?: "rrf" | "max";
+        keyword_match_mode?: "and" | "or";
+        return_on_failure?: boolean;
+      };
+      reranking?: {
+        enabled: boolean;
+        model?: "@cf/baai/bge-reranker-base";
+        match_threshold?: number;
+      };
+    };
+  }): Promise<{
+    search_query?: string;
+    chunks?: Array<{
+      id: string;
+      type?: string;
+      score: number;
+      text: string;
+      item: {
+        key: string;
+        timestamp?: number;
+        metadata?: Record<string, unknown>;
+      };
+      scoring_details?: {
+        vector_score?: number;
+        keyword_score?: number;
+        vector_rank?: number;
+        keyword_rank?: number;
+        reranking_score?: number;
+        fusion_method?: "rrf" | "max";
+      };
+    }>;
+  }>;
+};
+
 export type ErpCloudflareBindings = {
   database: ErpD1Database | null;
   files: ErpFileNamespace | null;
+  knowledgeSearch: ErpAiSearch | null;
 };
 
 export type VersionedDocument<T> = {
@@ -70,10 +152,12 @@ export async function erpCloudflareBindings(): Promise<ErpCloudflareBindings | n
   const env = context.env as unknown as {
     ERP_DB?: ErpD1Database;
     ERP_FILES?: ErpFileNamespace;
+    KNOWLEDGE_SEARCH?: ErpAiSearch;
   };
   return {
     database: env.ERP_DB || null,
     files: env.ERP_FILES || null,
+    knowledgeSearch: env.KNOWLEDGE_SEARCH || null,
   };
 }
 

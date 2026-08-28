@@ -39,6 +39,28 @@ test("tool layer blocks finance before touching the provider", async () => {
   assert.equal(called, false);
 });
 
+test("knowledge scope comes only from server auth and is rejected in model arguments", async () => {
+  let called = false;
+  const provider = {
+    async getInventory() { return ok([]); },
+    async searchKnowledge() { called = true; return ok([]); },
+    async getProject() { throw new Error("unused"); },
+    async getOrderFinance() { throw new Error("unused"); },
+  } satisfies BusinessDataProvider;
+  const executor = new BusinessToolExecutor(provider, context("admin"));
+  const invalid = await executor.execute("search_knowledge_base", JSON.stringify({
+    query: "warranty",
+    limit: 4,
+    access_scope: "admin",
+  }));
+  assert.equal(invalid.result.error_code, "invalid_input");
+  assert.equal(called, false);
+
+  const valid = await executor.execute("search_knowledge_base", JSON.stringify({ query: "warranty", limit: 4 }));
+  assert.equal(valid.result.ok, true);
+  assert.equal(called, true);
+});
+
 test("unknown is preserved as a finance status and never rewritten as not started", async () => {
   const provider = {
     async getInventory() { return ok([]); }, async searchKnowledge() { return ok([]); }, async getProject() { throw new Error("unused"); },

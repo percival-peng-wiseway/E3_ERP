@@ -17,6 +17,16 @@ function clarification(requestId: string, answer: string): AgentChatResponse {
   };
 }
 
+function isChinese(message: string) {
+  return /[\u3400-\u9fff]/u.test(message);
+}
+
+function reliableEvidenceAbstention(message: string) {
+  return isChinese(message)
+    ? "当前知识库没有返回足够可靠且你有权访问的资料，因此我无法确认答案。"
+    : "The knowledge base did not return enough reliable, authorised evidence, so I cannot confirm an answer.";
+}
+
 function emitSafeTrace(value: Record<string, unknown>) {
   // Values are deliberately limited to request metadata, opaque principal hash,
   // tool names/status and timings. User text and tool/model payloads are excluded.
@@ -43,7 +53,10 @@ export async function chatWithBusinessAgent(options: {
   const config = options.deepSeekConfig === undefined ? resolveDeepSeekConfig() : options.deepSeekConfig;
   if (!config) {
     return {
-      answer: "Agent 模型服务尚未配置，暂时无法安全处理此请求。", citations: [], model_used: "none", route: "unavailable",
+      answer: isChinese(options.input.message)
+        ? "Agent 模型服务尚未配置，暂时无法安全处理此请求。"
+        : "The Agent model is not configured, so this request cannot be handled safely yet.",
+      citations: [], model_used: "none", route: "unavailable",
       tool_calls_summary: [], request_id: requestId, data_updated_at: null,
       limitations: ["服务器缺少 DEEPSEEK_API_KEY。"],
     };
@@ -71,7 +84,10 @@ export async function chatWithBusinessAgent(options: {
     completionTokens += attempt.usage?.completion_tokens || 0;
   };
   try {
-    result = await runDeepSeekAgent({ config, model, message: options.input.message, conversationId: options.input.conversation_id, executor, cache, signal: controller.signal });
+    result = await runDeepSeekAgent({
+      config, model, message: options.input.message, conversationId: options.input.conversation_id,
+      executor, cache, signal: controller.signal, knowledgeRequired: decision.requiredDomains.includes("knowledge"),
+    });
     accumulate(result);
     escalationReason = decision.modelClass === "flash" ? (
       result.policyConflict ? "policy_conflict"
@@ -83,7 +99,10 @@ export async function chatWithBusinessAgent(options: {
       escalated = true;
       model = config.complexModel;
       route = "pro";
-      result = await runDeepSeekAgent({ config, model, message: options.input.message, conversationId: options.input.conversation_id, executor, cache, signal: controller.signal });
+      result = await runDeepSeekAgent({
+        config, model, message: options.input.message, conversationId: options.input.conversation_id,
+        executor, cache, signal: controller.signal, knowledgeRequired: decision.requiredDomains.includes("knowledge"),
+      });
       accumulate(result);
     }
   } finally {
@@ -91,7 +110,7 @@ export async function chatWithBusinessAgent(options: {
   }
 
   const response: AgentChatResponse = {
-    answer: result.valid ? result.answer : "当前资料不足，无法可靠回答。",
+    answer: result.valid ? result.answer : reliableEvidenceAbstention(options.input.message),
     citations: result.citations,
     model_used: model,
     route,

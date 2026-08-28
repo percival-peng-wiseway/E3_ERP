@@ -15,6 +15,8 @@ const repositoryModule = "./repository.ts";
 const {
   createWorkspaceFolder,
   getWorkspaceFileContent,
+  getWorkspaceFileIndexSource,
+  listWorkspaceFileSubtreeIds,
   listWorkspaceFiles,
   moveWorkspaceItem,
   purgeWorkspaceItem,
@@ -86,6 +88,12 @@ test("workspace files local repository", async (t) => {
     const content = await getWorkspaceFileContent({ actor: wendy, id: file.id });
     assert.ok(content);
     assert.equal(new TextDecoder().decode(await content.read()), "solar proposal");
+
+    const indexSource = await getWorkspaceFileIndexSource(file.id);
+    assert.ok(indexSource);
+    assert.equal(indexSource.sourcePath, "Files / Customer Docs / proposal.txt");
+    assert.equal(indexSource.checksum, file.checksum);
+    assert.equal(new TextDecoder().decode(await indexSource.read()), "solar proposal");
   });
 
   await t.test("all users browse but only an owner or Administrator manages an item", async () => {
@@ -182,6 +190,7 @@ test("workspace files local repository", async (t) => {
     const nested = await createWorkspaceFolder({ actor: sam, parentId: folder.id, name: "Nested" });
     await upload(sam, "root-file.txt", "root binary", folder.id);
     await upload(wendy, "nested-file.txt", "nested binary", nested.id);
+    assert.equal((await listWorkspaceFileSubtreeIds(folder.id)).length, 2);
     const stored = JSON.parse(await readFile(recordsPath, "utf8")) as Array<{
       kind: "file" | "folder";
       storageKey: string | null;
@@ -193,6 +202,7 @@ test("workspace files local repository", async (t) => {
     for (const objectPath of objectPaths) assert.equal((await stat(objectPath)).isFile(), true);
 
     const trashed = await trashWorkspaceItem({ actor: jerry, id: folder.id, expectedVersion: folder.version });
+    assert.equal(await getWorkspaceFileIndexSource((await listWorkspaceFileSubtreeIds(folder.id))[0]), null);
     await purgeWorkspaceItem({ actor: jerry, id: folder.id, expectedVersion: trashed.version });
     for (const objectPath of objectPaths) {
       await assert.rejects(

@@ -1,5 +1,8 @@
 import { NextRequest } from "next/server";
 import { getErpSession } from "@/lib/auth/session";
+import { canAccessKnowledgeScope } from "@/lib/knowledge/config";
+import { getKnowledgeDocumentByFileId } from "@/lib/knowledge/repository";
+import { KNOWLEDGE_TENANT_ID } from "@/lib/knowledge/types";
 import {
   getWorkspaceFileContent,
   WorkspaceFilesRepositoryError,
@@ -40,6 +43,10 @@ export async function GET(
   if (!id) return workspaceFilesError(400, "invalid_id", "The file ID is invalid.");
 
   try {
+    const knowledgeDocument = await getKnowledgeDocumentByFileId(id, KNOWLEDGE_TENANT_ID);
+    if (knowledgeDocument && !canAccessKnowledgeScope(session.user.role, knowledgeDocument.accessScope)) {
+      return workspaceFilesError(404, "not_found", "File not found.");
+    }
     const content = await getWorkspaceFileContent({ actor: session.user, id });
     if (!content) return workspaceFilesError(404, "not_found", "File not found.");
     const contentType = content.item.contentType || "application/octet-stream";

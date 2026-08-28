@@ -7,7 +7,7 @@ Date: 2026-08-25
 The E3 Agent Harness uses a deterministic-first route:
 
 1. Validate the authenticated request.
-2. Match a bounded workflow from one of seven read-only business Skills.
+2. Match a bounded workflow from one of eight read-only business Skills.
 3. Query the live business source and render a deterministic answer.
 4. Use the configured OpenAI-compatible model only for unmatched, open-ended questions.
 5. Fall back to bounded local summaries when the model endpoint fails.
@@ -17,14 +17,14 @@ Demo data is not a production fallback. Inventory defaults to the Inventory Oper
 
 ## API and model decision
 
-Decision: keep the current OpenAI-compatible Chat Completions adapter and `qwen3.5:9b` baseline for now. Do not migrate the production path to Responses API or Agents SDK until the seven live business evals have a stable baseline.
+Decision: keep the current OpenAI-compatible Chat Completions adapter and `qwen3.5:9b` baseline for now. Do not migrate the production path to Responses API or Agents SDK until the live business evals have a stable baseline.
 
 Rationale:
 
 - The highest-value E3 queries are now deterministic, so a stronger model cannot improve their factual computation.
 - The current endpoint is OpenAI-compatible Ollama. Responses API or Agents SDK adoption would also change the provider/runtime, making it harder to attribute quality, latency and cost changes.
 - The official OpenAI guidance recommends Responses API for reasoning, tool-calling and multi-turn workflows, and recommends comparing model/reasoning configurations on representative tasks rather than assuming a stronger setting is better: [OpenAI model guidance](https://developers.openai.com/api/docs/guides/latest-model).
-- Agents SDK becomes attractive when E3 needs SDK-managed orchestration, state, handoffs, guardrails or richer tracing. The current seven workflows are small and intentionally application-owned.
+- Agents SDK becomes attractive when E3 needs SDK-managed orchestration, state, handoffs, guardrails or richer tracing. The current workflows are small and intentionally application-owned.
 
 ## Re-evaluation gate
 

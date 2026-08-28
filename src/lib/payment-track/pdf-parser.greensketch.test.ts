@@ -144,3 +144,27 @@ test("rejects a GreenSketch quote without a complete customer address", async ()
       && error.missingFields.includes("installation address"),
   );
 });
+
+test("rejects a new proposal when the Solar Rebate row cannot be assessed safely", async () => {
+  await assert.rejects(
+    parsePaymentAgreementPdf(textPdf([
+      "Prepared for By",
+      "Test Customer Ruihan Chen",
+      "customer@example.com ruihan@e3energy.com.au",
+      "0412345678 0498765432",
+      "1 Test Street, Melbourne VIC 3000, Australia",
+      "Quote No. QN202608260004",
+      "Quotation",
+      "Solar Panel: LONGi LR5-54HTH-440M 440W x 14",
+      "Inverter: Huawei SUN2000-10KTL-M1 x 1",
+      "System Total (incl. GST) $12,000.00",
+      "Deductions",
+      "Solar Rebate pending assessment",
+      "SolarVIC's Solar PV Interest-Free Loan - $1,400.00",
+      "Deposit $1,000.00",
+      "Final Price (incl. GST) $11,000.00",
+    ])),
+    (error: unknown) => error instanceof PaymentAgreementParseError
+      && error.missingFields.includes("Solar Rebate assessment"),
+  );
+});

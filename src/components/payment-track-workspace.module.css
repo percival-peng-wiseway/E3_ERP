@@ -1470,6 +1470,20 @@
 .detailPickerShell > .detailModal { width: 100%; min-width: 0; }
 .detailPickerShellOpen > .detailModal { flex: 1 1 980px; }
 
+.detailReferencePane .detailBody {
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.detailReferencePane button,
+.detailReferencePane input,
+.detailReferencePane select,
+.detailReferencePane textarea,
+.detailReferencePane a,
+.detailReferencePane label {
+  pointer-events: none;
+}
+
 .deliveryPickerDrawer {
   display: flex;
   width: 440px;
@@ -1725,6 +1739,7 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
+.requiredFileGrid { grid-template-columns: minmax(0, 1fr); }
 
 .proofChoiceCard {
   display: flex;
@@ -2075,7 +2090,7 @@
   .preferenceSubmitRow { grid-template-columns: 1fr; }
   .deliveryPickerGrid { grid-template-columns: minmax(300px, .85fr) minmax(430px, 1.15fr); }
   .detailPickerShellOpen { position: relative; }
-  .detailPickerShellOpen > .detailModal { opacity: .45; pointer-events: none; }
+  .detailPickerShellOpen > .detailModal { opacity: .55; }
   .deliveryPickerDrawer { position: absolute; z-index: 2; top: 0; right: 0; bottom: 0; width: min(460px, 100%); min-width: 0; }
   .deliveryComparisonGrid { grid-template-columns: 1fr; }
 }

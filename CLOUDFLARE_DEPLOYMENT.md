@@ -27,6 +27,8 @@ This repository is configured for full-stack Next.js deployment to Cloudflare Wo
 
 The Worker name is `e3-erp`. The upstream Inventory, QuoteHelp and Agent model host/model settings are already declared as non-secret runtime variables in `wrangler.jsonc`.
 
+The knowledge base also requires a private Cloudflare AI Search built-in-storage instance named `erp`. Its direct Worker binding is `KNOWLEDGE_SEARCH`; it is not an HTTP endpoint and needs no browser or DeepSeek secret. Create and configure it before building or deploying a Worker version containing that binding. The exact verified command, five-field metadata schema and open-beta cost caveat are documented in [docs/KNOWLEDGE_BASE.md](./docs/KNOWLEDGE_BASE.md). Confirm the Cloudflare account plan and Workers AI budget before creating it.
+
 ## Required production secrets
 
 Add these under the Worker's **Settings → Variables and Secrets**. Mark every value as encrypted/secret.
@@ -59,6 +61,7 @@ npm run preview
 ```
 
 `npm run preview` runs the OpenNext production bundle in the Workers runtime. Regular application development still uses `npm run dev`.
+Because `KNOWLEDGE_SEARCH` uses `remote: true`, both preview and the OpenNext Cloudflare build resolve the real account resource; they fail closed when `erp` has not been created. Node unit/integration tests inject a bounded fake provider and do not substitute a second production retrieval system.
 
 ## Production storage
 
@@ -68,6 +71,7 @@ Worker-hosted business modules use the resources declared in `wrangler.jsonc`:
 
 - `ERP_DB` (D1) stores the normalized employee directory and Files metadata plus versioned Project Track, Project Schedule, Site Visiting, Reimbursements, Reports, Group Chat, Public Announcements and saved Agent-settings documents. Employee rows carry audit fields, optimistic row versions and session versions; changing an account invalidates its earlier signed sessions. Files item mutations use row versions, while document updates use compare-and-swap retries, so separate Worker isolates cannot silently overwrite one another.
 - `ERP_FILES` (private Workers KV) stores Files blobs plus immutable Project Track contracts/payment proofs, Site Visiting photos and Reimbursement invoices. Files downloads require an ERP session; workflow attachments retain their per-file access controls.
+- `KNOWLEDGE_SEARCH` (Cloudflare AI Search built-in Items storage) stores disposable, pre-chunked Markdown search items. Files remains authoritative in `ERP_DB` + `ERP_FILES`; D1 migration `0005_knowledge_base.sql` stores document metadata, chunk locators/text, active generations and leased index jobs. AI Search performs hybrid vector/BM25 retrieval and reranking only; DeepSeek remains the only answer generator.
 - Local development continues to use the corresponding `.data` files, so Node-based development and focused repository tests do not need Cloudflare bindings.
 
 Apply D1 migrations manually when needed with the same reusable command used by the deployment hooks:
@@ -77,6 +81,8 @@ npm run cf:migrate
 ```
 
 `npm run deploy` runs this migration automatically through its `predeploy` hook before building and deploying. `npm run upload` does the same through `preupload`. For platforms that build and deploy in separate steps, use `npm run cf:build` followed by `npm run cf:deploy-built`; the latter migrates once and deploys the already-built artifact without recursively invoking the normal deploy hook.
+
+Knowledge deployment order is: create `erp`, generate/check binding types with `npm run cf-typegen`, apply migration `0005`, build, then deploy. Rolling the application back does not require deleting Files or AI Search Items; leave the D1 tables intact and follow the disable/rollback procedure in the knowledge-base runbook.
 
 To import existing local Project Track, Project Schedule and Site Visiting data without placing customer records or files in Git, run this once after reviewing the destination Cloudflare account:
 

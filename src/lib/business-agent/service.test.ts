@@ -9,18 +9,19 @@ import { chatWithBusinessAgent } from "./service.ts";
 const originalFetch = globalThis.fetch;
 const originalInfo = console.info;
 const keys = ["DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL", "DEEPSEEK_MODEL_FAST", "DEEPSEEK_MODEL_COMPLEX"] as const;
-const originalEnv = new Map(keys.map((key) => [key, process.env[key]]));
+const mutableProcessEnv = process.env as Record<string, string | undefined>;
+const originalEnv = new Map(keys.map((key) => [key, mutableProcessEnv[key]]));
 afterEach(() => {
   globalThis.fetch = originalFetch;
   console.info = originalInfo;
-  for (const [key, value] of originalEnv) if (value === undefined) delete process.env[key]; else process.env[key] = value;
+  for (const [key, value] of originalEnv) if (value === undefined) delete mutableProcessEnv[key]; else mutableProcessEnv[key] = value;
 });
 
 test("Flash escalates once on incomplete data and Pro reuses the cached tool result", async () => {
-  process.env.DEEPSEEK_API_KEY = "test-key";
-  process.env.DEEPSEEK_BASE_URL = "https://deepseek.test/beta";
-  process.env.DEEPSEEK_MODEL_FAST = "flash";
-  process.env.DEEPSEEK_MODEL_COMPLEX = "pro";
+  mutableProcessEnv.DEEPSEEK_API_KEY = "test-key";
+  mutableProcessEnv.DEEPSEEK_BASE_URL = "https://deepseek.test/beta";
+  mutableProcessEnv.DEEPSEEK_MODEL_FAST = "flash";
+  mutableProcessEnv.DEEPSEEK_MODEL_COMPLEX = "pro";
   const bodies: Array<Record<string, unknown>> = [];
   let turn = 0;
   globalThis.fetch = (async (_input, init) => {
@@ -64,4 +65,34 @@ test("missing identifiers return clarification without contacting a model", asyn
   });
   assert.equal(response.route, "clarification");
   assert.equal(called, false);
+});
+
+test("knowledge requests return a fixed same-language abstention without authorised evidence", async () => {
+  let turn = 0;
+  globalThis.fetch = (async () => {
+    turn += 1;
+    return Response.json(turn % 2 === 1 ? {
+      choices: [{ message: { role: "assistant", content: null, tool_calls: [{
+        id: `k${turn}`, type: "function", function: { name: "search_knowledge_base", arguments: "{\"query\":\"不存在的质保\",\"limit\":4}" },
+      }] } }],
+    } : {
+      choices: [{ message: { role: "assistant", content: JSON.stringify({ answer: "我猜是终身。", citations: [], limitations: [] }) } }],
+    });
+  }) as typeof fetch;
+  const provider = {
+    async getInventory() { throw new Error("unused"); },
+    async searchKnowledge() { return { ok: true, data: [], error_code: null, source: "knowledge_index", source_record_ids: [], updated_at: null, retryable: false } as const; },
+    async getProject() { throw new Error("unused"); },
+    async getOrderFinance() { throw new Error("unused"); },
+  } satisfies BusinessDataProvider;
+  console.info = () => undefined;
+  const response = await chatWithBusinessAgent({
+    input: { message: "不存在的质保政策是什么？" },
+    auth: { principalHash: "opaque", tenantId: "e3", role: "pm", permissions: permissionsForRole("pm") },
+    dataProvider: provider,
+    deepSeekConfig: { apiKey: "x", baseUrl: "https://example.test/beta", flashModel: "flash", complexModel: "pro" },
+  });
+  assert.match(response.answer, /无法确认答案/);
+  assert.equal(response.answer.includes("终身"), false);
+  assert.deepEqual(response.citations, []);
 });

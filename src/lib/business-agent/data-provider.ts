@@ -7,10 +7,12 @@ import { FINANCE_STATUSES } from "./contracts.ts";
 
 export interface BusinessDataProvider {
   getInventory(input: { sku: string; warehouse_id?: string }, context: AgentAuthContext): Promise<ToolEnvelope<InventoryRecord[]>>;
-  searchKnowledge(input: { query: string; product?: string; region?: string; effective_date?: string; access_scope?: string; limit: number }, context: AgentAuthContext): Promise<ToolEnvelope<KnowledgeDocument[]>>;
+  searchKnowledge(input: { query: string; product?: string; region?: string; effective_date?: string; limit: number }, context: AgentAuthContext): Promise<ToolEnvelope<KnowledgeDocument[]>>;
   getProject(input: { project_id: string }, context: AgentAuthContext): Promise<ToolEnvelope<ProjectSnapshot>>;
   getOrderFinance(input: { order_no: string }, context: AgentAuthContext): Promise<ToolEnvelope<OrderFinanceDetails>>;
 }
+
+export type KnowledgeSearch = BusinessDataProvider["searchKnowledge"];
 
 function unavailable<T>(source: string): ToolEnvelope<T> {
   return { ok: false, data: null, error_code: "unavailable", source, source_record_ids: [], updated_at: null, retryable: true };
@@ -52,12 +54,34 @@ function sanitizeDocuments(value: unknown): KnowledgeDocument[] | null {
     if (!item) return null;
     const document_id = string(item.document_id, 100); const title = string(item.title, 300);
     const version = string(item.version, 80); const access_scope = string(item.access_scope, 80);
-    const updated_at = string(item.updated_at, 50); const excerpt = string(item.excerpt, 4_000);
+    const updated_at = string(item.updated_at, 50); const rawExcerpt = string(item.excerpt, 8_000);
+    const excerpt = rawExcerpt === null ? null : rawExcerpt.slice(0, 4_000);
     const product = nullableString(item.product, 100); const region = nullableString(item.region, 80);
     const effective_from = nullableString(item.effective_from, 50); const effective_to = nullableString(item.effective_to, 50);
-    if (!document_id || !title || !version || !access_scope || !updated_at || excerpt === null
+    const chunk_id = item.chunk_id === undefined ? undefined : string(item.chunk_id, 160);
+    const file_id = item.file_id === undefined ? undefined : string(item.file_id, 100);
+    const page_number = item.page_number === undefined || item.page_number === null
+      ? item.page_number as null | undefined
+      : typeof item.page_number === "number" && Number.isSafeInteger(item.page_number) && item.page_number >= 1 && item.page_number <= 100_000
+        ? item.page_number
+        : undefined;
+    const source_path = item.source_path === undefined ? undefined : nullableString(item.source_path, 1_000);
+    const heading_path = item.heading_path === undefined ? undefined : Array.isArray(item.heading_path)
+      ? item.heading_path.map((entry) => string(entry, 300)).slice(0, 12)
+      : undefined;
+    if (!document_id || !title || !version || access_scope === null || !updated_at || excerpt === null
       || product === undefined || region === undefined || effective_from === undefined || effective_to === undefined) return null;
-    result.push({ document_id, title, version, product, region, effective_from, effective_to, access_scope, updated_at, excerpt });
+    if ((item.chunk_id !== undefined && !chunk_id) || (item.file_id !== undefined && !file_id)
+      || (item.page_number !== undefined && item.page_number !== null && page_number === undefined)
+      || (item.source_path !== undefined && source_path === undefined)
+      || (item.heading_path !== undefined && (!heading_path || heading_path.includes(null)))) return null;
+    result.push({
+      document_id, title, version, product, region, effective_from, effective_to, updated_at, excerpt,
+      access_scope,
+      ...(chunk_id ? { chunk_id } : {}), ...(file_id ? { file_id } : {}),
+      ...(page_number !== undefined ? { page_number } : {}), ...(source_path !== undefined ? { source_path } : {}),
+      ...(heading_path ? { heading_path: heading_path as string[] } : {}),
+    });
   }
   return result;
 }
@@ -155,8 +179,12 @@ async function internalGet<T>(baseUrl: string | undefined, path: string, context
 
 export class LiveBusinessDataProvider implements BusinessDataProvider {
   private readonly erp: ERPProvider;
+  private readonly knowledgeSearch?: KnowledgeSearch;
 
-  constructor(erp: ERPProvider) { this.erp = erp; }
+  constructor(erp: ERPProvider, knowledgeSearch?: KnowledgeSearch) {
+    this.erp = erp;
+    this.knowledgeSearch = knowledgeSearch;
+  }
 
   async getInventory(input: { sku: string; warehouse_id?: string }): Promise<ToolEnvelope<InventoryRecord[]>> {
     try {
@@ -182,9 +210,17 @@ export class LiveBusinessDataProvider implements BusinessDataProvider {
     }
   }
 
-  searchKnowledge(input: { query: string; product?: string; region?: string; effective_date?: string; access_scope?: string; limit: number }, context: AgentAuthContext) {
+  async searchKnowledge(input: { query: string; product?: string; region?: string; effective_date?: string; limit: number }, context: AgentAuthContext) {
+    if (this.knowledgeSearch) {
+      try {
+        const result = sanitizedEnvelope(await this.knowledgeSearch(input, context), sanitizeDocuments, "knowledge_index");
+        return result || unavailable<KnowledgeDocument[]>("knowledge_index");
+      } catch {
+        return unavailable<KnowledgeDocument[]>("knowledge_index");
+      }
+    }
     const query = new URLSearchParams({ query: input.query, limit: String(input.limit) });
-    for (const key of ["product", "region", "effective_date", "access_scope"] as const) if (input[key]) query.set(key, input[key]!);
+    for (const key of ["product", "region", "effective_date"] as const) if (input[key]) query.set(key, input[key]!);
     return internalGet<KnowledgeDocument[]>(process.env.ERP_KNOWLEDGE_API_URL, `search?${query}`, context, sanitizeDocuments);
   }
 

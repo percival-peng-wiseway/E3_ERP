@@ -21,6 +21,7 @@ import {
   PackageCheck,
   Paperclip,
   Plus,
+  QrCode,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -48,6 +49,7 @@ import { readJsonResponse } from "@/lib/client/http";
 import {
   countActivePaymentTrackProjects,
   isFinalPaymentOverdue,
+  isPaymentTrackWaitingForRebateQr,
   PAYMENT_TRACK_SCHEDULE_ASSIGNEES,
   PAYMENT_TRACK_STAGE_SKIP_REASON_MAX_LENGTH,
 } from "@/lib/payment-track/types";
@@ -249,7 +251,11 @@ function projectHasPreScheduledCurrentStage(project: PaymentTrackProject) {
 }
 
 function projectHasUnscheduledCurrentStage(project: PaymentTrackProject) {
-  if (project.stage === "working_in_progress") return !hasActiveWorkSchedule(project) && !project.installedAt;
+  if (project.stage === "working_in_progress") {
+    return !isPaymentTrackWaitingForRebateQr(project)
+      && !hasActiveWorkSchedule(project)
+      && !project.installedAt;
+  }
   return (project.stage === "material_delivery"
     && !project.deliveredAt
     && !hasDeliveryScheduleRequest(project)
@@ -266,6 +272,7 @@ function displayedProjectStage(project: PaymentTrackProject) {
     if (project.deliveredAt && project.workMode === "delivery_only") return "Delivered";
     if (hasActiveWorkSchedule(project)) return "Scheduled";
     if (project.deliveredAt) return "Delivered";
+    if (isPaymentTrackWaitingForRebateQr(project)) return "Waiting for rebate QR code";
     return "Unscheduled";
   }
   if (projectHasScheduledCurrentStage(project)) return "Scheduled";
@@ -279,6 +286,7 @@ function displayedProjectStageTone(project: PaymentTrackProject) {
     if (project.deliveredAt && project.workMode === "delivery_only") return "blue";
     if (hasActiveWorkSchedule(project)) return "green";
     if (project.deliveredAt) return "blue";
+    if (isPaymentTrackWaitingForRebateQr(project)) return "amber";
     return "red";
   }
   if (projectHasScheduledCurrentStage(project)) return "green";
@@ -379,6 +387,9 @@ function projectStatus(project: PaymentTrackProject): { label: string; owner: st
         : project.workMode === "installation_only" ? "Installation scheduled" : "Delivery & installation scheduled";
       return { label, owner: "PM", tone: "green" };
     }
+    if (isPaymentTrackWaitingForRebateQr(project)) {
+      return { label: "Waiting for rebate QR code", owner: "PM", tone: "amber" };
+    }
     return { label: "Work unscheduled", owner: "PM", tone: "amber" };
   }
   if (project.stage === "material_delivery") {
@@ -427,7 +438,9 @@ function projectNextStep(project: PaymentTrackProject) {
   }
   if (project.stage === "working_in_progress") {
     return {
-      label: hasActiveWorkSchedule(project) ? "Complete Scheduled Work" : "Schedule Work",
+      label: hasActiveWorkSchedule(project)
+        ? "Complete Scheduled Work"
+        : isPaymentTrackWaitingForRebateQr(project) ? "Upload rebate QR code" : "Schedule Work",
       roles: ["pm"] as PaymentTrackRole[],
     };
   }
@@ -578,6 +591,7 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [proofFile, setProofFile] = useState<File | null>(null);
+  const [rebateQrFile, setRebateQrFile] = useState<File | null>(null);
   const [actionAmount, setActionAmount] = useState("");
   const [deliveryDate, setDeliveryDate] = useState("");
   const [deliveryTime, setDeliveryTime] = useState("");
@@ -628,6 +642,7 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
 
   const openDeliveryPicker = useCallback((trigger: HTMLElement) => {
     deliveryPickerTriggerRef.current = trigger;
+    trigger.blur();
     returningFromDeliveryPickerRef.current = false;
     showDeliveryPickerRef.current = true;
     setShowDeliveryPicker(true);
@@ -861,6 +876,7 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
   const openProject = useCallback((project: PaymentTrackProject, element?: HTMLElement) => {
     returnFocusRef.current = element ?? null;
     setProofFile(null);
+    setRebateQrFile(null);
     setActionAmount("");
     const currentWorkMode = project.deliveredAt && !project.installedAt && project.workMode === "delivery_only"
       ? "installation_only"
@@ -1033,6 +1049,35 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
       setNotice("Deposit proof uploaded for Admin confirmation.");
     } catch (uploadError) {
       setError(uploadError instanceof Error ? uploadError.message : "Unable to upload payment proof.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const uploadSolarRebateQrCode = async () => {
+    if (!selected || !rebateQrFile) return;
+    if (!PROOF_TYPES.has(rebateQrFile.type) || rebateQrFile.size > MAX_PROOF_SIZE) {
+      setError("Choose a PDF, JPG, PNG or WebP QR code file up to 10 MB.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const body = new FormData();
+      body.set("qrCode", rebateQrFile);
+      body.set("actorRole", "pm");
+      body.set("expectedUpdatedAt", selected.updatedAt);
+      const response = await fetch(`/api/payment-track/${selected.id}/rebate-qr-code`, {
+        method: "POST",
+        body,
+      });
+      const result = await readJsonResponse<PaymentTrackMutationResponse & { error?: string }>(response);
+      if (!response.ok) throw new Error(apiError(result, "Unable to upload the Solar Rebate QR code."));
+      updateProject(result.data);
+      setRebateQrFile(null);
+      setNotice("Solar Rebate QR code uploaded. Work is now Unscheduled.");
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : "Unable to upload the Solar Rebate QR code.");
     } finally {
       setBusy(false);
     }
@@ -1359,14 +1404,29 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
     }
 
     if (project.stage === "working_in_progress") {
+      const waitingForRebateQr = isPaymentTrackWaitingForRebateQr(project);
       if (role !== "pm") {
         return (
           <ReadOnlyNextStep
             owner="Project Manager"
-            label={hasActiveWorkSchedule(project) ? "Complete or update the scheduled work." : "Choose the work type, items, time and team."}
+            label={waitingForRebateQr
+              ? "Upload the Solar Rebate QR code before scheduling."
+              : hasActiveWorkSchedule(project) ? "Complete or update the scheduled work." : "Choose the work type, items, time and team."}
             allowContinue={authenticatedRole === "admin"}
             buttonLabel="Continue as Project Manager"
             onContinue={() => selectRole("pm")}
+          />
+        );
+      }
+      if (waitingForRebateQr) {
+        return (
+          <RequiredFileAction
+            busy={busy}
+            file={rebateQrFile}
+            label="Waiting for rebate QR code"
+            buttonLabel="Upload QR code"
+            onFile={setRebateQrFile}
+            onSubmit={() => void uploadSolarRebateQrCode()}
           />
         );
       }
@@ -2511,8 +2571,7 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
             aria-labelledby={showDeliveryPicker ? undefined : "project-detail-title"}
           >
           <div
-            className={`${styles.modal} ${styles.detailModal}`}
-            inert={showDeliveryPicker ? true : undefined}
+            className={`${styles.modal} ${styles.detailModal} ${showDeliveryPicker ? styles.detailReferencePane : ""}`}
             aria-hidden={showDeliveryPicker ? "true" : undefined}
           >
             <header className={styles.detailHeader}>
@@ -2666,7 +2725,10 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
                 <section className={`${styles.detailSection} ${styles.chosenItemsSection}`}>
                   <h3>
                     <PackageCheck size={16} /> Chosen Items <span>{deliverySelectionDraft.length}</span>
-                    {((role === "pm" && selected.stage === "working_in_progress" && !selected.deliveredAt)
+                    {((role === "pm"
+                      && selected.stage === "working_in_progress"
+                      && !selected.deliveredAt
+                      && !isPaymentTrackWaitingForRebateQr(selected))
                       || (role === "sales" && selected.stage === "material_delivery" && !selected.deliveredAt && !hasDeliverySchedule(selected))) ? (
                       <button type="button" onClick={(event) => openDeliveryPicker(event.currentTarget)}>{deliverySelectionDraft.length ? "Edit" : "Choose items"}</button>
                     ) : null}
@@ -2695,6 +2757,7 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
                   {[
                     selected.contract,
                     selected.deposit.proof,
+                    selected.solarRebateQrCode,
                     selected.collection.proof,
                     ...selected.finalPayments.map((payment) => payment.proof),
                   ].filter(Boolean).map((file) => file ? (
@@ -2704,7 +2767,13 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
                       <ExternalLink size={14} />
                     </a>
                   ) : null)}
-                  {!selected.contract && !selected.deposit.proof && !selected.collection.proof && !selected.finalPayments.some((payment) => payment.proof) ? <p className={styles.noFiles}>No files attached yet.</p> : null}
+                  {!selected.contract
+                    && !selected.deposit.proof
+                    && !selected.solarRebateQrCode
+                    && !selected.collection.proof
+                    && !selected.finalPayments.some((payment) => payment.proof)
+                    ? <p className={styles.noFiles}>No files attached yet.</p>
+                    : null}
                 </div>
               </section>
 
@@ -2893,6 +2962,62 @@ function ProofAction({
           <button className={styles.confirmPaidButton} type="button" disabled={busy} onClick={onConfirmPaid}>
             <CheckCircle2 size={16} /> Confirm Paid — No Upload
           </button>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function RequiredFileAction({
+  busy,
+  file,
+  label,
+  buttonLabel,
+  onFile,
+  onSubmit,
+}: {
+  busy: boolean;
+  file: File | null;
+  label: string;
+  buttonLabel: string;
+  onFile: (file: File | null) => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <div className={`${styles.actionPanel} ${styles.proofChoicePanel}`} aria-busy={busy}>
+      <div className={styles.proofChoiceHeader}>
+        <span><QrCode size={18} /></span>
+        <strong>{label}</strong>
+      </div>
+      <div className={`${styles.proofChoiceGrid} ${styles.requiredFileGrid}`}>
+        <section className={styles.proofChoiceCard} aria-label="Upload Solar Rebate QR code">
+          <div className={styles.proofChoiceCardHeader}>
+            <span className={styles.proofChoiceIcon}><Paperclip size={18} /></span>
+            <strong>Solar Rebate QR code</strong>
+          </div>
+          <div className={styles.proofUploadControls}>
+            <label
+              className={`${styles.fileIconButton} ${file ? styles.fileSelected : ""}`}
+              aria-label={file ? `Change QR code file: ${file.name}` : "Choose QR code file"}
+              title={file ? `Change file: ${file.name}` : "Choose QR code file"}
+            >
+              <input
+                type="file"
+                disabled={busy}
+                accept="application/pdf,image/jpeg,image/png,image/webp,.pdf,.jpg,.jpeg,.png,.webp"
+                onChange={(event) => onFile(event.target.files?.[0] ?? null)}
+              />
+              {file ? <FileCheck2 size={18} /> : <Paperclip size={18} />}
+            </label>
+            <div className={styles.fileSelectionMeta} title={file?.name}>
+              <span>{file?.name || "No file selected"}</span>
+              <small>{file ? fileSize(file.size) : "PDF, JPG, PNG or WebP · up to 10 MB"}</small>
+            </div>
+            <button className={styles.primaryButton} type="button" disabled={busy || !file} onClick={onSubmit}>
+              {busy ? <LoaderCircle className={styles.spinning} size={16} /> : <UploadCloud size={16} />}
+              {buttonLabel}
+            </button>
+          </div>
         </section>
       </div>
     </div>

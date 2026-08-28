@@ -236,10 +236,16 @@ function fileExtension(name: string) {
 }
 
 export function workspaceFileUploadType(name: string, declaredType: string): WorkspaceFileUploadContentType | null {
-  const extensionType = EXTENSION_TYPES.get(fileExtension(name));
+  const extension = fileExtension(name);
+  const extensionType = EXTENSION_TYPES.get(extension);
   if (!extensionType) return null;
   const normalizedDeclaredType = declaredType.split(";", 1)[0].trim().toLocaleLowerCase("en-AU");
   if (!normalizedDeclaredType || normalizedDeclaredType === "application/octet-stream") return extensionType;
+  // Browsers commonly label Markdown as text/markdown or text/x-markdown.
+  // Files stores UTF-8 Markdown under the existing canonical text/plain type.
+  if (extension === "md" && (normalizedDeclaredType === "text/markdown" || normalizedDeclaredType === "text/x-markdown")) {
+    return "text/plain";
+  }
   return normalizedDeclaredType === extensionType ? extensionType : null;
 }
 

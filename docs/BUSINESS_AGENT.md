@@ -16,11 +16,11 @@ POST /api/agent/chat
   -> deterministic Flash/Pro router
   -> thin DeepSeek Chat Completions loop
   -> four strict, read-only tools
-  -> ERP/retrieval service adapters
-  -> existing upstream business services
+  -> same-Worker knowledge retrieval plus bounded ERP service adapters
+  -> existing Files/D1/AI Search and upstream business services
 ```
 
-The Agent never opens D1 or another database, cannot execute SQL, and has no write tool. Inventory delegates to the existing `ERPProvider`. Knowledge, project snapshot, and order finance use authenticated HTTP adapters; they fail closed until their upstream URLs and `ERP_API_TOKEN` are configured. Upstream responses are field-allow-listed before entering model context.
+The model never opens D1 or another database, cannot execute SQL, and has no write tool. Inventory delegates to the existing `ERPProvider`. Knowledge uses the same-Worker `searchKnowledgeBase` service, which maps Cloudflare AI Search candidates back to authorised D1 chunks and protected Files metadata before any excerpt enters model context. Project snapshot and order finance retain authenticated HTTP adapters. Every result is field-allow-listed and failures remain fail-closed.
 
 ## DeepSeek transport and compatibility spike
 
@@ -73,7 +73,7 @@ Every model tool sets `strict: true`, disallows additional properties, has bound
 Errors distinguish `invalid_input`, `permission_denied`, `not_found`, `unknown`, `unavailable`, `timeout`, and `incomplete_data`. Tool definitions are in `src/lib/business-agent/tools.ts`:
 
 - `get_inventory(sku, warehouse_id?)` — exact SKU only; returns `on_hand`, `reserved`, `available`, `incoming`, and freshness exactly as supplied by ERP. `incoming: null` means the current upstream contract does not expose it.
-- `search_knowledge_base(query, product?, region?, effective_date?, access_scope?, limit)` — at most eight allow-listed document chunks with citation metadata. Retrieved text is treated as untrusted data.
+- `search_knowledge_base(query, product?, region?, effective_date?, limit)` — at most eight server-authorised document chunks with citation metadata. Tenant, role, permissions and access scope come only from the signed session; retrieved text is treated as untrusted data.
 - `get_project_snapshot(project_id)` — project, milestones, dates, budget summary, risks, related orders, and an upstream deterministic health basis.
 - `get_order_finance_details(order_no)` — separates actual application, enumerated application status, and possible eligibility for loans and subsidies. `unknown` remains unknown.
 
@@ -114,17 +114,16 @@ The request accepts no `user_id`, tenant, role, permission, or arbitrary history
 
 The response never includes chain of thought. Logs contain an opaque principal hash, request ID, route/model, tool names/status, latency, escalation, token counts when supplied, and final status. They exclude user text, tool payloads, model payloads, cookies, bearer tokens, and personal details.
 
-## Required upstream APIs
+## Data sources
 
-Inventory is already available through `ERPProvider`. These production APIs are still required for the remaining vertical slices:
+Inventory is already available through `ERPProvider`. Knowledge is implemented inside this Worker and requires the private `KNOWLEDGE_SEARCH` binding plus D1 migration `0005_knowledge_base.sql`; it does not require a public URL or bearer-token self-call. `ERP_KNOWLEDGE_API_URL` remains only as a legacy/injected adapter fallback for isolated provider tests. The remaining optional external vertical slices are:
 
 | Setting | Required endpoint and fields |
 | --- | --- |
-| `ERP_KNOWLEDGE_API_URL` | `GET search`; stable tool envelope; document ID/title/version/product/region/effective dates/access scope/update time/excerpt; conflict flag; tenant and document ACL enforcement |
 | `ERP_PROJECT_API_URL` | `GET projects/:id/snapshot`; progress, milestones, estimated completion, budget summary, risks, related orders, deterministic health status and basis |
 | `ERP_ORDER_API_URL` | `GET orders/:no/finance`; customer-visible order state and project link; loan/subsidy `actually_applied`, enumerated status, possible eligibility and basis |
 
-No database migration is needed for this service. Do not add a shadow policy or inventory table. Fake providers are used only in tests.
+Do not add a shadow policy or inventory table. Structured ERP data continues through its repositories/tools; only unstructured Files knowledge is indexed. Fake search providers are used only in tests.
 
 ## Limits and rollout
 
@@ -141,7 +140,8 @@ Known limitations:
 - the current ERP session has no organisation/department/data-scope claims and is single-tenant; multi-tenant rollout requires signed claims and upstream enforcement before enablement;
 - the current Inventory service does not expose `incoming`, so it is returned as unknown (`null`), never inferred;
 - live DeepSeek compatibility remains a deployment gate because no API key was available here;
-- the three new upstream read APIs are not yet implemented in this repository.
+- project and order external snapshot APIs remain optional/unimplemented in this repository; knowledge retrieval is local to the Worker;
+- the first controlled background indexer accepts at most eight application chunks per document and requires Administrator Reindex after a terminal provider failure; larger manuals require the documented Queue/Workflow follow-up.
 
 ## Verification
 
@@ -160,5 +160,7 @@ Run live structural evals against a signed-in deployment (add role cookies to ex
 E3_EVAL_BASE_URL=http://localhost:3000 \
 E3_EVAL_COOKIE='admin session cookie' \
 E3_EVAL_SALES_COOKIE='sales session cookie' \
+E3_EVAL_PM_COOKIE='project manager session cookie' \
+E3_EVAL_REQUIRE_LIVE=1 \
 npm run eval:business-agent
 ```

@@ -66,6 +66,8 @@ function project(overrides: Partial<PaymentTrackProject> = {}): PaymentTrackProj
     stcSolarRequired: false,
     stcBatteryRequired: false,
     solarRebateRequired: false,
+    solarRebateQrRequired: false,
+    solarRebateQrCode: null,
     stcSolarReceivedAt: null,
     stcBatteryReceivedAt: null,
     solarRebateReceivedAt: null,
@@ -232,6 +234,35 @@ test("WIP keeps PM scheduling and continuous payment responsibilities independen
   })), [
     "pm:manage_work",
     "admin:confirm_final_payment",
+    "sales:record_final_payment",
+  ]);
+});
+
+test("Solar Rebate WIP assigns QR upload to PM before normal work management", () => {
+  assert.deepEqual(summary(project({
+    stage: "working_in_progress",
+    solarRebateQrRequired: true,
+    solarRebateQrCode: null,
+  })), [
+    "pm:upload_rebate_qr_code",
+    "sales:record_final_payment",
+  ]);
+
+  assert.deepEqual(summary(project({
+    stage: "working_in_progress",
+    solarRebateQrRequired: true,
+    solarRebateQrCode: {
+      id: "rebate-qr-1",
+      kind: "solar_rebate_qr_code",
+      originalName: "solar-rebate-qr.png",
+      contentType: "image/png",
+      size: 512,
+      url: "/api/payment-track/project-1/files/rebate-qr-1?token=private",
+      uploadedAt: "2026-08-27T03:00:00.000Z",
+      uploadedByRole: "pm",
+    },
+  })), [
+    "pm:manage_work",
     "sales:record_final_payment",
   ]);
 });

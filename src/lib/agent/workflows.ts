@@ -4,6 +4,8 @@ import type { AgentTrace } from "./trace";
 export type DeterministicWorkflowName =
   | "inventory_query"
   | "outstanding_payments"
+  | "project_track_query"
+  | "weekly_schedule_query"
   | "quotation_summary"
   | "pending_deliveries"
   | "site_visit_summary"
@@ -15,6 +17,7 @@ export type DeterministicWorkflowResult = AgentAnswer & { workflow: Deterministi
 export type DeterministicWorkflowDependencies = {
   fastInventoryAnswer: (message: string) => Promise<AgentAnswer | null>;
   fastPaymentTrackAnswer: (message: string) => Promise<AgentAnswer | null>;
+  fastWeeklyScheduleAnswer: (provider: ERPProvider, message: string) => Promise<AgentAnswer | null>;
   runAgentTool: (
     provider: ERPProvider,
     call: { name: string; arguments: string },
@@ -34,7 +37,7 @@ export type DeterministicWorkflowDependencies = {
 const suggestions = [
   "Which stock items need attention?",
   "Show quotations currently being drafted",
-  "Show deliveries pending PM review",
+  "Show unscheduled Weekly Schedule work",
   "How much customer payment is outstanding?",
 ];
 
@@ -60,6 +63,22 @@ function quotationStatus(message: string): QuotationStatus | undefined {
 function hasInventoryIdentifier(message: string): boolean {
   const candidates = message.match(/\b(?=[a-z0-9_-]{2,40}\b)(?=[a-z0-9_-]*[a-z])(?=[a-z0-9_-]*\d)[a-z0-9_-]+\b/giu) || [];
   return candidates.some((candidate) => !/^(?:pay|qtn)[_-]/iu.test(candidate));
+}
+
+function hasProjectTrackIntent(message: string): boolean {
+  return /\b(?:project\s*track(?:ing)?|working\s+in\s+progress|wip|waiting\s+coes|stc\s+rebate|pay[-_][a-z0-9_-]*\d|cpec[-_]?\d+)\b|项目(?:追踪|跟踪|进度)|项目看板/u.test(message)
+    || /(?:show|list|find|search|get|what|which|how\s+many|give\s+me|查看|显示|列出|查找).{0,24}(?:projects?|项目)/u.test(message);
+}
+
+function hasWeeklyScheduleIntent(message: string): boolean {
+  const explicitlyWeekly = /\bweekly\s+schedule\b|\b(?:this|current|next|last)\s+week(?:'s)?\s+(?:schedule|jobs?|work|deliveries|installations|site\s*visits?)\b|\b(?:deliveries|installations|site\s*visits?|completed\s+jobs?|delivered|installed)\s+(?:this|next|last)\s+week\b|\b(?:today|tomorrow)(?:'s)?\s+(?:schedule|jobs?|deliveries|installations|site\s*visits?)\b|周排程|周计划|(?:本周|下周|上周)(?:安排|排期|日程|送货|安装|任务|完成)/u.test(message);
+  if (explicitlyWeekly) return true;
+  const projectScheduleWithDate = hasProjectTrackIntent(message)
+    && /\b(?:today|tomorrow|this\s+week|current\s+week|next\s+week|last\s+week|\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{4})\b|今天|明天|本周|下周|上周/u.test(message)
+    && /\b(?:schedule|scheduled|delivery|deliveries|delivered|installation|installations|installed|work|jobs?)\b|排期|安排|送货|安装|任务/u.test(message);
+  if (projectScheduleWithDate) return true;
+  if (hasProjectTrackIntent(message)) return false;
+  return /\b(?:schedule|scheduled|unscheduled|pre[\s_-]*scheduled|overdue)\b|(?:今天|明天).{0,12}(?:安排|排期|送货|安装|任务)|未排期|预排期|待排期|逾期/u.test(message);
 }
 
 export async function runDeterministicWorkflow(
@@ -97,6 +116,14 @@ export async function runDeterministicWorkflow(
       ? `${items.length} quotation(s) match status **${status}**.`
       : `${items.length} live quotation(s); ${active.length} are active, worth ${money(active.reduce((sum, item) => sum + item.total, 0))}.`;
     return answer("quotation_summary", `${summary}${lines ? `\n\n${lines}` : ""}${items.length > shown.length ? `\n\n${items.length - shown.length} more not shown.` : ""}`);
+  }
+
+  if (hasWeeklyScheduleIntent(message)) {
+    trace.selectWorkflow("weekly_schedule_query");
+    const result = await trace.step("weekly_schedule.live_query", "tool", () => (
+      dependencies.fastWeeklyScheduleAnswer(provider, rawMessage)
+    ));
+    return result ? { ...result, workflow: "weekly_schedule_query" } : null;
   }
 
   if (/(?:deliver|delivery|pm).*(?:pending|review|待审核|待处理)|(?:pending|待审核|待处理).*(?:deliver|delivery|送货)/u.test(message)) {
@@ -144,6 +171,12 @@ export async function runDeterministicWorkflow(
     return answer("reports_status", report.content.trim()
       ? `The Reports needs document is revision ${report.revision}, contains ${report.content.length.toLocaleString("en-AU")} characters and was updated ${report.updatedAt || "at an unknown time"}.`
       : "The Reports needs document is empty.");
+  }
+
+  if (hasProjectTrackIntent(message)) {
+    trace.selectWorkflow("project_track_query");
+    const result = await trace.step("project_track.live_query", "tool", () => dependencies.fastPaymentTrackAnswer(rawMessage));
+    return result ? { ...result, workflow: "project_track_query" } : null;
   }
 
   if (hasInventoryIdentifier(message)) return runInventoryWorkflow();

@@ -75,6 +75,8 @@ function project(overrides: Partial<PaymentTrackProject> = {}): PaymentTrackProj
     stcSolarRequired: false,
     stcBatteryRequired: false,
     solarRebateRequired: false,
+    solarRebateQrRequired: false,
+    solarRebateQrCode: null,
     stcSolarReceivedAt: null,
     stcBatteryReceivedAt: null,
     solarRebateReceivedAt: null,
@@ -276,6 +278,44 @@ test("each Sales-recorded payment creates an Administrator reminder until it is 
   })], NOW).filter((item) => item.role === "admin");
   assert.equal(zeroBalanceStillPending.length, 1);
   assert.match(zeroBalanceStillPending[0].id, /payment-2/);
+});
+
+test("Solar Rebate WIP reminds PM to upload the QR code before scheduling work", () => {
+  const waitingNotifications = buildPaymentTrackNotifications([project({
+    stage: "working_in_progress",
+    solarRebateQrRequired: true,
+    solarRebateQrCode: null,
+  })], NOW);
+  const waitingReminder = waitingNotifications.find((item) => item.role === "pm");
+  assert.ok(waitingReminder);
+  assert.equal(waitingReminder.module, "payments");
+  assert.equal(waitingReminder.entityId, "PAY-TEST-1");
+  assert.equal(waitingReminder.badgeLabel, "Waiting for rebate QR code");
+  assert.equal(waitingReminder.actionLabel, "Upload QR code");
+  assert.equal(waitingReminder.priority, "high");
+  assert.equal(waitingReminder.ownerName, "Percival");
+  assert.match(waitingReminder.description, /Solar Rebate QR code required/);
+
+  const uploadedNotifications = buildPaymentTrackNotifications([project({
+    stage: "working_in_progress",
+    solarRebateQrRequired: true,
+    solarRebateQrCode: {
+      id: "rebate-qr-1",
+      kind: "solar_rebate_qr_code",
+      originalName: "solar-rebate-qr.png",
+      contentType: "image/png",
+      size: 512,
+      url: "/api/payment-track/PAY-TEST-1/files/rebate-qr-1?token=private",
+      uploadedAt: "2026-08-25T01:00:00.000Z",
+      uploadedByRole: "pm",
+    },
+  })], NOW);
+  const manageWorkReminder = uploadedNotifications.find((item) => item.role === "pm");
+  assert.ok(manageWorkReminder);
+  assert.equal(manageWorkReminder.badgeLabel, "WIP unscheduled");
+  assert.equal(manageWorkReminder.actionLabel, "Schedule work");
+  assert.equal(manageWorkReminder.module, "payments");
+  assert.equal(uploadedNotifications.some((item) => item.actionLabel === "Upload QR code"), false);
 });
 
 test("installment notifications move from Sales preference to PM review and scheduled reminder", () => {

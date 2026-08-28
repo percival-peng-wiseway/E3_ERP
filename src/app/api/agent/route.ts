@@ -1,4 +1,5 @@
-import { answerWithOpenAICompatible } from "@/lib/agent/deepseek";
+import { answerWithOpenAICompatible, knowledgeAbstention } from "@/lib/agent/deepseek";
+import { isKnowledgeConversationIntent } from "@/lib/agent/tool-routing";
 import {
   AgentRequestBodyTooLarge,
   readLimitedAgentJson,
@@ -16,6 +17,7 @@ import { AgentTrace } from "@/lib/agent/trace";
 import { deterministicWorkflowDependencies } from "@/lib/agent/workflow-dependencies";
 import { runDeterministicWorkflow } from "@/lib/agent/workflows";
 import { getERPProvider, type AgentHistoryMessage } from "@/lib/erp";
+import { agentAuthContext } from "@/lib/business-agent/auth";
 import { isAuthorizedMutationRequest } from "@/lib/server/proxy-security";
 
 export const dynamic = "force-dynamic";
@@ -73,6 +75,10 @@ async function processAgentRequest(request: Request) {
   if (!isAuthorizedMutationRequest(request)) {
     return error(403, "forbidden", "Agent requests must come from the same-origin application.");
   }
+  const auth = agentAuthContext(request);
+  if (!auth) {
+    return error(401, "authentication_required", "Sign in to use E3 Agent.");
+  }
   if (!requestHasJsonContentType(request)) {
     return error(415, "json_required", "Agent requests accept a JSON body only.");
   }
@@ -94,6 +100,7 @@ async function processAgentRequest(request: Request) {
   }
 
   const provider = getERPProvider(request);
+  const knowledgeRequest = isKnowledgeConversationIntent(input.message, input.history.slice(-2).map((item) => item.content));
   const trace = new AgentTrace();
   const warnings: string[] = [];
   let settings: ResolvedAgentSettings;
@@ -117,7 +124,7 @@ async function processAgentRequest(request: Request) {
   }
   let data;
   try {
-    const workflowAnswer = await trace.step(
+    const workflowAnswer = knowledgeRequest ? null : await trace.step(
       "harness.route",
       "workflow",
       () => runDeterministicWorkflow(provider, input.message, trace, deterministicWorkflowDependencies),
@@ -127,6 +134,7 @@ async function processAgentRequest(request: Request) {
     } else {
       data = await trace.step("model.openai_compatible", "model", () => answerWithOpenAICompatible({
         provider,
+        auth,
         message: input.message,
         history: input.history,
         section: input.section,
@@ -142,7 +150,9 @@ async function processAgentRequest(request: Request) {
     warnings.push("The primary live answer path is temporarily unavailable. Local read-only query mode is being used.");
     trace.markOutcome("fallback");
     try {
-      data = await trace.step("local.fallback", "fallback", () => localWorkspaceAnswer(provider, input.message));
+      data = knowledgeRequest
+        ? knowledgeAbstention(input.message)
+        : await trace.step("local.fallback", "fallback", () => localWorkspaceAnswer(provider, input.message));
     } catch (fallbackError) {
       trace.markOutcome("error");
       trace.emit();

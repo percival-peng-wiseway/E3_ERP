@@ -73,7 +73,12 @@ function assertProductionDocumentsAreAbsent() {
 function paymentFiles(projects) {
   const files = [];
   for (const project of projects) {
-    files.push(project?.contract, project?.deposit?.proof, project?.collection?.proof);
+    files.push(
+      project?.contract,
+      project?.deposit?.proof,
+      project?.solarRebateQrCode,
+      project?.collection?.proof,
+    );
     for (const payment of project?.finalPayments || []) files.push(payment?.proof);
   }
   return files.filter(Boolean);

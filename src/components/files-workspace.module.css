@@ -495,6 +495,28 @@
 .itemName strong { color: #31414b; font-size: 13px; font-weight: 700; }
 .itemName small { max-width: 310px; margin-top: 2px; color: #8a969e; font-size: 10px; }
 
+.knowledgeStatus {
+  display: inline-flex;
+  min-height: 19px;
+  align-items: center;
+  padding: 1px 7px;
+  color: #5e6d77;
+  background: #eef2f4;
+  border: 1px solid #dce3e7;
+  border-radius: 10px;
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 760;
+  line-height: 1;
+  vertical-align: middle;
+}
+
+.knowledgePending { color: #8b5e18; background: #fff5df; border-color: #f0d9ab; }
+.knowledgeIndexing { color: #286d9f; background: #eaf4fb; border-color: #c9deed; }
+.knowledgeReady { color: #207155; background: #e8f7f0; border-color: #c7e7da; }
+.knowledgeFailed { color: #a2443e; background: #fff0ee; border-color: #efcbc7; }
+.knowledgeDisabled { color: #69767f; background: #f0f2f3; border-color: #dce1e4; }
+
 .ownerCell {
   display: flex;
   min-width: 0;
@@ -786,6 +808,37 @@
 }
 
 .confirmDialog { width: min(500px, 100%); }
+.knowledgeDialog { width: min(760px, 100%); }
+
+.knowledgeState {
+  display: flex;
+  min-height: 45px;
+  align-items: center;
+  padding: 8px 19px;
+  gap: 9px;
+  color: #71808a;
+  background: #fafcfc;
+  border-bottom: 1px solid #e8edef;
+  font-size: 11px;
+}
+
+.knowledgeState strong {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  color: #9c423c;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledgeGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.knowledgeGrid .wideField { grid-column: 1 / -1; }
 
 .dialog > header {
   display: grid;
@@ -1049,6 +1102,10 @@
   .previewDialog header > div:last-child .secondaryButton { width: 40px; padding: 0; }
   .previewDialog header > div:last-child .secondaryButton svg { margin: 0; }
   .previewDialog header > div:last-child .secondaryButton { font-size: 0; }
+  .knowledgeGrid { grid-template-columns: 1fr; }
+  .knowledgeGrid .wideField { grid-column: auto; }
+  .knowledgeState { align-items: flex-start; flex-direction: column; }
+  .knowledgeState strong { width: 100%; margin-left: 0; white-space: normal; }
 }
 
 @media (prefers-reduced-motion: reduce) {

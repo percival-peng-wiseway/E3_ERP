@@ -19,12 +19,16 @@ Employee access is protected by a unified ERP sign-in. The server issues a signe
 - Drag-and-drop and multi-file upload queue, safe image/PDF preview and protected downloads
 - Creators can rename, move, trash and restore their own items; Administrators can manage all items and permanently purge Trash
 - D1-backed directory metadata provides optimistic concurrency, duplicate-name protection, quotas and cycle-safe folder moves
+- Administrators can add PDF, DOCX, TXT and Markdown files to the internal knowledge base, manage metadata and access scope, monitor indexing, retry failures and disable documents without moving source bytes out of Files
+- Knowledge citations reuse the protected Files preview/download route; moving a file to Trash or disabling it removes it from retrieval immediately
 
 ### Home and Agent
 
 - Home shows role-specific action reminders and Admin-managed public announcements on the left, with E3 Agent on the right
 - Sales reminders are limited to actionable Project Track collections; PM receives only delivery and installation scheduling reminders; Admin receives submitted payment confirmations and reimbursement actions
-- The E3 Agent Harness answers questions across seven bounded, read-only business Skills: Inventory, Quotations, Project Management, Project Track, Site Visiting, Reimbursements and Reports
+- The E3 Agent Harness answers questions across eight bounded, read-only business Skills: Inventory, Quotations, Project Management, Project Track, Weekly Schedule, Site Visiting, Reimbursements and Reports
+- Weekly Schedule queries use the same Project Track, Inventory delivery, Site Visit, custom-job and source-override records that compose the calendar, including unscheduled and pre-scheduled work
+- Knowledge questions use the same-worker `search_knowledge_base` service, Cloudflare AI Search hybrid retrieval and server-side Files/D1 permission checks; DeepSeek receives only authorised, current chunks and answers with validated Files citations
 - Common operational queries use deterministic workflows before any model call; open-ended questions use the configured OpenAI-compatible endpoint
 - Each request emits a privacy-safe trace containing only workflow/tool names, status and duration
 - `qwen3.5:9b` is the default model; the other models advertised by the endpoint can be selected from Settings
@@ -147,6 +151,7 @@ npm start
 ```
 
 Cloudflare Workers deployment is preconfigured with OpenNext. See [CLOUDFLARE_DEPLOYMENT.md](./CLOUDFLARE_DEPLOYMENT.md) for the GitHub import settings, required secrets and persistent-storage configuration.
+The knowledge pipeline additionally requires the private `erp` AI Search instance before an OpenNext preview/build can resolve its remote binding. See [docs/KNOWLEDGE_BASE.md](./docs/KNOWLEDGE_BASE.md) for architecture, setup, indexing limits, operations and rollback.
 
 ## Service configuration
 
@@ -185,9 +190,13 @@ The unified read-only APIs use the live Inventory Operations service and the aut
 ERP_INVENTORY_API_URL=
 ERP_QUOTATION_API_URL=
 ERP_API_TOKEN=
+# Legacy external adapter only. The deployed knowledge tool uses the same
+# Worker AI Search binding and does not self-call through a public URL.
 ERP_KNOWLEDGE_API_URL=
 ERP_PROJECT_API_URL=
 ERP_ORDER_API_URL=
+# Optional private Node-local knowledge metadata/chunk/job directory.
+KNOWLEDGE_DATA_DIR=
 ```
 
 When these overrides are empty, Inventory uses `INVENTORY_OPERATIONS_API_URL` and Quotations uses `QUOTEHELP_APP_URL`. Live-source failures are fail-closed: demo data is never substituted into Agent, Dashboard, Inventory or Quotations responses. After this change, users with an existing QuoteHelp login may need to sign in to QuoteHelp once more so its namespaced session cookie is available to the unified read-only routes.
@@ -198,7 +207,7 @@ Agent source health and evals:
 # Authenticated health check (in the signed-in application)
 GET /api/agent/health
 
-# Run seven live deterministic business evals against a running deployment
+# Run the live deterministic business evals against a running deployment
 E3_EVAL_BASE_URL=http://localhost:3000 E3_EVAL_COOKIE='your ERP session cookies' npm run eval:agent
 ```
 
@@ -235,6 +244,9 @@ Project Track rejects repeated Proposal Numbers across both PDF imports and manu
 | `POST /api/files/upload` | Upload one validated file up to 20 MiB |
 | `PATCH/DELETE /api/files/items/:id` | Rename, move, trash, restore or Admin-purge an item |
 | `GET /api/files/items/:id/content` | Protected preview or download of a stored file |
+| `POST /api/knowledge/documents` | Add a supported Files item to the knowledge base as Administrator |
+| `PATCH /api/knowledge/documents/:id` | Edit metadata or enable/disable a knowledge document as Administrator |
+| `POST /api/knowledge/documents/:id/reindex` | Retry or explicitly reindex a knowledge document as Administrator |
 | `GET /api/inventory` | Unified read-only inventory list |
 | `GET /api/quotations` | Unified read-only quotation list |
 | `GET /api/dashboard` | Home inventory, alert and quotation summary |
@@ -259,7 +271,7 @@ Project Track rejects repeated Proposal Numbers across both PDF imports and manu
 | `PATCH/DELETE /api/project-schedule/:id` | Update a custom job or permanently remove it as Administrator |
 | `POST /api/agent` | OpenAI-compatible model-backed read-only questions across ERP workspaces, with a local fallback |
 | `POST /api/agent/chat` | Strict read-only Business Agent for inventory, cited knowledge, project snapshots and order finance |
-| `GET /api/agent/health` | Verify all seven E3 Agent business data sources without returning business records |
+| `GET /api/agent/health` | Verify all eight E3 Agent business data sources without returning business records |
 | `GET/PUT/DELETE /api/settings/agent` | Masked Agent configuration, secure save and environment fallback |
 
 ## MCP Server

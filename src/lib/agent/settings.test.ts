@@ -6,19 +6,20 @@ import path from "node:path";
 import { after, test } from "node:test";
 
 const testDataDirectory = path.join(tmpdir(), `agent-settings-${randomUUID()}`);
+const mutableProcessEnv = process.env as Record<string, string | undefined>;
 const originalEnvironment = new Map([
   "AGENT_SETTINGS_DATA_DIR",
   "AGENT_API_KEY",
   "AGENT_BASE_URL",
   "AGENT_MODEL",
   "AGENT_ALLOWED_API_HOSTS",
-].map((key) => [key, process.env[key]]));
+].map((key) => [key, mutableProcessEnv[key]]));
 
-process.env.AGENT_SETTINGS_DATA_DIR = testDataDirectory;
-delete process.env.AGENT_API_KEY;
-delete process.env.AGENT_BASE_URL;
-delete process.env.AGENT_MODEL;
-delete process.env.AGENT_ALLOWED_API_HOSTS;
+mutableProcessEnv.AGENT_SETTINGS_DATA_DIR = testDataDirectory;
+delete mutableProcessEnv.AGENT_API_KEY;
+delete mutableProcessEnv.AGENT_BASE_URL;
+delete mutableProcessEnv.AGENT_MODEL;
+delete mutableProcessEnv.AGENT_ALLOWED_API_HOSTS;
 
 const settingsModule = "./settings.ts";
 const {
@@ -38,8 +39,8 @@ const {
 after(async () => {
   await rm(testDataDirectory, { recursive: true, force: true });
   for (const [key, value] of originalEnvironment) {
-    if (value === undefined) delete process.env[key];
-    else process.env[key] = value;
+    if (value === undefined) delete mutableProcessEnv[key];
+    else mutableProcessEnv[key] = value;
   }
 });
 
@@ -51,18 +52,18 @@ test("environment resolver uses validated configuration without reading saved se
     source: "default",
   });
 
-  process.env.AGENT_API_KEY = "environment-test-key";
-  process.env.AGENT_BASE_URL = DEFAULT_AGENT_BASE_URL;
-  process.env.AGENT_MODEL = "qwen3.6:latest";
+  mutableProcessEnv.AGENT_API_KEY = "environment-test-key";
+  mutableProcessEnv.AGENT_BASE_URL = DEFAULT_AGENT_BASE_URL;
+  mutableProcessEnv.AGENT_MODEL = "qwen3.6:latest";
   assert.deepEqual(resolveEnvironmentAgentSettings(), {
     apiKey: "environment-test-key",
     baseUrl: DEFAULT_AGENT_BASE_URL,
     model: "qwen3.6:latest",
     source: "environment",
   });
-  delete process.env.AGENT_API_KEY;
-  delete process.env.AGENT_BASE_URL;
-  delete process.env.AGENT_MODEL;
+  delete mutableProcessEnv.AGENT_API_KEY;
+  delete mutableProcessEnv.AGENT_BASE_URL;
+  delete mutableProcessEnv.AGENT_MODEL;
 });
 
 test("saved DeepSeek key is masked publicly and resolves only on the server", async () => {

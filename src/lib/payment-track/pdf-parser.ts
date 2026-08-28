@@ -458,6 +458,50 @@ type GreenQuotationBlock = {
 
 const greenSystemTotalExpression = /\bSystem\s+Total\s*\((?:incl\.?|including)\s*GST\)\s*\$?\s*[\d,]+(?:\.\d{1,2})?/i;
 
+// Proposal generators use several names for the same Victorian solar rebate.
+// Keep this deliberately narrower than a generic "rebate" match: battery
+// rebates, STCs and Solar Victoria loans have independent operational flows.
+const solarRebateLabelExpression = /(?:\bSolar\s*VIC(?:toria)?(?:['’]s)?\s+Solar\s+PV\s+Rebate\b|\b(?:VIC\s+)?Solar(?:\s+PV)?\s+Rebate\b|\bSolar\s+VIC(?:toria)?\s+Rebate\b)/i;
+
+function normalizedPricingText(value: string) {
+  return value
+    .normalize("NFKC")
+    .replace(/[‘’]/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Assesses rebate rows only after the caller has isolated an authoritative
+ * pricing/deductions block. A value must immediately follow its label (apart
+ * from punctuation and an optional Amount/Value word), so an ambiguous Solar
+ * Rebate row can never steal the amount from a later interest-free-loan row.
+ */
+function assessSolarRebateRows(value: string): boolean | null {
+  const text = normalizedPricingText(value);
+  const matches = Array.from(text.matchAll(new RegExp(solarRebateLabelExpression.source, "gi")));
+  if (!matches.length) return false;
+
+  let ambiguous = false;
+  for (const match of matches) {
+    const afterLabel = text.slice((match.index ?? 0) + match[0].length);
+    const amountMatch = /^[\s:]*(?:(?:deduction|amount|value)\s*:?\s*)?(?:(?:[-–—]\s*)(?:AUD\s*)?\$?\s*|(?:AUD\s*)?\$\s*)([\d,]+(?:\.\d{1,2})?)(?![\d.])/i.exec(
+      afterLabel,
+    );
+    if (!amountMatch) {
+      ambiguous = true;
+      continue;
+    }
+    const cents = amountToCents(amountMatch[1]);
+    if (cents === null) {
+      ambiguous = true;
+      continue;
+    }
+    if (cents > 0) return true;
+  }
+  return ambiguous ? null : false;
+}
+
 function greenQuotationBlock(flatText: string): GreenQuotationBlock | null {
   const quotationMatches = Array.from(flatText.matchAll(/\bQuotation\b/gi));
   for (let index = quotationMatches.length - 1; index >= 0; index -= 1) {
@@ -477,7 +521,7 @@ function greenQuotationBlock(flatText: string): GreenQuotationBlock | null {
 }
 
 export function assessProposalSolarRebateRequirement(sourceText: string): boolean | null {
-  const flatText = sourceText.replace(/\s+/g, " ").trim();
+  const flatText = normalizedPricingText(sourceText);
   const greenQuotation = greenQuotationBlock(flatText);
   if (greenQuotation) {
     const deductions = /\bDeductions\b/i.exec(greenQuotation.priceText);
@@ -489,20 +533,19 @@ export function assessProposalSolarRebateRequirement(sourceText: string): boolea
       deductions.index + deductions[0].length,
       finalPrice.index,
     );
-    if (!/\bSolar\s+Rebate\b/i.test(deductionText)) return false;
-    return /\bSolar\s+Rebate\b(?=[\s:$-]*\$?\s*-?[\d,]+(?:\.\d{1,2})?)/i.test(deductionText)
-      ? true
-      : null;
+    return assessSolarRebateRows(deductionText);
   }
 
   const systemQuoteIndex = flatText.search(/\bSystem\s+Quote\b/i);
   if (systemQuoteIndex < 0) return null;
   const quoteText = flatText.slice(systemQuoteIndex);
-  const endIndex = quoteText.search(/\b(?:Important\s+Notice|Customer\s+Signature|Terms\s+and\s+Conditions)\b/i);
-  const priceBlock = endIndex >= 0 ? quoteText.slice(0, endIndex) : quoteText;
-  if (!/\b(?:System\s+Price|Final\s+Buyout\s+Price)\b/i.test(priceBlock)
-    || !/\bBalance\s+Due\b/i.test(priceBlock)) return null;
-  return /\bLess\s*:?\s+(?:Federal\s+)?Solar\s+Rebate\b/i.test(priceBlock);
+  const balanceDue = /\bBalance\s+Due\b\s*:?\s*\$?\s*[\d,]+(?:\.\d{1,2})?/i.exec(quoteText);
+  if (!balanceDue) return null;
+  // Balance Due closes the price table. Excluding everything after it prevents
+  // terms/eligibility prose from being mistaken for an applied deduction.
+  const priceBlock = quoteText.slice(0, balanceDue.index + balanceDue[0].length);
+  if (!/\b(?:System\s+Price|Final\s+Buyout\s+Price)\b/i.test(priceBlock)) return null;
+  return assessSolarRebateRows(priceBlock);
 }
 
 export function proposalRequiresSolarRebate(sourceText: string) {
@@ -688,6 +731,7 @@ export async function parsePaymentAgreementPdf(bytes: Uint8Array): Promise<Parse
   const expectedDepositCents = depositText ? amountToCents(depositText) : null;
   const extractedItems = extractItems(flatText, greenSketchQuotation);
   const items = extractedItems.items;
+  const solarRebateAssessment = assessProposalSolarRebateRequirement(sourceText);
 
   const missingFields: string[] = [];
   if (!quoteNumber) missingFields.push("Proposal Number / Quote No");
@@ -699,6 +743,7 @@ export async function parsePaymentAgreementPdf(bytes: Uint8Array): Promise<Parse
   }
   if (balanceDueCents === null) missingFields.push("Balance Due");
   if (!items.length) missingFields.push("items");
+  if (solarRebateAssessment === null) missingFields.push("Solar Rebate assessment");
   for (const category of extractedItems.unparsedGreenCoreCategories) {
     missingFields.push(`${category} item details`);
   }
@@ -729,7 +774,9 @@ export async function parsePaymentAgreementPdf(bytes: Uint8Array): Promise<Parse
     expectedDepositCents,
     stcSolarRequired: hasSolarPanel,
     stcBatteryRequired: hasBattery,
-    solarRebateRequired: proposalRequiresSolarRebate(sourceText),
+    // New projects must never turn an ambiguous rebate label into `false`,
+    // because that would permanently bypass the pre-scheduling QR gate.
+    solarRebateRequired: solarRebateAssessment === true,
     sourceText,
   };
 }

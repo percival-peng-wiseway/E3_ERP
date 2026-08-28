@@ -132,6 +132,7 @@ function createInput(body: Record<string, unknown>): CreatePaymentTrackInput | n
     stcSolarRequired,
     stcBatteryRequired,
     solarRebateRequired,
+    solarRebateQrRequired: solarRebateRequired,
   };
 }
 

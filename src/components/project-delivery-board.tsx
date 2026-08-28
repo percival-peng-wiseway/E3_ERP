@@ -36,6 +36,7 @@ import type { ErpRole } from "@/lib/auth/types";
 import { readJsonResponse } from "@/lib/client/http";
 import type { SiteVisit } from "@/lib/site-visits/types";
 import {
+  isPaymentTrackWaitingForRebateQr,
   PAYMENT_TRACK_SCHEDULE_ASSIGNEES,
   type PaymentTrackListResponse,
   type PaymentTrackProject,
@@ -600,7 +601,8 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget }: {
         || (project.stage === "installing" && !project.installedAt);
       const installationOverrideKey = `payment-installation:${project.id.toLowerCase()}`;
       const installationOverrideState = sourceOverrideState.get(installationOverrideKey);
-      if (installationOverrideState !== "deleted"
+      if (!isCombined
+        && installationOverrideState !== "deleted"
         && installationDate
         && (project.installedAt || (isActiveInstallation && hasCompletePaymentSchedule(project, "installation")))) {
         paymentEntries.push({
@@ -710,6 +712,7 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget }: {
         : project.workMode === "installation_only" ? "installation" : "combined";
       if (project.stage === "working_in_progress"
         && !project.installedAt
+        && !isPaymentTrackWaitingForRebateQr(project)
         && !hasCompletePaymentSchedule(project, currentWorkKind)) {
         const pendingSource: UnscheduledEntry["source"] = project.deliveredAt || project.workMode === "installation_only"
           ? "installing"
@@ -804,6 +807,10 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget }: {
 
   const openPaymentEditor = (project: ScheduledPaymentProject, kind: PaymentScheduleKind, date?: string) => {
     if (!canManageSchedule) return;
+    if (isPaymentTrackWaitingForRebateQr(project)) {
+      setError("Upload this project's Solar Rebate QR code in Project Track before scheduling work.");
+      return;
+    }
     const includesDelivery = kind === "delivery" || kind === "combined";
     const hasLegacyFinalSchedule = includesDelivery && hasCompletePaymentSchedule(project, kind);
     if (includesDelivery && !project.deliverySelections.length && !hasLegacyFinalSchedule) {

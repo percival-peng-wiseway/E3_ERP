@@ -30,6 +30,7 @@
   "dependencies": {
     "@opennextjs/cloudflare": "^1.20.2",
     "lucide-react": "^0.468.0",
+    "mammoth": "^1.12.1",
     "next": "^16.3.1",
     "pdfjs-dist": "^6.2.108",
     "react": "^19.0.0",

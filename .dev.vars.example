@@ -10,8 +10,11 @@ DEEPSEEK_API_KEY=replace-with-your-deepseek-api-key
 DEEPSEEK_BASE_URL=https://api.deepseek.com/beta
 DEEPSEEK_MODEL_FAST=deepseek-v4-flash
 DEEPSEEK_MODEL_COMPLEX=deepseek-v4-pro
+# Legacy external adapter only; normal knowledge retrieval uses KNOWLEDGE_SEARCH.
 ERP_KNOWLEDGE_API_URL=
 ERP_PROJECT_API_URL=
 ERP_ORDER_API_URL=
+# Optional Node-local metadata/chunk/job directory (not used by Worker production).
+KNOWLEDGE_DATA_DIR=
 REIMBURSEMENT_ADMIN_PASSWORD=replace-with-a-strong-password
 REIMBURSEMENT_SESSION_SECRET=replace-with-at-least-32-random-characters

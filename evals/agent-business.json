@@ -3,6 +3,8 @@
   { "name": "draft quotations", "query": "Show draft quotations", "expectedWorkflow": "quotation_summary" },
   { "name": "pending deliveries", "query": "Show deliveries pending PM review", "expectedWorkflow": "pending_deliveries" },
   { "name": "outstanding receivables", "query": "How much customer payment is outstanding?", "expectedWorkflow": "outstanding_payments" },
+  { "name": "project track workflow", "query": "Show the projects in Project Track", "expectedWorkflow": "project_track_query" },
+  { "name": "weekly schedule", "query": "What is on the Weekly Schedule this week?", "expectedWorkflow": "weekly_schedule_query" },
   { "name": "site visits", "query": "Give me the site visit summary", "expectedWorkflow": "site_visit_summary" },
   { "name": "reimbursements", "query": "Show the reimbursement payment summary", "expectedWorkflow": "reimbursement_summary" },
   { "name": "reports", "query": "What is the Reports document status?", "expectedWorkflow": "reports_status" }

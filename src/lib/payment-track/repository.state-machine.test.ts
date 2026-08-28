@@ -16,6 +16,7 @@ const {
   PaymentTrackRepositoryError,
   transitionPaymentTrackProject,
   uploadPaymentTrackProof,
+  uploadPaymentTrackSolarRebateQrCode,
 } = await import(repositoryModule) as typeof import("./repository");
 
 after(async () => {
@@ -195,6 +196,50 @@ function createPmNotesProject(items = [{
     solarRebateRequired: false,
   });
 }
+
+async function createQrRequiredWipProject() {
+  let project = await createManualPaymentTrackProject({
+    quoteNumber: `QR-${randomUUID()}`,
+    specialist: { name: "QR Specialist", phone: "0400000000" },
+    customer: {
+      firstName: "QR",
+      lastName: "Customer",
+      phone: "",
+      email: "",
+      addressLine1: "3 Test Street",
+      suburb: "Melbourne",
+      state: "VIC",
+      postcode: "3000",
+    },
+    items: [{
+      category: "Service",
+      description: "QR-gated project service",
+      model: "",
+      quantity: 1,
+      capacity: "",
+    }],
+    balanceDueCents: 1_000,
+    expectedDepositCents: 100,
+    stcSolarRequired: false,
+    stcBatteryRequired: false,
+    solarRebateRequired: true,
+    solarRebateQrRequired: true,
+  });
+  project = await transitionPaymentTrackProject(project.id, "acknowledge_deposit", {
+    actorRole: "sales",
+  });
+  return transitionPaymentTrackProject(project.id, "confirm_deposit", {
+    actorRole: "admin",
+    amountCents: 100,
+  });
+}
+
+const solarRebateQrUpload = {
+  bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+  originalName: "solar-rebate-qr.png",
+  contentType: "image/png" as const,
+  size: 4,
+};
 
 function preScheduleDelivery(project: Awaited<ReturnType<typeof createPmNotesProject>>) {
   return transitionPaymentTrackProject(project.id, "pre_schedule_delivery", {
@@ -1390,6 +1435,8 @@ test("listing persistently defaults legacy Solar Rebate fields without changing 
   assert.ok(storedProject);
   delete storedProject.solarRebateRequired;
   delete storedProject.solarRebateReceivedAt;
+  delete storedProject.solarRebateQrRequired;
+  delete storedProject.solarRebateQrCode;
   delete storedProject.solarRebateAssessmentVersion;
   await writeFile(recordsPath, `${JSON.stringify(records, null, 2)}\n`, "utf8");
 
@@ -1399,15 +1446,59 @@ test("listing persistently defaults legacy Solar Rebate fields without changing 
   const secondProject = secondList.find((candidate) => candidate.id === project.id);
   assert.equal(firstProject?.solarRebateRequired, false);
   assert.equal(firstProject?.solarRebateReceivedAt, null);
+  assert.equal(firstProject?.solarRebateQrRequired, false);
+  assert.equal(firstProject?.solarRebateQrCode, null);
   assert.equal(secondProject?.solarRebateRequired, false);
   assert.equal(secondProject?.solarRebateReceivedAt, null);
+  assert.equal(secondProject?.solarRebateQrRequired, false);
+  assert.equal(secondProject?.solarRebateQrCode, null);
   assert.equal("solarRebateAssessmentVersion" in (firstProject || {}), false);
 
   const persisted = JSON.parse(await readFile(recordsPath, "utf8")) as Array<Record<string, unknown>>;
   const persistedProject = persisted.find((candidate) => candidate.id === project.id);
   assert.equal(persistedProject?.solarRebateRequired, false);
   assert.equal(persistedProject?.solarRebateReceivedAt, null);
-  assert.equal(persistedProject?.solarRebateAssessmentVersion, 1);
+  assert.equal(persistedProject?.solarRebateQrRequired, false);
+  assert.equal(persistedProject?.solarRebateQrCode, null);
+  assert.equal(persistedProject?.solarRebateAssessmentVersion, 2);
+});
+
+test("legacy WIP records without QR fields default to no gate and remain schedulable", async () => {
+  let project = await createPmNotesProject();
+  project = await transitionPaymentTrackProject(project.id, "acknowledge_deposit", {
+    actorRole: "sales",
+  });
+  project = await transitionPaymentTrackProject(project.id, "confirm_deposit", {
+    actorRole: "admin",
+    amountCents: 100,
+  });
+
+  const recordsPath = path.join(testDataDirectory, "records.json");
+  const records = JSON.parse(await readFile(recordsPath, "utf8")) as Array<Record<string, unknown>>;
+  const storedProject = records.find((candidate) => candidate.id === project.id);
+  assert.ok(storedProject);
+  storedProject.solarRebateRequired = true;
+  delete storedProject.solarRebateQrRequired;
+  delete storedProject.solarRebateQrCode;
+  await writeFile(recordsPath, `${JSON.stringify(records, null, 2)}\n`, "utf8");
+
+  const listed = (await listPaymentTrackProjects()).find((candidate) => candidate.id === project.id);
+  assert.ok(listed);
+  assert.equal(listed.solarRebateRequired, true);
+  assert.equal(listed.solarRebateQrRequired, false);
+  assert.equal(listed.solarRebateQrCode, null);
+
+  project = await transitionPaymentTrackProject(project.id, "schedule_work", {
+    actorRole: "pm",
+    expectedUpdatedAt: listed.updatedAt,
+    workMode: "delivery_only",
+    deliveryDate: "2026-08-28",
+    deliveryTime: "09:00",
+    deliveryAssignee: "Leo",
+    deliverySelections: [{ sku: "LEGACY-SKU", quantity: 1 }],
+  });
+  assert.equal(project.workMode, "delivery_only");
+  assert.equal(project.deliveryScheduledFor, "2026-08-28");
 });
 
 test("an old imported contract backfills Solar Rebate and safely reopens an incorrect Done project", async () => {
@@ -1464,7 +1555,7 @@ test("an old imported contract backfills Solar Rebate and safely reopens an inco
 
   const persisted = JSON.parse(await readFile(recordsPath, "utf8")) as Array<Record<string, unknown>>;
   const persistedProject = persisted.find((candidate) => candidate.id === project.id);
-  assert.equal(persistedProject?.solarRebateAssessmentVersion, 1);
+  assert.equal(persistedProject?.solarRebateAssessmentVersion, 2);
   assert.equal(persistedProject?.solarRebateRequired, true);
 
   const alreadyRequiredRecords = JSON.parse(await readFile(recordsPath, "utf8")) as Array<Record<string, unknown>>;
@@ -1564,6 +1655,154 @@ test("a mutation normalizes and persists a legacy COES-confirmed stage before ac
     stage: string;
   }>;
   assert.equal(persisted.find((candidate) => candidate.id === project.id)?.stage, "stc_rebate");
+});
+
+test("QR-required WIP rejects new and legacy scheduling actions until PM uploads the QR code", async () => {
+  const project = await createQrRequiredWipProject();
+  assert.equal(project.stage, "working_in_progress");
+  assert.equal(project.solarRebateQrRequired, true);
+  assert.equal(project.solarRebateQrCode, null);
+
+  await assert.rejects(
+    transitionPaymentTrackProject(project.id, "schedule_work", {
+      actorRole: "pm",
+      expectedUpdatedAt: project.updatedAt,
+      workMode: "delivery_and_installation",
+      deliveryDate: "2026-08-28",
+      deliveryTime: "09:00",
+      deliveryAssignee: "Leo",
+      installationAssignee: "Daniel",
+      deliverySelections: [{ sku: "QR-SKU", quantity: 1 }],
+    }),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError
+      && error.status === 409
+      && error.code === "solar_rebate_qr_required",
+  );
+  await assert.rejects(
+    transitionPaymentTrackProject(project.id, "schedule_delivery", {
+      actorRole: "pm",
+      expectedUpdatedAt: project.updatedAt,
+      deliveryDate: "2026-08-28",
+      deliveryTime: "09:00",
+      deliveryAssignee: "Leo",
+    }),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError
+      && error.status === 409
+      && error.code === "solar_rebate_qr_required",
+  );
+  await assert.rejects(
+    transitionPaymentTrackProject(project.id, "schedule_installation", {
+      actorRole: "pm",
+      expectedUpdatedAt: project.updatedAt,
+      installationDate: "2026-08-28",
+      installationTime: "09:00",
+      installationAssignee: "Daniel",
+    }),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError
+      && error.status === 409
+      && error.code === "solar_rebate_qr_required",
+  );
+  await assert.rejects(
+    transitionPaymentTrackProject(project.id, "prepare_delivery", {
+      actorRole: "sales",
+      expectedUpdatedAt: project.updatedAt,
+      deliverySelections: [{ sku: "QR-SKU", quantity: 1 }],
+    }),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError
+      && error.status === 409
+      && error.code === "solar_rebate_qr_required",
+  );
+  await assert.rejects(
+    transitionPaymentTrackProject(project.id, "pre_schedule_delivery", {
+      actorRole: "sales",
+      expectedUpdatedAt: project.updatedAt,
+      deliverySelections: [{ sku: "QR-SKU", quantity: 1 }],
+      preferredDate: "2026-08-28",
+      preferredTime: "09:00",
+      notes: "Morning preferred.",
+    }),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError
+      && error.status === 409
+      && error.code === "solar_rebate_qr_required",
+  );
+  await assert.rejects(
+    transitionPaymentTrackProject(project.id, "pre_schedule_installation", {
+      actorRole: "sales",
+      expectedUpdatedAt: project.updatedAt,
+      preferredDate: "2026-08-28",
+      preferredTime: "09:00",
+      notes: "Morning preferred.",
+    }),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError
+      && error.status === 409
+      && error.code === "solar_rebate_qr_required",
+  );
+});
+
+test("only PM can upload the QR code with a current version, after which WIP can be scheduled", async () => {
+  let project = await createQrRequiredWipProject();
+
+  await assert.rejects(
+    uploadPaymentTrackSolarRebateQrCode(
+      project.id,
+      "sales",
+      project.updatedAt,
+      solarRebateQrUpload,
+    ),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError
+      && error.status === 403
+      && error.code === "role_forbidden",
+  );
+  await assert.rejects(
+    uploadPaymentTrackSolarRebateQrCode(
+      project.id,
+      "pm",
+      project.createdAt,
+      solarRebateQrUpload,
+    ),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError
+      && error.status === 409
+      && error.code === "stale_project",
+  );
+
+  project = await uploadPaymentTrackSolarRebateQrCode(
+    project.id,
+    "pm",
+    project.updatedAt,
+    solarRebateQrUpload,
+  );
+  assert.equal(project.solarRebateQrCode?.kind, "solar_rebate_qr_code");
+  assert.equal(project.solarRebateQrCode?.originalName, "solar-rebate-qr.png");
+  assert.equal(project.solarRebateQrCode?.uploadedByRole, "pm");
+  assert.equal(project.history.at(-1)?.action, "solar_rebate_qr_code_uploaded");
+
+  await assert.rejects(
+    transitionPaymentTrackProject(project.id, "pre_schedule_delivery", {
+      actorRole: "sales",
+      expectedUpdatedAt: project.updatedAt,
+      deliverySelections: [{ sku: "QR-SKU", quantity: 1 }],
+      preferredDate: "2026-08-28",
+      preferredTime: "09:00",
+      notes: "Morning preferred.",
+    }),
+    (error: unknown) => error instanceof PaymentTrackRepositoryError
+      && error.status === 409
+      && error.code === "invalid_transition",
+  );
+
+  project = await transitionPaymentTrackProject(project.id, "schedule_work", {
+    actorRole: "pm",
+    expectedUpdatedAt: project.updatedAt,
+    workMode: "delivery_and_installation",
+    deliveryDate: "2026-08-28",
+    deliveryTime: "09:00",
+    deliveryAssignee: "Leo",
+    installationAssignee: "Daniel",
+    deliverySelections: [{ sku: "QR-SKU", quantity: 1 }],
+  });
+  assert.equal(project.workMode, "delivery_and_installation");
+  assert.equal(project.deliveryScheduledFor, "2026-08-28");
+  assert.equal(project.installationScheduledFor, "2026-08-28");
 });
 
 test("WIP supports combined scheduling and multiple Sales-reported payments before installation", async () => {

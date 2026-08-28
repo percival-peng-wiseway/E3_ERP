@@ -35,7 +35,7 @@ export const BUSINESS_AGENT_TOOLS = [
         properties: {
           query: text(500), product: text(100), region: text(80),
           effective_date: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
-          access_scope: text(80), limit: { type: "integer", minimum: 1, maximum: 8 },
+          limit: { type: "integer", minimum: 1, maximum: 8 },
         },
         required: ["query", "limit"],
       },
@@ -97,9 +97,9 @@ function parseArguments(name: ToolName, raw: string): Record<string, unknown> | 
       && (value.warehouse_id === undefined || boundedString(value.warehouse_id, 80)) ? value : null;
   }
   if (name === "search_knowledge_base") {
-    if (!exactKeys(value, ["query", "limit"], ["product", "region", "effective_date", "access_scope"])
+    if (!exactKeys(value, ["query", "limit"], ["product", "region", "effective_date"])
       || !boundedString(value.query, 500) || !Number.isInteger(value.limit) || Number(value.limit) < 1 || Number(value.limit) > 8) return null;
-    if (["product", "region", "access_scope"].some((key) => value[key] !== undefined && !boundedString(value[key], 100))) return null;
+    if (["product", "region"].some((key) => value[key] !== undefined && !boundedString(value[key], 100))) return null;
     if (value.effective_date !== undefined && (typeof value.effective_date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value.effective_date))) return null;
     return value;
   }
@@ -140,7 +140,7 @@ export class BusinessToolExecutor {
     if (name === "search_knowledge_base") return { name, cacheKey, result: await this.provider.searchKnowledge({
       query: String(args.query), limit: Number(args.limit),
       ...(args.product ? { product: String(args.product) } : {}), ...(args.region ? { region: String(args.region) } : {}),
-      ...(args.effective_date ? { effective_date: String(args.effective_date) } : {}), ...(args.access_scope ? { access_scope: String(args.access_scope) } : {}),
+      ...(args.effective_date ? { effective_date: String(args.effective_date) } : {}),
     }, this.context) };
     if (name === "get_project_snapshot") return { name, cacheKey, result: await this.provider.getProject({ project_id: String(args.project_id) }, this.context) };
     return { name, cacheKey, result: await this.provider.getOrderFinance({ order_no: String(args.order_no) }, this.context) };

@@ -6,6 +6,7 @@ const {
   countActivePaymentTrackProjects,
   isFinalPaymentOverdue,
   isPaymentTrackProjectActive,
+  isPaymentTrackWaitingForRebateQr,
 } = await import(typesModule) as typeof import("./types");
 
 const INSTALLED_AT = "2026-08-20T10:00:00.000Z";
@@ -27,6 +28,48 @@ test("Project Track active count matches the workspace Active Projects metric", 
     { stage: "done", outstandingCents: 0 },
   ]), 3);
   assert.equal(countActivePaymentTrackProjects([]), 0);
+});
+
+test("Waiting for Rebate QR only applies to an active required WIP project without a QR code", () => {
+  const waitingProject = {
+    stage: "working_in_progress" as const,
+    solarRebateQrRequired: true,
+    solarRebateQrCode: null,
+    deliveredAt: null,
+    installedAt: null,
+  };
+  const uploadedQrCode = {
+    id: "qr-file",
+    kind: "solar_rebate_qr_code" as const,
+    originalName: "rebate-qr.png",
+    contentType: "image/png" as const,
+    size: 4,
+    url: "/api/payment-track/files/qr-file",
+    uploadedAt: "2026-08-28T01:00:00.000Z",
+    uploadedByRole: "pm" as const,
+  };
+
+  assert.equal(isPaymentTrackWaitingForRebateQr(waitingProject), true);
+  assert.equal(isPaymentTrackWaitingForRebateQr({
+    ...waitingProject,
+    solarRebateQrRequired: false,
+  }), false);
+  assert.equal(isPaymentTrackWaitingForRebateQr({
+    ...waitingProject,
+    solarRebateQrCode: uploadedQrCode,
+  }), false);
+  assert.equal(isPaymentTrackWaitingForRebateQr({
+    ...waitingProject,
+    stage: "deposit_not_paid",
+  }), false);
+  assert.equal(isPaymentTrackWaitingForRebateQr({
+    ...waitingProject,
+    deliveredAt: "2026-08-28T02:00:00.000Z",
+  }), false);
+  assert.equal(isPaymentTrackWaitingForRebateQr({
+    ...waitingProject,
+    installedAt: "2026-08-28T02:00:00.000Z",
+  }), false);
 });
 
 test("final payment is not overdue before installation", () => {

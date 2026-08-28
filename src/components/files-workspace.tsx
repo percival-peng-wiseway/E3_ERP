@@ -2,6 +2,7 @@
 
 import {
   AlertCircle,
+  BookOpen,
   CheckCircle2,
   ChevronRight,
   Download,
@@ -49,6 +50,8 @@ import type {
   WorkspaceFilesListing,
   WorkspaceFilesUsage,
   WorkspaceFilesView,
+  WorkspaceKnowledgeAccessScope,
+  WorkspaceKnowledgeSummary,
 } from "@/lib/workspace-files/types";
 import styles from "./files-workspace.module.css";
 
@@ -100,6 +103,25 @@ type UploadTask = {
   file: File;
   state: UploadState;
   error: string;
+};
+
+type KnowledgeFormState = {
+  title: string;
+  documentType: string;
+  category: string;
+  product: string;
+  region: string;
+  language: string;
+  accessScope: WorkspaceKnowledgeAccessScope;
+  documentVersion: string;
+  effectiveFrom: string;
+  effectiveTo: string;
+};
+
+type KnowledgeResponse = {
+  data?: { document?: WorkspaceKnowledgeSummary };
+  error?: string;
+  code?: string;
 };
 
 type EditorDialog =
@@ -161,6 +183,39 @@ function canPreview(item: WorkspaceFileItem) {
   return item.kind === "file" && Boolean(item.contentType && PREVIEW_TYPES.has(item.contentType));
 }
 
+function canUseForKnowledge(item: WorkspaceFileItem) {
+  if (item.kind !== "file") return false;
+  if (item.contentType === "application/pdf"
+    || item.contentType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") return true;
+  return item.contentType === "text/plain" && /\.txt$/i.test(item.name)
+    || (item.contentType === "text/plain" || item.contentType === "text/markdown" || item.contentType === "text/x-markdown")
+      && /\.md$/i.test(item.name);
+}
+
+function knowledgeFormFor(item: WorkspaceFileItem): KnowledgeFormState {
+  const current = item.knowledge;
+  return {
+    title: current?.title || item.name.replace(/\.[^.]+$/, ""),
+    documentType: current?.documentType || "reference",
+    category: current?.category || "",
+    product: current?.product || "",
+    region: current?.region || "",
+    language: current?.language || "en",
+    accessScope: current?.accessScope || "company",
+    documentVersion: current?.documentVersion || "1",
+    effectiveFrom: current?.effectiveFrom || "",
+    effectiveTo: current?.effectiveTo || "",
+  };
+}
+
+function knowledgeStatusLabel(status: WorkspaceKnowledgeSummary["status"]) {
+  return status === "pending" ? "Pending"
+    : status === "indexing" ? "Indexing"
+      : status === "ready" ? "Ready"
+        : status === "failed" ? "Failed"
+          : "Disabled";
+}
+
 function contentUrl(item: WorkspaceFileItem, mode: "preview" | "download") {
   return `/api/files/items/${encodeURIComponent(item.id)}/content?mode=${mode}`;
 }
@@ -203,6 +258,8 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
   const [editorName, setEditorName] = useState("");
   const [moveParentId, setMoveParentId] = useState(ROOT_PARENT);
   const [previewItem, setPreviewItem] = useState<WorkspaceFileItem | null>(null);
+  const [knowledgeItem, setKnowledgeItem] = useState<WorkspaceFileItem | null>(null);
+  const [knowledgeForm, setKnowledgeForm] = useState<KnowledgeFormState | null>(null);
   const [previewFailed, setPreviewFailed] = useState(false);
   const [uploadTasks, setUploadTasks] = useState<UploadTask[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -265,6 +322,13 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
     void loadFiles();
   }, [loadFiles]);
 
+  const indexWorkInProgress = items.some((item) => item.knowledge?.status === "pending" || item.knowledge?.status === "indexing");
+  useEffect(() => {
+    if (currentUser.role !== "admin" || !indexWorkInProgress) return;
+    const timer = window.setInterval(() => void loadFiles(true), 5_000);
+    return () => window.clearInterval(timer);
+  }, [currentUser.role, indexWorkInProgress, loadFiles]);
+
   useEffect(() => {
     if (!menuItemId) return;
     const focusFrame = window.requestAnimationFrame(() => {
@@ -290,7 +354,7 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
     };
   }, [menuItemId]);
 
-  const modalOpen = Boolean(dialog || previewItem);
+  const modalOpen = Boolean(dialog || previewItem || knowledgeItem);
   useEffect(() => {
     if (!modalOpen) return;
     const originalOverflow = document.body.style.overflow;
@@ -307,6 +371,8 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
         event.preventDefault();
         setDialog(null);
         setPreviewItem(null);
+        setKnowledgeItem(null);
+        setKnowledgeForm(null);
         return;
       }
       if (event.key !== "Tab" || !modalRef.current) return;
@@ -390,10 +456,20 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
     setPreviewItem(item);
   };
 
+  const openKnowledge = (item: WorkspaceFileItem, trigger?: HTMLElement | null) => {
+    returnFocusRef.current = trigger || menuTriggerRef.current;
+    setMenuItemId("");
+    setKnowledgeItem(item);
+    setKnowledgeForm(knowledgeFormFor(item));
+    setError("");
+  };
+
   const closeModal = () => {
     if (busyRef.current) return;
     setDialog(null);
     setPreviewItem(null);
+    setKnowledgeItem(null);
+    setKnowledgeForm(null);
   };
 
   const createFolder = async (event: FormEvent<HTMLFormElement>) => {
@@ -497,6 +573,89 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
     await patchItem(item, { action: "restore" }, `“${item.name}” restored.`);
   };
 
+  const saveKnowledge = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!knowledgeItem || !knowledgeForm) return;
+    if (knowledgeForm.effectiveFrom && knowledgeForm.effectiveTo
+      && knowledgeForm.effectiveTo < knowledgeForm.effectiveFrom) {
+      setError("The effective end date must be on or after the start date.");
+      return;
+    }
+    const current = knowledgeItem.knowledge;
+    setBusyItemId(knowledgeItem.id);
+    setError("");
+    try {
+      const response = await fetch(
+        current ? `/api/knowledge/documents/${encodeURIComponent(current.id)}` : "/api/knowledge/documents",
+        {
+          method: current ? "PATCH" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...(current ? { expectedUpdatedAt: current.updatedAt } : { fileId: knowledgeItem.id }),
+            title: knowledgeForm.title.trim(),
+            documentType: knowledgeForm.documentType.trim(),
+            category: knowledgeForm.category.trim() || null,
+            product: knowledgeForm.product.trim() || null,
+            region: knowledgeForm.region.trim() || null,
+            language: knowledgeForm.language,
+            accessScope: knowledgeForm.accessScope,
+            version: knowledgeForm.documentVersion.trim(),
+            effectiveFrom: knowledgeForm.effectiveFrom || null,
+            effectiveTo: knowledgeForm.effectiveTo || null,
+          }),
+        },
+      );
+      const body = await readJsonResponse<KnowledgeResponse>(response);
+      if (!response.ok || !body.data?.document) {
+        throw new Error(apiError(body, current ? "Unable to update knowledge settings." : "Unable to add this file to the knowledge base."));
+      }
+      setKnowledgeItem(null);
+      setKnowledgeForm(null);
+      setNotice(current
+        ? current.status === "disabled"
+          ? `Knowledge settings for “${knowledgeItem.name}” saved.`
+          : `Knowledge settings for “${knowledgeItem.name}” saved and queued for indexing.`
+        : `“${knowledgeItem.name}” added to the knowledge base.`);
+      await loadFiles(true);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Unable to save knowledge settings.");
+    } finally {
+      setBusyItemId("");
+    }
+  };
+
+  const changeKnowledgeState = async (item: WorkspaceFileItem, action: "disable" | "enable" | "reindex") => {
+    const document = item.knowledge;
+    if (!document) return;
+    setBusyItemId(item.id);
+    setMenuItemId("");
+    setError("");
+    try {
+      const endpoint = action === "reindex"
+        ? `/api/knowledge/documents/${encodeURIComponent(document.id)}/reindex`
+        : `/api/knowledge/documents/${encodeURIComponent(document.id)}`;
+      const response = await fetch(endpoint, {
+        method: action === "reindex" ? "POST" : "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(action === "reindex"
+          ? { expectedUpdatedAt: document.updatedAt }
+          : { action, expectedUpdatedAt: document.updatedAt }),
+      });
+      const body = await readJsonResponse<KnowledgeResponse>(response);
+      if (!response.ok || !body.data?.document) {
+        throw new Error(apiError(body, `Unable to ${action} this knowledge document.`));
+      }
+      setNotice(action === "disable"
+        ? `“${item.name}” removed from active knowledge search.`
+        : `“${item.name}” queued for indexing.`);
+      await loadFiles(true);
+    } catch (stateError) {
+      setError(stateError instanceof Error ? stateError.message : `Unable to ${action} this knowledge document.`);
+    } finally {
+      setBusyItemId("");
+    }
+  };
+
   const uploadFiles = async (selectedFiles: File[]) => {
     if (uploading || view !== "active" || !selectedFiles.length) return;
     const tasks: UploadTask[] = selectedFiles.map((file) => ({
@@ -594,6 +753,9 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
       >
         {item.kind === "file" && canPreview(item) ? <button role="menuitem" type="button" onClick={() => openPreview(item)}><Eye size={15} />Preview</button> : null}
         {item.kind === "file" ? <a role="menuitem" href={contentUrl(item, "download")} onClick={() => setMenuItemId("")}><Download size={15} />Download</a> : null}
+        {view === "active" && currentUser.role === "admin" && (item.knowledge || canUseForKnowledge(item)) ? <button role="menuitem" type="button" onClick={() => openKnowledge(item)}><BookOpen size={15} />{item.knowledge ? "Knowledge settings" : "Add to knowledge base"}</button> : null}
+        {view === "active" && currentUser.role === "admin" && canUseForKnowledge(item) && item.knowledge && item.knowledge.status !== "disabled" ? <button role="menuitem" type="button" onClick={() => void changeKnowledgeState(item, "reindex")}><RefreshCw size={15} />Reindex</button> : null}
+        {view === "active" && currentUser.role === "admin" && item.knowledge && (item.knowledge.status !== "disabled" || canUseForKnowledge(item)) ? <button role="menuitem" type="button" onClick={() => void changeKnowledgeState(item, item.knowledge?.status === "disabled" ? "enable" : "disable")}><BookOpen size={15} />{item.knowledge.status === "disabled" ? "Enable knowledge" : "Disable knowledge"}</button> : null}
         {view === "active" && item.capabilities.rename ? <button role="menuitem" type="button" onClick={() => openDialog({ type: "rename", item })}><Pencil size={15} />Rename</button> : null}
         {view === "active" && item.capabilities.move ? <button role="menuitem" type="button" onClick={() => openDialog({ type: "move", item })}><Move size={15} />Move</button> : null}
         {view === "active" && item.capabilities.trash ? <button role="menuitem" type="button" className={styles.menuDanger} onClick={() => openDialog({ type: "trash", item })}><Trash2 size={15} />Move to Trash</button> : null}
@@ -640,7 +802,7 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
       return (
         <a className={className} href={contentUrl(item, "download")} aria-label={`Download ${item.name}`}>
           <span className={`${styles.itemIcon} ${itemTone(item)}`}><Icon size={20} /></span>
-          <span className={styles.itemName}><strong>{item.name}</strong><small>{item.kind === "folder" ? "Folder" : item.contentType || "File"}</small></span>
+          <span className={styles.itemName}><strong>{item.name}</strong><small>{item.knowledge ? <><i className={`${styles.knowledgeStatus} ${styles[`knowledge${knowledgeStatusLabel(item.knowledge.status)}`]}`}>{knowledgeStatusLabel(item.knowledge.status)}</i>{item.knowledge.lastIndexedAt ? ` · Indexed ${formatDate(item.knowledge.lastIndexedAt)}` : " · Knowledge"}</> : item.kind === "folder" ? "Folder" : item.contentType || "File"}</small></span>
         </a>
       );
     }
@@ -652,7 +814,7 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
         onClick={(event) => opens === "folder" ? navigateFolder(item.id) : openPreview(item, event.currentTarget)}
       >
         <span className={`${styles.itemIcon} ${itemTone(item)}`}><Icon size={20} /></span>
-        <span className={styles.itemName}><strong>{item.name}</strong><small>{item.kind === "folder" ? "Folder" : item.contentType || "File"}</small></span>
+        <span className={styles.itemName}><strong>{item.name}</strong><small>{item.knowledge ? <><i className={`${styles.knowledgeStatus} ${styles[`knowledge${knowledgeStatusLabel(item.knowledge.status)}`]}`}>{knowledgeStatusLabel(item.knowledge.status)}</i>{item.knowledge.lastIndexedAt ? ` · Indexed ${formatDate(item.knowledge.lastIndexedAt)}` : " · Knowledge"}</> : item.kind === "folder" ? "Folder" : item.contentType || "File"}</small></span>
       </button>
     );
   };
@@ -852,6 +1014,41 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
                 </div>
               )}
               <footer><button type="button" className={styles.secondaryButton} disabled={Boolean(busyItemId)} onClick={closeModal}>Cancel</button><button type="submit" className={dialog.type === "purge" ? styles.dangerButton : styles.primaryButton} disabled={Boolean(busyItemId) || ((dialog.type === "create" || dialog.type === "rename") && !editorName.trim()) || Boolean(moveTargetUnchanged)}>{busyItemId ? <LoaderCircle className={styles.spinning} size={16} /> : null}{dialog.type === "create" ? "Create folder" : dialog.type === "rename" ? "Save name" : dialog.type === "move" ? "Move item" : dialog.type === "trash" ? "Move to Trash" : "Delete forever"}</button></footer>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {knowledgeItem && knowledgeForm ? (
+        <div className={styles.backdrop} onMouseDown={(event) => { if (event.target === event.currentTarget) closeModal(); }}>
+          <div ref={modalRef} className={`${styles.dialog} ${styles.knowledgeDialog}`} role="dialog" aria-modal="true" aria-labelledby="knowledge-dialog-title">
+            <header>
+              <div className={styles.dialogIcon}><BookOpen size={20} /></div>
+              <div><span>KNOWLEDGE BASE</span><h2 id="knowledge-dialog-title">{knowledgeItem.knowledge ? "Knowledge settings" : "Add knowledge document"}</h2></div>
+              <button type="button" aria-label="Close" disabled={Boolean(busyItemId)} onClick={closeModal}><X size={19} /></button>
+            </header>
+            {knowledgeItem.knowledge ? (
+              <div className={styles.knowledgeState}>
+                <i className={`${styles.knowledgeStatus} ${styles[`knowledge${knowledgeStatusLabel(knowledgeItem.knowledge.status)}`]}`}>{knowledgeStatusLabel(knowledgeItem.knowledge.status)}</i>
+                <span>{knowledgeItem.knowledge.lastIndexedAt ? `Last indexed ${formatDate(knowledgeItem.knowledge.lastIndexedAt)}` : "Not indexed yet"}</span>
+                {knowledgeItem.knowledge.errorMessage ? <strong>{knowledgeItem.knowledge.errorMessage}</strong> : null}
+              </div>
+            ) : null}
+            {error ? <div className={styles.dialogError} role="alert"><AlertCircle size={16} />{error}</div> : null}
+            <form onSubmit={(event) => void saveKnowledge(event)}>
+              <div className={styles.knowledgeGrid}>
+                <label className={styles.wideField}>Title<input autoFocus required maxLength={180} value={knowledgeForm.title} onChange={(event) => setKnowledgeForm({ ...knowledgeForm, title: event.target.value })} /></label>
+                <label>Document type<select value={knowledgeForm.documentType} onChange={(event) => setKnowledgeForm({ ...knowledgeForm, documentType: event.target.value })}><option value="reference">Reference</option><option value="manual">Product manual</option><option value="troubleshooting">Troubleshooting</option><option value="sop">SOP</option><option value="policy">Policy</option><option value="faq">Sales FAQ</option><option value="delivery_process">Delivery process</option></select></label>
+                <label>Version<input required maxLength={40} value={knowledgeForm.documentVersion} onChange={(event) => setKnowledgeForm({ ...knowledgeForm, documentVersion: event.target.value })} /></label>
+                <label>Category<input maxLength={80} value={knowledgeForm.category} onChange={(event) => setKnowledgeForm({ ...knowledgeForm, category: event.target.value })} placeholder="e.g. Installation" /></label>
+                <label>Product<input maxLength={100} value={knowledgeForm.product} onChange={(event) => setKnowledgeForm({ ...knowledgeForm, product: event.target.value })} placeholder="All products" /></label>
+                <label>Region<input maxLength={80} value={knowledgeForm.region} onChange={(event) => setKnowledgeForm({ ...knowledgeForm, region: event.target.value })} placeholder="All regions" /></label>
+                <label>Language<select value={knowledgeForm.language} onChange={(event) => setKnowledgeForm({ ...knowledgeForm, language: event.target.value })}><option value="en">English</option><option value="zh">Chinese</option><option value="multilingual">Multilingual</option></select></label>
+                <label>Access<select value={knowledgeForm.accessScope} onChange={(event) => setKnowledgeForm({ ...knowledgeForm, accessScope: event.target.value as WorkspaceKnowledgeAccessScope })}><option value="company">Company</option><option value="sales">Sales</option><option value="pm">Project Managers</option><option value="finance">Finance</option><option value="admin">Administrators only</option></select></label>
+                <label>Effective from<input type="date" value={knowledgeForm.effectiveFrom} onChange={(event) => setKnowledgeForm({ ...knowledgeForm, effectiveFrom: event.target.value })} /></label>
+                <label>Effective to<input type="date" min={knowledgeForm.effectiveFrom || undefined} value={knowledgeForm.effectiveTo} onChange={(event) => setKnowledgeForm({ ...knowledgeForm, effectiveTo: event.target.value })} /></label>
+              </div>
+              <footer><button type="button" className={styles.secondaryButton} disabled={Boolean(busyItemId)} onClick={closeModal}>Cancel</button><button type="submit" className={styles.primaryButton} disabled={Boolean(busyItemId) || !knowledgeForm.title.trim() || !knowledgeForm.documentVersion.trim()}>{busyItemId ? <LoaderCircle className={styles.spinning} size={16} /> : knowledgeItem.knowledge?.status === "disabled" ? <BookOpen size={16} /> : <RefreshCw size={16} />}{knowledgeItem.knowledge?.status === "disabled" ? "Save settings" : knowledgeItem.knowledge ? "Save & reindex" : "Add & index"}</button></footer>
             </form>
           </div>
         </div>

@@ -1,3 +1,5 @@
+// @ts-expect-error -- focused Node ESM tests require the explicit extension.
+import { isPaymentTrackWaitingForRebateQr } from "../payment-track/types.ts";
 import type { PaymentTrackProject } from "../payment-track/types";
 import type { NotificationRole } from "./types";
 
@@ -12,6 +14,7 @@ export type PaymentTrackResponsibilityAction =
   | "pre_schedule_installation"
   | "review_installation_pre_schedule"
   | "manage_installation"
+  | "upload_rebate_qr_code"
   | "manage_work"
   | "record_final_payment"
   | "confirm_final_payment"
@@ -62,7 +65,10 @@ export function paymentTrackResponsibilities(project: PaymentTrackProject): Paym
 
   const tasks: PaymentTrackResponsibility[] = [];
   if (project.stage === "working_in_progress" && !project.installedAt) {
-    tasks.push({ action: "manage_work", role: "pm" });
+    tasks.push({
+      action: isPaymentTrackWaitingForRebateQr(project) ? "upload_rebate_qr_code" : "manage_work",
+      role: "pm",
+    });
   }
 
   if (project.stage === "material_delivery") {

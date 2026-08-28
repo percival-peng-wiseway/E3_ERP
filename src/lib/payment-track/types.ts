@@ -59,6 +59,7 @@ export const PAYMENT_TRACK_STAGE_SKIP_REASON_MAX_LENGTH = 500;
 export type PaymentTrackFileKind =
   | "contract"
   | "deposit_proof"
+  | "solar_rebate_qr_code"
   | "collection_proof"
   | "final_payment_proof";
 
@@ -155,6 +156,7 @@ export type PaymentTrackHistoryAction =
   | "deposit_proof_uploaded"
   | "deposit_acknowledged"
   | "deposit_confirmed"
+  | "solar_rebate_qr_code_uploaded"
   | "delivery_items_prepared"
   | "delivery_pre_scheduled"
   | "delivery_scheduled"
@@ -228,6 +230,13 @@ export interface PaymentTrackProject {
   stcSolarRequired: boolean;
   stcBatteryRequired: boolean;
   solarRebateRequired: boolean;
+  /**
+   * Snapshot taken when a new project is created. This is intentionally
+   * separate from the post-installation Solar Rebate receipt requirement so
+   * uploading a QR code cannot accidentally mark rebate funds as received.
+   */
+  solarRebateQrRequired: boolean;
+  solarRebateQrCode: PaymentTrackFile | null;
   stcSolarReceivedAt: string | null;
   stcBatteryReceivedAt: string | null;
   solarRebateReceivedAt: string | null;
@@ -250,6 +259,19 @@ export function countActivePaymentTrackProjects(
   projects: ReadonlyArray<Pick<PaymentTrackProject, "stage" | "outstandingCents">>,
 ) {
   return projects.filter(isPaymentTrackProjectActive).length;
+}
+
+export function isPaymentTrackWaitingForRebateQr(
+  project: Pick<
+    PaymentTrackProject,
+    "stage" | "solarRebateQrRequired" | "solarRebateQrCode" | "deliveredAt" | "installedAt"
+  >,
+) {
+  return project.stage === "working_in_progress"
+    && !project.deliveredAt
+    && !project.installedAt
+    && project.solarRebateQrRequired
+    && !project.solarRebateQrCode;
 }
 
 const FINAL_PAYMENT_OVERDUE_AFTER_MS = 7 * 24 * 60 * 60 * 1_000;

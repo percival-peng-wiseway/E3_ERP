@@ -20,6 +20,44 @@ export type WorkspaceFileCapabilities = {
   purge: boolean;
 };
 
+export const WORKSPACE_KNOWLEDGE_STATUSES = [
+  "pending",
+  "indexing",
+  "ready",
+  "failed",
+  "disabled",
+] as const;
+export type WorkspaceKnowledgeStatus = (typeof WORKSPACE_KNOWLEDGE_STATUSES)[number];
+
+export const WORKSPACE_KNOWLEDGE_ACCESS_SCOPES = [
+  "company",
+  "sales",
+  "pm",
+  "finance",
+  "admin",
+] as const;
+export type WorkspaceKnowledgeAccessScope = (typeof WORKSPACE_KNOWLEDGE_ACCESS_SCOPES)[number];
+
+/** Admin-only projection returned by the Files list route. */
+export type WorkspaceKnowledgeSummary = {
+  id: string;
+  fileId: string;
+  title: string;
+  documentType: string;
+  category: string | null;
+  product: string | null;
+  region: string | null;
+  language: string;
+  accessScope: WorkspaceKnowledgeAccessScope;
+  documentVersion: string;
+  effectiveFrom: string | null;
+  effectiveTo: string | null;
+  status: WorkspaceKnowledgeStatus;
+  lastIndexedAt: string | null;
+  updatedAt: string;
+  errorMessage: string | null;
+};
+
 export type WorkspaceFileItem = {
   id: string;
   workspaceId: "company";
@@ -38,6 +76,8 @@ export type WorkspaceFileItem = {
   trashedBy: string | null;
   version: number;
   capabilities: WorkspaceFileCapabilities;
+  /** Present only for Administrators; ordinary users never receive index controls. */
+  knowledge?: WorkspaceKnowledgeSummary | null;
 };
 
 export type WorkspaceFileBreadcrumb = {
@@ -76,5 +116,18 @@ export type WorkspaceFileUpload = {
 
 export type WorkspaceFileContent = {
   item: WorkspaceFileItem;
+  read(): Promise<Uint8Array>;
+};
+
+/** Server-only source used by the knowledge indexer; never serialize this object. */
+export type WorkspaceFileIndexSource = {
+  fileId: string;
+  name: string;
+  contentType: string;
+  size: number;
+  checksum: string;
+  version: number;
+  updatedAt: string;
+  sourcePath: string;
   read(): Promise<Uint8Array>;
 };

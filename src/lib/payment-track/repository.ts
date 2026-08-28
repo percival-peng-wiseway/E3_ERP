@@ -72,6 +72,8 @@ type StoredProject = Omit<
   | "overpaymentCents"
   | "solarRebateRequired"
   | "solarRebateReceivedAt"
+  | "solarRebateQrRequired"
+  | "solarRebateQrCode"
   | "pmNotes"
   | "pmNotesUpdatedAt"
   | "pmNotesUpdatedBy"
@@ -97,6 +99,10 @@ type StoredProject = Omit<
   // Optional so records created before Solar Rebate tracking migrate to no requirement.
   solarRebateRequired?: boolean;
   solarRebateReceivedAt?: string | null;
+  // Missing on records created before the QR scheduling gate. Those records
+  // migrate to `false` so an existing schedule is never retroactively blocked.
+  solarRebateQrRequired?: boolean;
+  solarRebateQrCode?: StoredFile | null;
   // Internal schema marker. Missing means an imported contract has not yet
   // been evaluated with the authoritative Solar Rebate price-line rule.
   solarRebateAssessmentVersion?: number;
@@ -135,6 +141,7 @@ export type CreatePaymentTrackInput = {
   stcSolarRequired: boolean;
   stcBatteryRequired: boolean;
   solarRebateRequired?: boolean;
+  solarRebateQrRequired?: boolean;
 };
 
 export type PaymentTrackUpload = {
@@ -192,7 +199,7 @@ const MIME_EXTENSIONS: Record<PaymentTrackUploadContentType, string> = {
   "image/webp": "webp",
 };
 
-const SOLAR_REBATE_ASSESSMENT_VERSION = 1;
+const SOLAR_REBATE_ASSESSMENT_VERSION = 2;
 const SOLAR_REBATE_ASSESSMENT_RETRY_MS = 60_000;
 
 const dataRoot = path.resolve(
@@ -390,6 +397,8 @@ function publicProject(project: StoredProject): PaymentTrackProject {
     solarRebateReceivedAt: typeof project.solarRebateReceivedAt === "string"
       ? project.solarRebateReceivedAt
       : null,
+    solarRebateQrRequired: project.solarRebateQrRequired === true,
+    solarRebateQrCode: publicFile(project.id, project.solarRebateQrCode || null),
     pmNotes: typeof project.pmNotes === "string" ? project.pmNotes : "",
     pmNotesUpdatedAt: typeof project.pmNotesUpdatedAt === "string"
       ? project.pmNotesUpdatedAt
@@ -732,6 +741,14 @@ async function migrateLegacyProjectStages(projects: StoredProject[], fallbackTim
       project.solarRebateReceivedAt = null;
       changed = true;
     }
+    if (typeof project.solarRebateQrRequired !== "boolean") {
+      project.solarRebateQrRequired = false;
+      changed = true;
+    }
+    if (project.solarRebateQrCode === undefined) {
+      project.solarRebateQrCode = null;
+      changed = true;
+    }
 
     if (!solarRebateAssessmentIsCurrent(project)) {
       if (!project.contract) {
@@ -912,6 +929,8 @@ function buildProject(
     stcSolarRequired: input.stcSolarRequired,
     stcBatteryRequired: input.stcBatteryRequired,
     solarRebateRequired: input.solarRebateRequired === true,
+    solarRebateQrRequired: input.solarRebateQrRequired === true,
+    solarRebateQrCode: null,
     stcSolarReceivedAt: null,
     stcBatteryReceivedAt: null,
     solarRebateReceivedAt: null,
@@ -1000,6 +1019,7 @@ export function deletePaymentTrackProject(id: string) {
     const files = [
       deleted.contract,
       deleted.deposit.proof,
+      deleted.solarRebateQrCode,
       deleted.collection.proof,
       ...finalPaymentProofs,
     ].filter(Boolean) as StoredFile[];
@@ -1043,6 +1063,60 @@ export function uploadPaymentTrackProof(
     project.deposit.proof = stored.file;
     project.updatedAt = timestamp;
     project.history.push(historyEntry("deposit_proof_uploaded", timestamp, role, undefined, upload.originalName));
+
+    try {
+      projects[index] = project;
+      await writeStoredProjects(projects, storedDocument.version);
+    } catch (error) {
+      await deleteStoredFile(stored.file).catch(() => undefined);
+      throw error;
+    }
+    if (previous) await deleteStoredFile(previous).catch(() => undefined);
+    return publicProject(project);
+  });
+}
+
+export function uploadPaymentTrackSolarRebateQrCode(
+  id: string,
+  role: PaymentTrackRole,
+  expectedUpdatedAt: string,
+  upload: PaymentTrackUpload,
+) {
+  return withMutation(async () => {
+    const storedDocument = await readStoredProjectDocument();
+    const projects = storedDocument.projects;
+    await migrateLegacyProjectStages(projects, new Date().toISOString());
+    const index = projects.findIndex((candidate) => candidate.id === id);
+    if (index < 0) throw new PaymentTrackRepositoryError("Project not found.", 404, "not_found");
+    const project = projects[index];
+
+    requireRole(role, ["pm"], "Only the Project Manager can upload the Solar Rebate QR code.");
+    requireCurrentProjectVersion(project, expectedUpdatedAt);
+    if (project.stage !== "working_in_progress"
+      || !project.solarRebateQrRequired
+      || project.deliveredAt
+      || project.installedAt
+      || workScheduleIsComplete(project)) {
+      throw new PaymentTrackRepositoryError(
+        "The Solar Rebate QR code can only be uploaded before WIP scheduling.",
+        409,
+        "invalid_transition",
+      );
+    }
+
+    const previous = project.solarRebateQrCode || null;
+    const timestamp = nextProjectTimestamp(project);
+    const actor = actorName(role);
+    const stored = await storedUpload("solar_rebate_qr_code", role, upload, timestamp);
+    project.solarRebateQrCode = stored.file;
+    project.updatedAt = timestamp;
+    project.history.push(historyEntry(
+      "solar_rebate_qr_code_uploaded",
+      timestamp,
+      "pm",
+      actor,
+      upload.originalName,
+    ));
 
     try {
       projects[index] = project;
@@ -1275,6 +1349,18 @@ function rebateRequirementsComplete(project: StoredProject) {
   return solarStcComplete && batteryStcComplete && solarRebateComplete;
 }
 
+function requireSolarRebateQrBeforeScheduling(project: StoredProject) {
+  if (project.stage === "working_in_progress"
+    && project.solarRebateQrRequired
+    && !project.solarRebateQrCode) {
+    throw new PaymentTrackRepositoryError(
+      "Upload the Solar Rebate QR code before scheduling this project.",
+      409,
+      "solar_rebate_qr_required",
+    );
+  }
+}
+
 function completeProjectIfRequirementsMet(
   project: StoredProject,
   timestamp: string,
@@ -1384,6 +1470,7 @@ export function transitionPaymentTrackProject(
     } else if (action === "schedule_work") {
       requireRole(input.actorRole, ["pm"], "Only the Project Manager can schedule work.");
       requireCurrentProjectVersion(project, input.expectedUpdatedAt);
+      requireSolarRebateQrBeforeScheduling(project);
       const mode = input.workMode;
       const includesDelivery = mode === "delivery_only" || mode === "delivery_and_installation";
       const includesInstallation = mode === "installation_only" || mode === "delivery_and_installation";
@@ -1454,7 +1541,9 @@ export function transitionPaymentTrackProject(
       project.history.push(historyEntry("work_completed", timestamp, "pm", actor, mode));
     } else if (action === "prepare_delivery") {
       requireRole(input.actorRole, ["sales"], "Only Sales can prepare delivery items.");
+      requireSolarRebateQrBeforeScheduling(project);
       if (!["material_delivery", "working_in_progress"].includes(project.stage)
+        || (project.stage === "working_in_progress" && project.solarRebateQrRequired)
         || project.deliveredAt
         || deliveryScheduleIsComplete(project)
         || normalizedStoredScheduleRequest(project.deliveryScheduleRequest)) {
@@ -1478,7 +1567,9 @@ export function transitionPaymentTrackProject(
       ));
     } else if (action === "pre_schedule_delivery") {
       requireRole(input.actorRole, ["sales"], "Only Sales can submit a delivery scheduling request.");
+      requireSolarRebateQrBeforeScheduling(project);
       if (!["material_delivery", "working_in_progress"].includes(project.stage)
+        || (project.stage === "working_in_progress" && project.solarRebateQrRequired)
         || project.deliveredAt
         || deliveryScheduleIsComplete(project)) {
         throw new PaymentTrackRepositoryError(
@@ -1514,6 +1605,7 @@ export function transitionPaymentTrackProject(
     } else if (action === "schedule_delivery") {
       requireRole(input.actorRole, ["pm"], "Only the Project Manager can schedule delivery.");
       requireCurrentProjectVersion(project, input.expectedUpdatedAt);
+      requireSolarRebateQrBeforeScheduling(project);
       if (!["material_delivery", "working_in_progress"].includes(project.stage)
         || project.deliveredAt
         || (!deliveryPreScheduleIsComplete(project) && !deliveryScheduleIsComplete(project))
@@ -1564,7 +1656,9 @@ export function transitionPaymentTrackProject(
       project.history.push(historyEntry("collection_confirmed", timestamp, "admin", actor, `AUD ${(amount / 100).toFixed(2)}`));
     } else if (action === "pre_schedule_installation") {
       requireRole(input.actorRole, ["sales"], "Only Sales can submit an installation scheduling request.");
+      requireSolarRebateQrBeforeScheduling(project);
       if (!["installing", "working_in_progress"].includes(project.stage)
+        || (project.stage === "working_in_progress" && project.solarRebateQrRequired)
         || project.installedAt
         || installationScheduleIsComplete(project)) {
         throw new PaymentTrackRepositoryError(
@@ -1594,6 +1688,7 @@ export function transitionPaymentTrackProject(
     } else if (action === "schedule_installation") {
       requireRole(input.actorRole, ["pm"], "Only the Project Manager can schedule installation.");
       requireCurrentProjectVersion(project, input.expectedUpdatedAt);
+      requireSolarRebateQrBeforeScheduling(project);
       if (!["installing", "working_in_progress"].includes(project.stage)
         || project.installedAt
         || (!installationPreScheduleIsComplete(project) && !installationScheduleIsComplete(project))
@@ -1854,7 +1949,13 @@ export async function getPaymentTrackFile(projectId: string, fileId: string): Pr
   const project = projects.find((candidate) => candidate.id === projectId);
   if (!project) return null;
   const finalProofs = (project.finalPayments || []).map((payment) => payment.proof);
-  const candidates = [project.contract, project.deposit.proof, project.collection.proof, ...finalProofs]
+  const candidates = [
+    project.contract,
+    project.deposit.proof,
+    project.solarRebateQrCode,
+    project.collection.proof,
+    ...finalProofs,
+  ]
     .filter(Boolean) as StoredFile[];
   const file = candidates.find((candidate) => candidate.id === fileId);
   if (!file) return null;

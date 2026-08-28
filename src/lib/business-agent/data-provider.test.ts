@@ -35,6 +35,7 @@ test("knowledge adapter allow-lists fields and injects server auth scope", async
   const result = await new LiveBusinessDataProvider(erp).searchKnowledge({ query: "policy", limit: 4 }, context);
   assert.equal(result.ok, true);
   assert.equal(JSON.stringify(result).includes("must-not-leak"), false);
+  assert.equal(result.data?.[0]?.access_scope, "internal");
   assert.equal(headers?.get("x-erp-tenant"), "tenant-a");
   assert.equal(headers?.get("x-erp-role"), "admin");
   assert.equal(headers?.get("authorization"), "Bearer server-secret");
@@ -47,5 +48,24 @@ test("configured internal APIs fail closed without server-to-server credentials"
   globalThis.fetch = (async () => { called = true; return Response.json({}); }) as typeof fetch;
   const result = await new LiveBusinessDataProvider(erp).searchKnowledge({ query: "policy", limit: 4 }, context);
   assert.equal(result.error_code, "unavailable");
+  assert.equal(called, false);
+});
+
+test("same-worker knowledge search receives server auth without an HTTP round trip", async () => {
+  let called = false;
+  globalThis.fetch = (async () => { called = true; return Response.json({}); }) as typeof fetch;
+  const provider = new LiveBusinessDataProvider(erp, async (input, auth) => ({
+    ok: true,
+    data: [{
+      document_id: "KB-1", chunk_id: "chunk-1", title: "Guide", version: "1", product: null,
+      region: null, effective_from: null, effective_to: null, access_scope: "internal",
+      updated_at: "2026-08-28T00:00:00Z", excerpt: input.query,
+    }],
+    error_code: null, source: `knowledge_${auth.tenantId}`, source_record_ids: ["chunk-1"],
+    updated_at: "2026-08-28T00:00:00Z", retryable: false,
+  }));
+  const result = await provider.searchKnowledge({ query: "guide", limit: 4 }, context);
+  assert.equal(result.ok, true);
+  assert.equal(result.source, "knowledge_tenant-a");
   assert.equal(called, false);
 });

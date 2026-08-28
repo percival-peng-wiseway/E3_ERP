@@ -99,10 +99,25 @@ export interface AgentRequest {
   history?: AgentHistoryMessage[];
 }
 
+export interface AgentCitation {
+  documentId: string;
+  chunkId?: string;
+  fileId?: string;
+  title: string;
+  version: string;
+  effectiveFrom: string | null;
+  source: string;
+  pageNumber?: number | null;
+  sourcePath?: string | null;
+  headingPath?: string[];
+  updatedAt?: string;
+}
+
 export interface AgentAnswer {
   answer: string;
   mode: "local" | "openai" | "deepseek";
   suggestions: string[];
+  citations?: AgentCitation[];
 }
 
 export interface ApiMeta {

@@ -65,6 +65,7 @@ export async function POST(request: NextRequest) {
       stcSolarRequired: parsed.stcSolarRequired,
       stcBatteryRequired: parsed.stcBatteryRequired,
       solarRebateRequired: parsed.solarRebateRequired,
+      solarRebateQrRequired: parsed.solarRebateRequired,
     }, {
       bytes,
       originalName: safePaymentTrackOriginalName(agreement.name, "agreement.pdf"),
