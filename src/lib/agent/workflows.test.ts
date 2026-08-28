@@ -195,6 +195,66 @@ test("runDeterministicWorkflow passes through a live inventory answer", async ()
   assert.equal(trace.snapshot().steps[0]?.name, "inventory.live_query");
 });
 
+test("SKU customer and order usage questions use the lineage branch before stock lookup", async () => {
+  for (const message of ["哪些订单用KH10？", "哪些客户用了kh10？", "Which customer used KH10?"]) {
+    const trace = new AgentTrace();
+    let received = "";
+    const result = await runDeterministicWorkflow(
+      provider(),
+      message,
+      trace,
+      dependencies({
+        fastInventoryAnswer: async (query) => {
+          received = query;
+          return { mode: "local", answer: "8 delivered orders; 3 installed projects.", suggestions: [] };
+        },
+      }),
+    );
+    assert.equal(received, message);
+    assert.equal(result?.workflow, "inventory_query");
+    assert.equal(result?.answer, "8 delivered orders; 3 installed projects.");
+    assert.equal(trace.snapshot().steps[0]?.name, "inventory.usage_query");
+  }
+});
+
+test("SKU product-purpose questions are not forced into the stock balance workflow", async () => {
+  for (const message of ["What is KH10 used for?", "KH10是做什么用的？"]) {
+    let inventoryCalls = 0;
+    const result = await runDeterministicWorkflow(
+      provider(),
+      message,
+      new AgentTrace(),
+      dependencies({
+        fastInventoryAnswer: async () => {
+          inventoryCalls += 1;
+          return { mode: "local", answer: "Stock balance.", suggestions: [] };
+        },
+      }),
+    );
+    assert.equal(result, null, message);
+    assert.equal(inventoryCalls, 0, message);
+  }
+});
+
+test("explicit availability and bare SKU lookups still use live inventory", async () => {
+  for (const message of ["How many CANOPY are available?", "KH10", "Look up SKU bollard", "Look up stock KH10"]) {
+    let inventoryCalls = 0;
+    const result = await runDeterministicWorkflow(
+      provider(),
+      message,
+      new AgentTrace(),
+      dependencies({
+        fastInventoryAnswer: async () => {
+          inventoryCalls += 1;
+          return { mode: "local", answer: "Live stock.", suggestions: [] };
+        },
+      }),
+    );
+    assert.equal(result?.workflow, "inventory_query", message);
+    assert.equal(inventoryCalls, 1, message);
+  }
+});
+
 test("Project Track references do not get misrouted as inventory SKUs", async () => {
   let inventoryCalls = 0;
   let paymentCalls = 0;

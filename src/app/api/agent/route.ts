@@ -1,5 +1,6 @@
 import { answerWithOpenAICompatible, knowledgeAbstention } from "@/lib/agent/deepseek";
-import { isKnowledgeConversationIntent } from "@/lib/agent/tool-routing";
+import { shouldUseKnowledgeConversationIntent } from "@/lib/agent/tool-routing";
+import { resolveInventoryUsageMessage } from "@/lib/agent/inventory-usage";
 import {
   AgentRequestBodyTooLarge,
   readLimitedAgentJson,
@@ -100,7 +101,11 @@ async function processAgentRequest(request: Request) {
   }
 
   const provider = getERPProvider(request);
-  const knowledgeRequest = isKnowledgeConversationIntent(input.message, input.history.slice(-2).map((item) => item.content));
+  const workspaceMessage = resolveInventoryUsageMessage(input.message, input.history);
+  const knowledgeRequest = shouldUseKnowledgeConversationIntent(
+    workspaceMessage,
+    input.history.slice(-2).map((item) => item.content),
+  );
   const trace = new AgentTrace();
   const warnings: string[] = [];
   let modelStatus: "available" | "unavailable" | "not_checked" = "not_checked";
@@ -128,7 +133,7 @@ async function processAgentRequest(request: Request) {
     const workflowAnswer = knowledgeRequest ? null : await trace.step(
       "harness.route",
       "workflow",
-      () => runDeterministicWorkflow(provider, input.message, trace, deterministicWorkflowDependencies),
+      () => runDeterministicWorkflow(provider, workspaceMessage, trace, deterministicWorkflowDependencies),
     );
     if (workflowAnswer) {
       data = workflowAnswer;
@@ -160,7 +165,7 @@ async function processAgentRequest(request: Request) {
     try {
       data = knowledgeRequest
         ? knowledgeAbstention(input.message)
-        : await trace.step("local.fallback", "fallback", () => localWorkspaceAnswer(provider, input.message));
+        : await trace.step("local.fallback", "fallback", () => localWorkspaceAnswer(provider, workspaceMessage));
     } catch (fallbackError) {
       trace.markOutcome("error");
       trace.emit();

@@ -2,12 +2,41 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 const routingModule = "./tool-routing.ts";
-const { focusedAgentToolNames, isKnowledgeConversationIntent, isKnowledgeIntent } = await import(routingModule) as typeof import("./tool-routing");
+const {
+  focusedAgentToolNames,
+  isKnowledgeConversationIntent,
+  isKnowledgeIntent,
+  shouldUseKnowledgeConversationIntent,
+} = await import(routingModule) as typeof import("./tool-routing");
 
 test("tool routing narrows explicit quotation, payment and inventory requests", () => {
   assert.deepEqual(focusedAgentToolNames("Show quotation QTN-2026-0001"), ["search_quotations"]);
   assert.deepEqual(focusedAgentToolNames("What is outstanding for PAY-2026-0002?"), ["search_payment_projects"]);
   assert.deepEqual(focusedAgentToolNames("Look up stock SKU BAT-ONE"), ["search_inventory"]);
+});
+
+test("SKU usage questions route to lineage instead of the stock balance tool", () => {
+  for (const message of [
+    "哪些订单用KH10？",
+    "哪些客户用了kh10？",
+    "Which customer used KH10?",
+    "Which orders contain KH10?",
+    "KH10有哪些订单还没送货？",
+    "Which customer used KH10 in QN202605050003?",
+    "Which orders used BAT-ONE?",
+    "哪些客户用了CANOPY？",
+  ]) {
+    assert.deepEqual(focusedAgentToolNames(message), ["search_inventory_usage"], message);
+  }
+  assert.deepEqual(focusedAgentToolNames("How many KH10 are available?"), ["search_inventory"]);
+  assert.deepEqual(focusedAgentToolNames("How many CANOPY are available?"), ["search_inventory"]);
+  assert.deepEqual(focusedAgentToolNames("KH10"), ["search_inventory"]);
+  assert.equal(focusedAgentToolNames("What is KH10 used for?"), null);
+  assert.equal(focusedAgentToolNames("KH10是做什么用的？"), null);
+  assert.deepEqual(
+    focusedAgentToolNames("Compare KH10 stock with customers who used it"),
+    ["search_inventory", "search_inventory_usage"],
+  );
 });
 
 test("Project Track references are not treated as inventory identifiers", () => {
@@ -33,4 +62,18 @@ test("knowledge questions select only the authorised knowledge search tool", () 
   assert.deepEqual(focusedAgentToolNames("What is the 5 kW export acceptance tolerance?"), ["search_knowledge_base"]);
   assert.equal(isKnowledgeConversationIntent("What about after the second time?", ["What does E117 mean?"]), true);
   assert.equal(isKnowledgeConversationIntent("Show inventory", ["What does E117 mean?"]), false);
+  assert.equal(
+    shouldUseKnowledgeConversationIntent("Which customer used KH10?", ["What does the manual say?"]),
+    false,
+    "an explicit live SKU query overrides a stale knowledge follow-up prefix",
+  );
+  assert.equal(
+    shouldUseKnowledgeConversationIntent("What about after the second time?", ["What does E117 mean?"]),
+    true,
+  );
+  assert.equal(
+    shouldUseKnowledgeConversationIntent("What about KH10?", ["What does the troubleshooting manual say about KH8?"]),
+    true,
+    "a bare identifier can remain a knowledge follow-up without an explicit stock or usage intent",
+  );
 });

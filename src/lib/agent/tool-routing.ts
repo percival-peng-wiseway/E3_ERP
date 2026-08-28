@@ -1,5 +1,9 @@
+// @ts-expect-error -- focused Node ESM tests require the explicit extension.
+import { inventorySkuCandidates, isBareInventorySkuLookup, isInventoryStockIntent, isInventoryUsageIntent } from "./inventory-usage.ts";
+
 export type FocusedAgentToolName =
   | "search_inventory"
+  | "search_inventory_usage"
   | "search_knowledge_base"
   | "search_quotations"
   | "search_delivery_orders"
@@ -7,8 +11,7 @@ export type FocusedAgentToolName =
   | "search_weekly_schedule";
 
 function hasInventoryIdentifier(message: string): boolean {
-  const candidates = message.match(/\b(?=[a-z0-9_-]{2,40}\b)(?=[a-z0-9_-]*[a-z])(?=[a-z0-9_-]*\d)[a-z0-9_-]+\b/giu) || [];
-  return candidates.some((candidate) => !/^(?:pay|qtn|cpec)(?:[_-]|\d)/iu.test(candidate));
+  return inventorySkuCandidates(message).length > 0;
 }
 
 export function isKnowledgeIntent(message: string): boolean {
@@ -21,6 +24,15 @@ export function isKnowledgeConversationIntent(message: string, recentHistory: re
   return followUp && recentHistory.slice(-2).some(isKnowledgeIntent);
 }
 
+export function shouldUseKnowledgeConversationIntent(
+  message: string,
+  recentHistory: readonly string[] = [],
+) {
+  const hasSku = inventorySkuCandidates(message).length > 0;
+  if (hasSku && (isInventoryUsageIntent(message) || isInventoryStockIntent(message))) return false;
+  return isKnowledgeConversationIntent(message, recentHistory);
+}
+
 /** Return a safe narrow tool set, or null when the model needs the full set. */
 export function focusedAgentToolNames(message: string): FocusedAgentToolName[] | null {
   const intent = message.toLocaleLowerCase("en-AU");
@@ -28,6 +40,14 @@ export function focusedAgentToolNames(message: string): FocusedAgentToolName[] |
   if (/\b(?:reimburse(?:ment)?|expense|report|announcement|notice|group\s+(?:chat|message))\b|报销|公告|通知|群聊/u.test(intent)) {
     return null;
   }
+  if (isInventoryUsageIntent(intent) && hasInventoryIdentifier(intent)) {
+    const usageTools: FocusedAgentToolName[] = ["search_inventory_usage"];
+    if (isInventoryStockIntent(intent)) {
+      usageTools.unshift("search_inventory");
+    }
+    return usageTools;
+  }
+  if (isInventoryStockIntent(intent) && hasInventoryIdentifier(intent)) return ["search_inventory"];
   const legacyProjectManagement = /\bproject\s+management\b|\bdeliveries?\s+(?:pending|waiting)\s+(?:for\s+)?pm\s+review\b|\bpending\s+pm\s+deliveries?\b|待\s*pm\s*审核.{0,8}送货/u.test(intent);
   const datedSchedule = /\b(?:weekly\s+schedule|today|tomorrow|this\s+week|next\s+week|last\s+week|schedul(?:e|ed|ing)|unscheduled|overdue)\b|周排程|周计划|今天|明天|本周|下周|上周|排期|逾期/u.test(intent);
   if (legacyProjectManagement && !datedSchedule) return ["search_delivery_orders"];
@@ -41,7 +61,7 @@ export function focusedAgentToolNames(message: string): FocusedAgentToolName[] |
     names.add("search_payment_projects");
   }
   if (/\b(?:inventory|stock|sku)\b|库存|存货/u.test(intent)
-    || (!names.size && hasInventoryIdentifier(intent))) {
+    || (!names.size && isBareInventorySkuLookup(message))) {
     names.add("search_inventory");
   }
   return names.size ? [...names] : null;

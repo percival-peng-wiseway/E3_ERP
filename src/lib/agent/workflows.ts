@@ -1,4 +1,6 @@
 import type { AgentAnswer, ERPProvider, QuotationStatus } from "@/lib/erp";
+// @ts-expect-error -- focused Node ESM tests require the explicit extension.
+import { hasInventoryUsageReference, inventorySkuCandidates, isBareInventorySkuLookup, isInventoryStockIntent, isInventoryUsageIntent } from "./inventory-usage.ts";
 import type { AgentTrace } from "./trace";
 
 export type DeterministicWorkflowName =
@@ -92,8 +94,7 @@ function quotationStatus(message: string): QuotationStatus | undefined {
 }
 
 function hasInventoryIdentifier(message: string): boolean {
-  const candidates = message.match(/\b(?=[a-z0-9_-]{2,40}\b)(?=[a-z0-9_-]*[a-z])(?=[a-z0-9_-]*\d)[a-z0-9_-]+\b/giu) || [];
-  return candidates.some((candidate) => !/^(?:pay|qtn)[_-]/iu.test(candidate));
+  return inventorySkuCandidates(message).length > 0;
 }
 
 function hasProjectTrackIntent(message: string): boolean {
@@ -134,9 +135,9 @@ export async function runDeterministicWorkflow(
     return workspaceOverview ? { ...workspaceOverview, workflow: "workspace_overview" } : null;
   }
 
-  const runInventoryWorkflow = async (): Promise<DeterministicWorkflowResult | null> => {
+  const runInventoryWorkflow = async (stepName = "inventory.live_query"): Promise<DeterministicWorkflowResult | null> => {
     trace.selectWorkflow("inventory_query");
-    const result = await trace.step("inventory.live_query", "tool", () => dependencies.fastInventoryAnswer(rawMessage));
+    const result = await trace.step(stepName, "tool", () => dependencies.fastInventoryAnswer(rawMessage));
     return result ? { ...result, workflow: "inventory_query" } : null;
   };
 
@@ -161,6 +162,14 @@ export async function runDeterministicWorkflow(
       ? `${items.length} quotation(s) match status **${status}**.`
       : `${items.length} live quotation(s); ${active.length} are active, worth ${money(active.reduce((sum, item) => sum + item.total, 0))}.`;
     return answer("quotation_summary", `${summary}${lines ? `\n\n${lines}` : ""}${items.length > shown.length ? `\n\n${items.length - shown.length} more not shown.` : ""}`);
+  }
+
+  if (isInventoryUsageIntent(message) && hasInventoryUsageReference(message)) {
+    return runInventoryWorkflow("inventory.usage_query");
+  }
+
+  if (isInventoryStockIntent(message) && hasInventoryIdentifier(message)) {
+    return runInventoryWorkflow();
   }
 
   if (hasWeeklyScheduleIntent(message)) {
@@ -224,7 +233,7 @@ export async function runDeterministicWorkflow(
     return result ? { ...result, workflow: "project_track_query" } : null;
   }
 
-  if (hasInventoryIdentifier(message)) return runInventoryWorkflow();
+  if (isBareInventorySkuLookup(rawMessage)) return runInventoryWorkflow();
 
   return null;
 }

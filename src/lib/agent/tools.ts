@@ -26,6 +26,18 @@ import {
   projectTrackScheduleSearchValues,
   type AgentProjectPrivacyFlags,
 } from "./project-track-view";
+import {
+  buildInventoryUsageSnapshot,
+  formatInventoryUsageAnswer,
+  hasInventoryUsageReference,
+  inventorySkuCandidates,
+  inventoryUsageRequestsAssignee,
+  inventoryUsageRequestsCancelled,
+  inventoryUsageRequestsCustomers,
+  isInventoryUsageIntent,
+  isInventoryStockIntent,
+  normalizedInventorySku,
+} from "./inventory-usage";
 import { normalizedInventoryArgs } from "./tool-input";
 import {
   aggregateWeeklySchedule,
@@ -105,6 +117,26 @@ export const DEEPSEEK_TOOLS = [
           limit: { type: "integer", minimum: 1, maximum: 20 },
         },
         required: ["query", "status", "limit"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "search_inventory_usage",
+      description: "Trace one exact SKU across Inventory delivery orders and Project Track projects. Delivered orders and installed projects are separate sources and must never be added together or treated as linked. Cancelled orders are excluded unless explicitly requested. Customer names and delivery/installation assignees each require their own explicit flag; phone, email, address, notes and payment balances are never returned.",
+      strict: true,
+      parameters: {
+        type: "object",
+        properties: {
+          sku: { type: "string", description: "One exact SKU such as KH10." },
+          include_customer_names: { type: "boolean", description: "Set true only when the user explicitly asks which customer or who used the SKU." },
+          include_assignees: { type: "boolean", description: "Set true only when the user explicitly asks which driver or installer handled the SKU." },
+          include_cancelled: { type: "boolean", description: "Set true only when the user explicitly asks for cancelled orders." },
+          limit: { type: "integer", minimum: 1, maximum: 20 },
+        },
+        required: ["sku", "include_customer_names", "include_assignees", "include_cancelled", "limit"],
         additionalProperties: false,
       },
     },
@@ -522,7 +554,9 @@ function safeOperationsInventory(item: OperationsInventoryItem) {
 function safeDeliveryGroup(group: ReturnType<typeof groupOrders>[number], includeContactDetails: boolean) {
   const primary = group.primary;
   return {
-    orderGroup: cleanText(group.key, 240),
+    // Legacy group keys embed customer contact data and notes. Never expose
+    // that composite fallback through the Agent projection.
+    orderGroup: primary.order_group ? cleanText(primary.order_group, 240) : null,
     orderIds: group.orders.map((order) => finiteNumber(order.id)).filter((id) => id > 0),
     status: cleanText(primary.status, 30),
     customer: cleanText(primary.customer, 200),
@@ -539,6 +573,46 @@ function safeDeliveryGroup(group: ReturnType<typeof groupOrders>[number], includ
       sku: cleanText(order.sku, 160),
       quantity: finiteNumber(order.quantity),
     })),
+  };
+}
+
+async function inventoryUsageSnapshot(input: {
+  sku: string;
+  includeCustomerNames: boolean;
+  includeAssignees: boolean;
+  includeCancelled: boolean;
+  limit: number;
+}) {
+  const [operationsResult, projectsResult] = await Promise.allSettled([
+    inventoryOperationsState(),
+    listPaymentTrackProjects(),
+  ]);
+  if (operationsResult.status === "rejected" && projectsResult.status === "rejected") {
+    throw new Error("Inventory usage sources are unavailable.");
+  }
+  const sourceWarnings: string[] = [];
+  if (operationsResult.status === "rejected") sourceWarnings.push("Inventory order history is temporarily unavailable.");
+  if (projectsResult.status === "rejected") sourceWarnings.push("Project Track item history is temporarily unavailable.");
+  const operations = operationsResult.status === "fulfilled" ? operationsResult.value : null;
+  const snapshot = buildInventoryUsageSnapshot({
+    sku: input.sku,
+    orders: operations?.orders || [],
+    deliveryHistory: operations?.deliveryHistory || [],
+    projects: projectsResult.status === "fulfilled" ? projectsResult.value : [],
+    includeCustomerNames: input.includeCustomerNames,
+    includeAssignees: input.includeAssignees,
+    includeCancelled: input.includeCancelled,
+    limit: input.limit,
+  });
+  const stock = operations?.inventory
+    .map(safeOperationsInventory)
+    .find((item) => normalizedInventorySku(item.sku) === normalizedInventorySku(input.sku)) || null;
+  return {
+    ...snapshot,
+    stock,
+    inventoryOrdersAvailable: operationsResult.status === "fulfilled",
+    projectTrackAvailable: projectsResult.status === "fulfilled",
+    sourceWarnings,
   };
 }
 
@@ -1020,6 +1094,27 @@ export async function runAgentTool(provider: ERPProvider, call: ToolCall, auth?:
       return safeToolJson({ source, demo: source === "demo", count: filtered.length, items: filtered });
     }
 
+    if (call.name === "search_inventory_usage") {
+      if (!exactKeys(args, ["sku", "include_customer_names", "include_assignees", "include_cancelled", "limit"])
+        || typeof args.sku !== "string" || args.sku.length > 100
+        || !/^[a-z0-9_.-]{2,40}$/iu.test(args.sku) || !/[a-z]/iu.test(args.sku)
+        || !normalizedInventorySku(args.sku)
+        || typeof args.include_customer_names !== "boolean"
+        || typeof args.include_assignees !== "boolean"
+        || typeof args.include_cancelled !== "boolean"
+        || !Number.isInteger(args.limit) || (args.limit as number) < 1 || (args.limit as number) > 20) {
+        return safeToolJson({ error: { code: "invalid_arguments", message: "Invalid inventory usage search arguments." } });
+      }
+      const { stock: _stock, ...usage } = await inventoryUsageSnapshot({
+        sku: args.sku.trim(),
+        includeCustomerNames: args.include_customer_names,
+        includeAssignees: args.include_assignees,
+        includeCancelled: args.include_cancelled,
+        limit: args.limit as number,
+      });
+      return safeToolJson(usage);
+    }
+
     if (call.name === "search_quotations") {
       const allowed = ["all", "draft", "sent", "accepted", "rejected", "expired"];
       if (!validQueryArgs(args, "status", allowed)) return safeToolJson({ error: { code: "invalid_arguments", message: "Invalid quotation search arguments." } });
@@ -1197,15 +1292,52 @@ export async function runAgentTool(provider: ERPProvider, call: ToolCall, auth?:
 }
 
 export async function fastInventoryAnswer(rawMessage: string) {
-  const skuCandidates = rawMessage.match(/\b(?=[a-z0-9_-]{2,40}\b)(?=[a-z0-9_-]*[a-z])(?=[a-z0-9_-]*\d)[a-z0-9_-]+\b/giu);
+  const skuCandidates = inventorySkuCandidates(rawMessage);
   const message = normalizedSearch(rawMessage);
   const asksForAttention = /low[\s-]*stock|out[\s-]*of[\s-]*stock|over[\s-]*stock|need(?:s|ing)?\s+attention|items?\s+(?:that\s+)?(?:need|requiring)\s+attention|replenish|低库存|缺货|积压|补货|需要关注/u.test(message);
   const asksForOverview = /inventory\s+(?:overview|summary)|stock\s+(?:overview|summary)|库存(?:概况|总览)/u.test(message);
-  if (!skuCandidates?.length && !asksForAttention && !asksForOverview) return null;
+  if (isInventoryUsageIntent(message) && hasInventoryUsageReference(message)) {
+    if (skuCandidates.length !== 1) {
+      return {
+        mode: "local" as const,
+        answer: /[\u3400-\u9fff]/u.test(rawMessage)
+          ? "请提供一个明确的 SKU，我才能查询相关订单、客户或项目。"
+          : "Please provide one exact SKU so I can trace its orders, customers or projects.",
+        suggestions: ["哪些客户用了 KH10？", "Which orders used KH10?"],
+      };
+    }
+    const snapshot = await inventoryUsageSnapshot({
+      sku: skuCandidates[0],
+      includeCustomerNames: inventoryUsageRequestsCustomers(message),
+      includeAssignees: inventoryUsageRequestsAssignee(message),
+      includeCancelled: inventoryUsageRequestsCancelled(message),
+      limit: 20,
+    });
+    const usageAnswer = formatInventoryUsageAnswer(snapshot, rawMessage);
+    const answer = isInventoryStockIntent(message)
+      ? !snapshot.inventoryOrdersAvailable
+        ? /[\u3400-\u9fff]/u.test(rawMessage)
+          ? `库存数据源暂时无法读取。\n\n${usageAnswer}`
+          : `The inventory stock source is temporarily unavailable.\n\n${usageAnswer}`
+        : snapshot.stock
+        ? /[\u3400-\u9fff]/u.test(rawMessage)
+          ? `**${snapshot.stock.sku}** 当前可用 **${snapshot.stock.available.toLocaleString("en-AU")}**（在手 ${snapshot.stock.onHand.toLocaleString("en-AU")}、预留 ${snapshot.stock.reserved.toLocaleString("en-AU")}、待入库 ${snapshot.stock.pending.toLocaleString("en-AU")}）。\n\n${usageAnswer}`
+          : `**${snapshot.stock.sku}** has **${snapshot.stock.available.toLocaleString("en-AU")} available** (${snapshot.stock.onHand.toLocaleString("en-AU")} on hand, ${snapshot.stock.reserved.toLocaleString("en-AU")} reserved, ${snapshot.stock.pending.toLocaleString("en-AU")} pending).\n\n${usageAnswer}`
+        : /[\u3400-\u9fff]/u.test(rawMessage)
+          ? `未找到 ${skuCandidates[0]} 的精确库存记录。\n\n${usageAnswer}`
+          : `No exact stock record was found for ${skuCandidates[0]}.\n\n${usageAnswer}`
+      : usageAnswer;
+    return {
+      mode: "local" as const,
+      answer,
+      suggestions: ["How many KH10 are available?", "Which projects installed KH10?"],
+    };
+  }
+  if (!skuCandidates.length && !asksForAttention && !asksForOverview) return null;
 
   const state = await inventoryOperationsState();
   const inventory = state.inventory.map(safeOperationsInventory);
-  const item = skuCandidates
+  const item = skuCandidates.length
     ? skuCandidates
     .map((candidate) => normalizedSku(candidate))
     .map((candidate) => inventory.find((entry) => normalizedSku(entry.sku) === candidate))
@@ -1606,6 +1738,21 @@ export async function localWorkspaceAnswer(provider: ERPProvider, rawMessage: st
     "Show unscheduled Weekly Schedule work",
     "How much customer payment is outstanding?",
   ];
+
+  if (isInventoryUsageIntent(message) && hasInventoryUsageReference(message)) {
+    try {
+      const usage = await fastInventoryAnswer(rawMessage);
+      if (usage) return usage;
+    } catch {
+      return {
+        mode: "local" as const,
+        answer: /[\u3400-\u9fff]/u.test(rawMessage)
+          ? "SKU 使用记录的数据源暂时不可用，请稍后重试。"
+          : "SKU usage records are temporarily unavailable. Please try again.",
+        suggestions,
+      };
+    }
+  }
 
   const projectScheduleWithDate = asksForProjectTrack(message)
     && /\b(?:today|tomorrow|this\s+week|current\s+week|next\s+week|last\s+week|\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{4})\b|今天|明天|本周|下周|上周/u.test(message)
