@@ -4,7 +4,7 @@ import path from "node:path";
 // @ts-expect-error -- focused Node ESM tests require the explicit extension.
 import * as cloudflareStorage from "../server/cloudflare-storage.ts";
 // @ts-expect-error -- explicit extension is required by the focused Node ESM tests.
-import { SITE_VISIT_PHOTO_TYPES, SITE_VISIT_STATUSES } from "./types.ts";
+import { SITE_VISIT_CREATORS, SITE_VISIT_PHOTO_TYPES, SITE_VISIT_STATUSES } from "./types.ts";
 // Focused tests execute source TypeScript directly under Node ESM.
 // @ts-expect-error -- explicit extension is required by that runtime.
 import * as siteVisitValidation from "./validation.ts";
@@ -14,6 +14,7 @@ import type {
   SiteVisitActor,
   SiteVisitCancellableStatus,
   SiteVisitCreateInput,
+  SiteVisitCreator,
   SiteVisitPhoto,
   SiteVisitPhotoType,
   SiteVisitPhotoUpload,
@@ -181,6 +182,12 @@ function normalizeStoredVisit(value: unknown): StoredSiteVisit {
   }
   const source = value as Record<string, unknown>;
   const projectName = storedText(source.projectName, 160, true);
+  const createdBy = source.createdBy === undefined || source.createdBy === null
+    ? null
+    : typeof source.createdBy === "string"
+      && SITE_VISIT_CREATORS.includes(source.createdBy as SiteVisitCreator)
+      ? source.createdBy as SiteVisitCreator
+      : undefined;
   const address = storedText(source.address, 300, true);
   const contact = storedText(source.contact ?? "", 240, false);
   const reason = storedText(source.reason ?? "", 2_000, false);
@@ -234,7 +241,8 @@ function normalizeStoredVisit(value: unknown): StoredSiteVisit {
   const statusNeedsApprovalAudit = effectiveStatus === "approved";
   const newRequestIsComplete = effectiveStatus !== "pending_approval" && effectiveStatus !== "approved"
     || Boolean(contact && reason);
-  if (!projectName || !address || contact === null || reason === null || assignee === null || notes === null
+  if (createdBy === undefined
+    || !projectName || !address || contact === null || reason === null || assignee === null || notes === null
     || !requestedDate || !requestedTime
     || scheduledDate === undefined || scheduledTime === undefined || !scheduleIsPaired
     || approvedAt === undefined || approvedBy === undefined || !approvalAuditIsPaired
@@ -255,6 +263,7 @@ function normalizeStoredVisit(value: unknown): StoredSiteVisit {
   }
   return {
     id: source.id,
+    createdBy,
     projectName,
     address,
     contact,

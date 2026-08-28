@@ -364,6 +364,7 @@
 .scheduleForm label > span,
 .checkItem label > span { color: #53636e; font-size: 12px; font-weight: 680; }
 .formBody input,
+.formBody select,
 .formBody textarea,
 .fieldGrid input,
 .fieldGrid textarea,
@@ -382,6 +383,7 @@
   resize: vertical;
 }
 .formBody input:focus,
+.formBody select:focus,
 .formBody textarea:focus,
 .fieldGrid input:focus,
 .fieldGrid textarea:focus,

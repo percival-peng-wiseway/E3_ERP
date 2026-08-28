@@ -39,6 +39,10 @@ export const SITE_VISIT_PHOTO_TYPES = ["image/jpeg", "image/png", "image/webp"] 
 
 export type SiteVisitPhotoType = (typeof SITE_VISIT_PHOTO_TYPES)[number];
 
+export const SITE_VISIT_CREATORS = ["Ruihan", "Kevin", "Hogan", "Sam"] as const;
+
+export type SiteVisitCreator = (typeof SITE_VISIT_CREATORS)[number];
+
 export interface SiteVisitChecklistItem {
   id: string;
   label: string;
@@ -57,6 +61,12 @@ export interface SiteVisitPhoto {
 
 export interface SiteVisit {
   id: string;
+  /**
+   * The business owner selected when the request is created. This is kept
+   * separate from workflow audit actors such as approvedBy and scheduledBy.
+   * Legacy records created before this field existed are returned as null.
+   */
+  createdBy: SiteVisitCreator | null;
   projectName: string;
   address: string;
   contact: string;
@@ -98,7 +108,9 @@ export interface SiteVisitListResponse {
 export type SiteVisitCreateInput = Pick<
   SiteVisit,
   "projectName" | "address" | "contact" | "reason" | "requestedDate" | "requestedTime"
->;
+> & {
+  createdBy: SiteVisitCreator;
+};
 
 type VersionedSiteVisitAction = {
   expectedUpdatedAt: string;

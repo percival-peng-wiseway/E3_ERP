@@ -5,7 +5,12 @@ const typesModule = "./types.ts";
 const {
   countOngoingSiteVisits,
   isSiteVisitOngoing,
+  SITE_VISIT_CREATORS,
 } = await import(typesModule) as typeof import("./types");
+
+test("Site Visiting exposes the fixed business creator choices", () => {
+  assert.deepEqual(SITE_VISIT_CREATORS, ["Ruihan", "Kevin", "Hogan", "Sam"]);
+});
 
 test("Site Visiting treats every unfinished and uncancelled workflow stage as active", () => {
   assert.equal(isSiteVisitOngoing({ status: "pending_approval" }), true);

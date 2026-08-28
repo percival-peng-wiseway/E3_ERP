@@ -1,12 +1,13 @@
 // Focused tests execute source TypeScript directly under Node ESM.
 // @ts-expect-error -- explicit extension is required by that runtime.
-import { SITE_VISIT_ACTIONS, SITE_VISIT_CHECK_ANSWERS } from "./types.ts";
+import { SITE_VISIT_ACTIONS, SITE_VISIT_CHECK_ANSWERS, SITE_VISIT_CREATORS } from "./types.ts";
 import type {
   SiteVisitAction,
   SiteVisitActionInput,
   SiteVisitChecklistItem,
   SiteVisitCheckAnswer,
   SiteVisitCreateInput,
+  SiteVisitCreator,
 } from "./types";
 
 export const SITE_VISIT_BUILT_IN_CHECKS = [
@@ -30,7 +31,7 @@ const BUILT_IN_CHECK_IDS = new Set<string>(SITE_VISIT_BUILT_IN_CHECKS.map(({ id 
 const MAX_SITE_VISIT_CUSTOM_CHECKS = 38;
 export const MAX_SITE_VISIT_CHECKS = SITE_VISIT_BUILT_IN_CHECKS.length + MAX_SITE_VISIT_CUSTOM_CHECKS;
 
-const CREATE_FIELDS = new Set([
+const REQUEST_FIELDS = new Set([
   "projectName",
   "address",
   "contact",
@@ -38,8 +39,9 @@ const CREATE_FIELDS = new Set([
   "requestedDate",
   "requestedTime",
 ]);
+const CREATE_FIELDS = new Set(["createdBy", ...REQUEST_FIELDS]);
 const ACTION_FIELDS: Record<SiteVisitAction, ReadonlySet<string>> = {
-  update_request: new Set(["action", "expectedUpdatedAt", ...CREATE_FIELDS]),
+  update_request: new Set(["action", "expectedUpdatedAt", ...REQUEST_FIELDS]),
   approve: new Set(["action", "expectedUpdatedAt"]),
   schedule: new Set(["action", "expectedUpdatedAt", "scheduledDate", "scheduledTime", "assignee"]),
   start: new Set(["action", "expectedUpdatedAt"]),
@@ -150,13 +152,18 @@ export function normalizeStoredSiteVisitChecklist(value: unknown): SiteVisitChec
 
 export function parseSiteVisitCreate(body: Record<string, unknown>): SiteVisitCreateInput | null {
   if (!onlyFields(body, CREATE_FIELDS)) return null;
+  const createdBy = typeof body.createdBy === "string"
+    && SITE_VISIT_CREATORS.includes(body.createdBy as SiteVisitCreator)
+    ? body.createdBy as SiteVisitCreator
+    : null;
   const projectName = text(body.projectName, 160, true);
   const address = text(body.address, 300, true);
   const contact = text(body.contact, 240, true);
   const reason = text(body.reason, 2_000, true);
-  if (!projectName || !address || !contact || !reason
+  if (!createdBy || !projectName || !address || !contact || !reason
     || !siteVisitDate(body.requestedDate) || !siteVisitTime(body.requestedTime)) return null;
   return {
+    createdBy,
     projectName,
     address,
     contact,

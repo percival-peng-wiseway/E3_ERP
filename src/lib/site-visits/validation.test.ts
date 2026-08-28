@@ -13,13 +13,17 @@ const {
 } = await import(validationModule) as typeof import("./validation");
 
 const expectedUpdatedAt = "2026-08-24T01:02:03.004Z";
-const validCreate = {
+const validRequest = {
   projectName: "Smith residence",
   address: "1 Test Street, Melbourne VIC 3000",
   contact: "+61 400 000 000",
   reason: "Confirm roof and switchboard requirements",
   requestedDate: "2026-08-28",
   requestedTime: "10:30",
+};
+const validCreate = {
+  createdBy: "Ruihan" as const,
+  ...validRequest,
 };
 
 const legacyChecklist = [
@@ -59,8 +63,11 @@ test("new site visits receive every current built-in check in the requested orde
   );
 });
 
-test("site visit requests strictly require customer, phone, reason and requested date/time", () => {
+test("site visit requests strictly require an allowed creator, customer, phone, reason and requested date/time", () => {
   assert.deepEqual(parseSiteVisitCreate(validCreate), validCreate);
+  for (const createdBy of ["Ruihan", "Kevin", "Hogan", "Sam"] as const) {
+    assert.equal(parseSiteVisitCreate({ ...validCreate, createdBy })?.createdBy, createdBy);
+  }
 
   for (const field of Object.keys(validCreate)) {
     const missing = { ...validCreate } as Record<string, unknown>;
@@ -72,6 +79,8 @@ test("site visit requests strictly require customer, phone, reason and requested
   assert.equal(parseSiteVisitCreate({ ...validCreate, reason: "" }), null);
   assert.equal(parseSiteVisitCreate({ ...validCreate, requestedDate: "2026-02-30" }), null);
   assert.equal(parseSiteVisitCreate({ ...validCreate, requestedTime: "24:00" }), null);
+  assert.equal(parseSiteVisitCreate({ ...validCreate, createdBy: "Jerry" }), null);
+  assert.equal(parseSiteVisitCreate({ ...validCreate, createdBy: " ruihan " }), null);
   assert.equal(parseSiteVisitCreate({ ...validCreate, scheduledDate: "2026-08-29" }), null);
   assert.equal(parseSiteVisitCreate({ ...validCreate, unexpected: true }), null);
 });
@@ -99,17 +108,23 @@ test("request, schedule and visit-save actions parse only their exact fields", (
   assert.deepEqual(parseSiteVisitAction({
     action: "update_request",
     expectedUpdatedAt,
-    ...validCreate,
+    ...validRequest,
   }), {
     action: "update_request",
     expectedUpdatedAt,
-    ...validCreate,
+    ...validRequest,
   });
   assert.equal(parseSiteVisitAction({
     action: "update_request",
     expectedUpdatedAt,
-    ...validCreate,
+    ...validRequest,
     assignee: "Field Team",
+  }), null);
+  assert.equal(parseSiteVisitAction({
+    action: "update_request",
+    expectedUpdatedAt,
+    ...validRequest,
+    createdBy: "Sam",
   }), null);
 
   assert.deepEqual(parseSiteVisitAction({

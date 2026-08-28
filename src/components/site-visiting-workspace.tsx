@@ -32,13 +32,14 @@ import {
   useState,
 } from "react";
 import type { ErpRole } from "@/lib/auth/types";
-import type {
-  SiteVisit,
-  SiteVisitActionInput,
-  SiteVisitCheckAnswer,
-  SiteVisitChecklistItem,
-  SiteVisitPhoto,
-  SiteVisitStatus,
+import {
+  SITE_VISIT_CREATORS,
+  type SiteVisit,
+  type SiteVisitActionInput,
+  type SiteVisitCheckAnswer,
+  type SiteVisitChecklistItem,
+  type SiteVisitPhoto,
+  type SiteVisitStatus,
 } from "@/lib/site-visits/types";
 import styles from "./site-visiting-workspace.module.css";
 
@@ -379,6 +380,7 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
         visit.address,
         visit.contact,
         visit.reason,
+        visit.createdBy || "",
         visit.assignee,
         visit.notes,
       ].join(" ").toLocaleLowerCase("en-AU").includes(term))
@@ -426,6 +428,7 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
           address: String(data.get("address") || ""),
           contact: String(data.get("contact") || ""),
           reason: String(data.get("reason") || ""),
+          createdBy: String(data.get("createdBy") || ""),
           requestedDate: String(data.get("requestedDate") || ""),
           requestedTime: String(data.get("requestedTime") || ""),
         }),
@@ -746,6 +749,13 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
                 <label className={styles.fullField}><span>Site address *</span><textarea name="address" required maxLength={300} rows={2} autoComplete="street-address" placeholder="Street address, suburb and postcode" /></label>
                 <label className={styles.fullField}><span>Phone *</span><input name="contact" required maxLength={240} inputMode="tel" autoComplete="tel" placeholder="Customer phone number" /></label>
                 <label className={styles.fullField}><span>Reason for visit *</span><textarea name="reason" required maxLength={2000} rows={3} placeholder="Explain why the site visit is needed" /></label>
+                <label className={styles.fullField}>
+                  <span>Created by *</span>
+                  <select name="createdBy" required defaultValue="">
+                    <option value="" disabled>Select a team member</option>
+                    {SITE_VISIT_CREATORS.map((creator) => <option key={creator} value={creator}>{creator}</option>)}
+                  </select>
+                </label>
                 <label><span>Preferred date *</span><input name="requestedDate" type="date" required defaultValue={suggestedSchedule.date} /></label>
                 <label><span>Preferred time *</span><input name="requestedTime" type="time" required defaultValue={suggestedSchedule.time} /></label>
               </div>
@@ -782,6 +792,7 @@ export function SiteVisitingWorkspace({ authenticatedRole }: { authenticatedRole
                     <label className={styles.fullField}><span>Site address</span><textarea value={detail.address} maxLength={300} rows={2} readOnly={!coreDetailsEditable} onChange={(event) => updateDetail({ address: event.target.value }, coreDetailsDirtyKind)} /></label>
                     <label className={styles.fullField}><span>Phone</span><input value={detail.contact} maxLength={240} inputMode="tel" autoComplete="tel" readOnly={!coreDetailsEditable} placeholder="No phone recorded" onChange={(event) => updateDetail({ contact: event.target.value }, coreDetailsDirtyKind)} /></label>
                     <label className={styles.fullField}><span>Reason for visit</span><textarea value={detail.reason} maxLength={2000} rows={3} readOnly={!requestEditable} placeholder="No reason recorded" onChange={(event) => updateDetail({ reason: event.target.value }, "request")} /></label>
+                    <label className={styles.fullField}><span>Created by</span><input value={detail.createdBy || "—"} readOnly /></label>
                     <label><span>Preferred date</span><input type="date" value={detail.requestedDate} readOnly={!requestEditable} onChange={(event) => updateDetail({ requestedDate: event.target.value }, "request")} /></label>
                     <label><span>Preferred time</span><input type="time" value={detail.requestedTime} readOnly={!requestEditable} onChange={(event) => updateDetail({ requestedTime: event.target.value }, "request")} /></label>
                   </div>
@@ -1004,6 +1015,7 @@ function VisitCard({ visit, onOpen }: { visit: SiteVisit; onOpen: (trigger: HTML
       <div className={styles.cardMeta}>
         <span><CalendarDays size={15} />{beforeSchedule ? "Preferred " : ""}{formatDate(displayDate)}</span>
         <span><Clock3 size={15} />{formatTime(displayTime)}</span>
+        {visit.createdBy && <span><UserRound size={15} />Created by {visit.createdBy}</span>}
         {visit.assignee && <span><UserRound size={15} />{visit.assignee}</span>}
       </div>
       <div className={styles.cardFooter}>

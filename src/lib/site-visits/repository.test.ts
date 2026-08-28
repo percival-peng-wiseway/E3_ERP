@@ -41,6 +41,7 @@ const legacyChecklist = [
 
 function requestInput(overrides: Partial<SiteVisitCreateInput> = {}): SiteVisitCreateInput {
   return {
+    createdBy: "Ruihan",
     projectName: "Smith residence",
     address: "1 Test Street, Melbourne VIC 3000",
     contact: "+61 400 000 000",
@@ -106,6 +107,7 @@ test("site visit repository enforces the request-to-completion workflow", async 
     const created = await createSiteVisit(requestInput());
 
     assert.equal(created.status, "pending_approval");
+    assert.equal(created.createdBy, "Ruihan");
     assert.equal(created.requestedDate, "2026-08-28");
     assert.equal(created.requestedTime, "10:30");
     assert.equal(created.scheduledDate, null);
@@ -120,6 +122,25 @@ test("site visit repository enforces the request-to-completion workflow", async 
     assert.ok(created.checklist.every((item) => (
       item.answer === "not_checked" && item.notes === ""
     )));
+  });
+
+  await t.test("repository rejects an unapproved business creator", async () => {
+    await resetRecords();
+    await expectRepositoryError(
+      createSiteVisit({ ...requestInput(), createdBy: "Jerry" } as unknown as SiteVisitCreateInput),
+      "invalid_visit",
+      400,
+    );
+    assert.deepEqual(await listSiteVisits(), []);
+  });
+
+  await t.test("stored creator values are strict while legacy omissions remain compatible", async () => {
+    await resetRecords();
+    await createSiteVisit(requestInput());
+    const stored = JSON.parse(await readFile(recordsPath, "utf8")) as Array<Record<string, unknown>>;
+    stored[0].createdBy = "Jerry";
+    await writeFile(recordsPath, `${JSON.stringify(stored, null, 2)}\n`, "utf8");
+    await expectRepositoryError(listSiteVisits(), "invalid_storage", 500);
   });
 
   await t.test("PM and admin can approve, schedule and reschedule", async () => {
@@ -148,6 +169,7 @@ test("site visit repository enforces the request-to-completion workflow", async 
 
     const scheduled = await schedule(approved, pm);
     assert.equal(scheduled.status, "scheduled");
+    assert.equal(scheduled.createdBy, "Ruihan");
     assert.equal(scheduled.scheduledBy, pm.name);
     assert.equal(scheduled.scheduledDate, "2026-09-02");
     assert.equal(scheduled.scheduledTime, "14:15");
@@ -394,6 +416,7 @@ test("site visit repository enforces the request-to-completion workflow", async 
 
     const [legacy] = await listSiteVisits();
     assert.equal(legacy.id, legacyVisitId);
+    assert.equal(legacy.createdBy, null);
     assert.equal(legacy.status, "scheduled");
     assert.equal(legacy.contact, "");
     assert.equal(legacy.reason, "");
@@ -434,6 +457,7 @@ test("site visit repository enforces the request-to-completion workflow", async 
     const stored = JSON.parse(await readFile(recordsPath, "utf8")) as Array<Record<string, unknown>>;
     const persisted = stored.find(({ id }) => id === legacyVisitId);
     assert.ok(persisted);
+    assert.equal(persisted.createdBy, null);
     assert.equal(persisted.reason, "");
     assert.equal(persisted.requestedDate, "2026-08-25");
     assert.equal(persisted.requestedTime, "09:30");

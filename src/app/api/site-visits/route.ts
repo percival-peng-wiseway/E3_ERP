@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
       return siteVisitError(
         400,
         "invalid_visit",
-        "Enter a customer name, address, phone, reason and valid preferred date and time.",
+        "Choose a creator and enter a customer name, address, phone, reason and valid preferred date and time.",
       );
     }
     const visit = await createSiteVisit(input);
