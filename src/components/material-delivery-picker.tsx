@@ -132,7 +132,7 @@ export function MaterialDeliveryPicker({
     <>
       <header className={styles.deliveryDrawerHeader}>
         <div>
-          <span>{project.reference} · Proposal {project.quoteNumber}</span>
+          <span>Proposal {project.quoteNumber}</span>
           <h2 id="material-delivery-picker-title">Choose warehouse items</h2>
         </div>
         <button type="button" aria-label="Close item selection" onClick={onBack}><X size={19} /></button>
