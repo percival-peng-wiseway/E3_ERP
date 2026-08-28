@@ -435,8 +435,9 @@ function maskedApiKey(apiKey: string | null): string | null {
 
 export async function publicAgentSettings(): Promise<PublicAgentSettings> {
   const [settings, deepSeek] = await Promise.all([resolveAgentSettings(), resolveDeepSeekSettings()]);
+  const preferred = preferredAgentModelSettings(settings, deepSeek);
   return {
-    configured: true,
+    configured: Boolean(preferred.apiKey),
     maskedApiKey: maskedApiKey(settings.apiKey),
     baseUrl: settings.baseUrl,
     model: settings.model,
@@ -486,7 +487,7 @@ export function saveAgentSettings(input: {
     const environmentDeepSeek = environmentDeepSeekSettings();
     const resolvedDeepSeekKey = deepSeek?.apiKey || environmentDeepSeek.apiKey;
     return {
-      configured: true,
+      configured: Boolean(resolvedDeepSeekKey || resolvedKey),
       maskedApiKey: maskedApiKey(resolvedKey),
       baseUrl: normalizedBaseUrl(input.baseUrl),
       model: normalizedModel(input.model),
@@ -507,7 +508,7 @@ export function clearAgentSettings(): Promise<PublicAgentSettings> {
     const environment = environmentSettings();
     const deepSeek = environmentDeepSeekSettings();
     return {
-      configured: true,
+      configured: Boolean(deepSeek.apiKey || environment.apiKey),
       maskedApiKey: maskedApiKey(environment.apiKey),
       baseUrl: environment.baseUrl,
       model: environment.model,

@@ -36,6 +36,7 @@ import {
   type WeeklyScheduleSearchResult,
   type WeeklyScheduleSources,
 } from "./weekly-schedule";
+import { assertDeepSeekStrictToolSchemas } from "./strict-tool-schema";
 
 export { normalizedInventoryArgs } from "./tool-input";
 
@@ -79,13 +80,13 @@ export const DEEPSEEK_TOOLS = [
       parameters: {
         type: "object",
         properties: {
-          query: { type: "string", minLength: 1, maxLength: 500 },
-          product: { type: "string", minLength: 1, maxLength: 100 },
-          region: { type: "string", minLength: 1, maxLength: 80 },
-          effective_date: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
+          query: { type: "string", description: "Non-empty knowledge search text." },
+          product: { type: "string", description: "Optional product filter, or an empty string." },
+          region: { type: "string", description: "Optional region filter, or an empty string." },
+          effective_date: { type: "string", description: "Optional effective date in YYYY-MM-DD format, or an empty string." },
           limit: { type: "integer", minimum: 1, maximum: 8 },
         },
-        required: ["query", "limit"],
+        required: ["query", "product", "region", "effective_date", "limit"],
         additionalProperties: false,
       },
     },
@@ -287,6 +288,8 @@ export const DEEPSEEK_TOOLS = [
     },
   },
 ] as const;
+
+assertDeepSeekStrictToolSchemas(DEEPSEEK_TOOLS);
 
 function isRecord(value: unknown): value is UnknownRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -938,9 +941,10 @@ export async function runAgentTool(provider: ERPProvider, call: ToolCall, auth?:
       if (!exactKeys(args, ["query", "limit"], ["product", "region", "effective_date"])
         || typeof args.query !== "string" || !args.query.trim() || args.query.length > 500
         || !Number.isInteger(args.limit) || (args.limit as number) < 1 || (args.limit as number) > 8
-        || (args.product !== undefined && (typeof args.product !== "string" || !args.product.trim() || args.product.length > 100))
-        || (args.region !== undefined && (typeof args.region !== "string" || !args.region.trim() || args.region.length > 80))
-        || (args.effective_date !== undefined && (typeof args.effective_date !== "string" || !exactDate(args.effective_date)))) {
+        || (args.product !== undefined && (typeof args.product !== "string" || args.product.length > 100))
+        || (args.region !== undefined && (typeof args.region !== "string" || args.region.length > 80))
+        || (args.effective_date !== undefined && (typeof args.effective_date !== "string"
+          || (Boolean(args.effective_date.trim()) && !exactDate(args.effective_date.trim()))))) {
         return safeToolJson({ error: { code: "invalid_arguments", message: "Invalid knowledge search arguments." } });
       }
       if (!auth || !auth.permissions.has("knowledge.read")) {
@@ -949,12 +953,15 @@ export async function runAgentTool(provider: ERPProvider, call: ToolCall, auth?:
           source_record_ids: [], updated_at: null, retryable: false,
         });
       }
+      const product = typeof args.product === "string" ? args.product.trim() : "";
+      const region = typeof args.region === "string" ? args.region.trim() : "";
+      const effectiveDate = typeof args.effective_date === "string" ? args.effective_date.trim() : "";
       const result = await searchKnowledgeBase({
         query: args.query.trim(),
         limit: args.limit as number,
-        ...(typeof args.product === "string" ? { product: args.product.trim() } : {}),
-        ...(typeof args.region === "string" ? { region: args.region.trim() } : {}),
-        ...(typeof args.effective_date === "string" ? { effective_date: args.effective_date } : {}),
+        ...(product ? { product } : {}),
+        ...(region ? { region } : {}),
+        ...(effectiveDate ? { effective_date: effectiveDate } : {}),
       }, auth);
       return safeToolJson({
         ok: result.ok,
@@ -1541,6 +1548,56 @@ export async function fastPaymentTrackAnswer(rawMessage: string) {
   };
 }
 
+async function workspaceOverviewAnswer(provider: ERPProvider) {
+  const suggestions = [
+    "Give me a workspace overview",
+    "Which stock items need attention?",
+    "Show unscheduled Weekly Schedule work",
+    "How much customer payment is outstanding?",
+  ];
+  const summary = await overview(provider);
+  const inventory = "skuCount" in summary.inventory
+    ? `${summary.inventory.skuCount} stock items (${summary.inventory.needsAttention} need attention)`
+    : "stock data unavailable";
+  const quotations = "count" in summary.quotations
+    ? `${summary.quotations.count} quotations`
+    : "quotation data unavailable";
+  const deliveries = "total" in summary.projectManagement
+    ? `${summary.projectManagement.pendingPmReview} deliveries pending PM review`
+    : "delivery data unavailable";
+  const customSchedule = summary.projectManagement.customScheduleThisWeek;
+  const customJobs = "scheduled" in customSchedule
+    ? `${customSchedule.scheduled} custom jobs scheduled and ${customSchedule.completed} completed this week`
+    : "custom schedule data unavailable";
+  const payments = typeof summary.paymentTrack.outstanding === "number"
+    ? `AUD ${summary.paymentTrack.outstanding.toLocaleString("en-AU", { minimumFractionDigits: 2 })} outstanding`
+    : "payment data unavailable";
+  const pendingReceipts = "pendingRebateReceipts" in summary.paymentTrack
+    ? summary.paymentTrack.pendingRebateReceipts
+    : undefined;
+  const rebateReceipts = pendingReceipts
+    ? `${pendingReceipts.receiptCount} rebate receipts pending across ${pendingReceipts.projectCount} projects (${pendingReceipts.solarStc} Solar STC, ${pendingReceipts.batteryStc} Battery STC, ${pendingReceipts.solarRebate} Solar Rebate)`
+    : "rebate receipt data unavailable";
+  const claims = typeof summary.reimbursements.pendingPayment === "number"
+    ? `${summary.reimbursements.pendingPayment} reimbursements awaiting payment`
+    : "reimbursement data unavailable";
+  const announcements = "count" in summary.publicAnnouncements
+    ? `${summary.publicAnnouncements.count} public announcements`
+    : "public announcements unavailable";
+  return {
+    mode: "local" as const,
+    answer: `Workspace overview: ${inventory}; ${quotations}; ${deliveries}; ${customJobs}; ${payments}; ${rebateReceipts}; ${claims}; ${announcements}.`,
+    suggestions,
+  };
+}
+
+export async function fastWorkspaceOverviewAnswer(provider: ERPProvider, rawMessage: string) {
+  const message = rawMessage.trim().normalize("NFKC").toLocaleLowerCase("en-AU");
+  const matches = /^(?:(?:give|show)\s+me\s+|show\s+)?(?:a\s+|the\s+)?workspace\s+(?:overview|summary)[\s,.!?，。！？…~～]*$/u.test(message)
+    || /^(?:给我|显示|查看)?(?:工作区|业务)(?:总览|概况)[\s,.!?，。！？…~～]*$/u.test(message);
+  return matches ? workspaceOverviewAnswer(provider) : null;
+}
+
 export async function localWorkspaceAnswer(provider: ERPProvider, rawMessage: string) {
   const message = normalizedSearch(rawMessage);
   const suggestions = [
@@ -1564,36 +1621,7 @@ export async function localWorkspaceAnswer(provider: ERPProvider, rawMessage: st
   if (projectTrackAnswer) return projectTrackAnswer;
 
   if (/workspace|overview|summary|everything|总览|概况/.test(message)) {
-    const summary = await overview(provider);
-    const inventory = "skuCount" in summary.inventory
-      ? `${summary.inventory.skuCount} stock items (${summary.inventory.needsAttention} need attention)`
-      : "stock data unavailable";
-    const quotations = "count" in summary.quotations
-      ? `${summary.quotations.count} quotations`
-      : "quotation data unavailable";
-    const deliveries = "total" in summary.projectManagement
-      ? `${summary.projectManagement.pendingPmReview} deliveries pending PM review`
-      : "delivery data unavailable";
-    const customSchedule = summary.projectManagement.customScheduleThisWeek;
-    const customJobs = "scheduled" in customSchedule
-      ? `${customSchedule.scheduled} custom jobs scheduled and ${customSchedule.completed} completed this week`
-      : "custom schedule data unavailable";
-    const payments = typeof summary.paymentTrack.outstanding === "number"
-      ? `AUD ${summary.paymentTrack.outstanding.toLocaleString("en-AU", { minimumFractionDigits: 2 })} outstanding`
-      : "payment data unavailable";
-    const pendingReceipts = "pendingRebateReceipts" in summary.paymentTrack
-      ? summary.paymentTrack.pendingRebateReceipts
-      : undefined;
-    const rebateReceipts = pendingReceipts
-      ? `${pendingReceipts.receiptCount} rebate receipts pending across ${pendingReceipts.projectCount} projects (${pendingReceipts.solarStc} Solar STC, ${pendingReceipts.batteryStc} Battery STC, ${pendingReceipts.solarRebate} Solar Rebate)`
-      : "rebate receipt data unavailable";
-    const claims = typeof summary.reimbursements.pendingPayment === "number"
-      ? `${summary.reimbursements.pendingPayment} reimbursements awaiting payment`
-      : "reimbursement data unavailable";
-    const announcements = "count" in summary.publicAnnouncements
-      ? `${summary.publicAnnouncements.count} public announcements`
-      : "public announcements unavailable";
-    return { mode: "local" as const, answer: `Workspace overview: ${inventory}; ${quotations}; ${deliveries}; ${customJobs}; ${payments}; ${rebateReceipts}; ${claims}; ${announcements}. Check the model endpoint in Settings for detailed conversational answers.`, suggestions };
+    return workspaceOverviewAnswer(provider);
   }
 
   if (/solar\s*stc|battery\s*stc|solar\s*rebate|太阳能补贴|电池\s*stc/.test(message)) {

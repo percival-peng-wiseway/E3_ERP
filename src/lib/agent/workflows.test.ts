@@ -25,6 +25,7 @@ function dependencies(
   overrides: Partial<DeterministicWorkflowDependencies> = {},
 ): DeterministicWorkflowDependencies {
   return {
+    fastWorkspaceOverviewAnswer: async () => null,
     fastInventoryAnswer: async () => null,
     fastPaymentTrackAnswer: async () => null,
     fastWeeklyScheduleAnswer: async () => null,
@@ -35,6 +36,80 @@ function dependencies(
     ...overrides,
   };
 }
+
+test("exact short greetings use a deterministic same-language fast path", async () => {
+  const cases = [
+    { message: "Hi", answer: /Hi!/u },
+    { message: "Hello!", answer: /Hi!/u },
+    { message: "你好。", answer: /你好/u },
+    { message: "嗨！", answer: /你好/u },
+  ];
+  for (const { message, answer } of cases) {
+    let dependencyCalls = 0;
+    const trace = new AgentTrace();
+    const result = await runDeterministicWorkflow(provider(), message, trace, dependencies({
+      fastWorkspaceOverviewAnswer: async () => {
+        dependencyCalls += 1;
+        return null;
+      },
+      fastInventoryAnswer: async () => {
+        dependencyCalls += 1;
+        return null;
+      },
+      fastPaymentTrackAnswer: async () => {
+        dependencyCalls += 1;
+        return null;
+      },
+    }));
+    assert.equal(result?.workflow, "greeting", message);
+    assert.match(result?.answer || "", answer, message);
+    assert.equal(dependencyCalls, 0, message);
+    assert.equal(trace.snapshot().workflow, "greeting", message);
+  }
+});
+
+test("greeting matching is anchored and preserves business intent", async () => {
+  let paymentCalls = 0;
+  const result = await runDeterministicWorkflow(
+    provider(),
+    "Hi, show outstanding payments",
+    new AgentTrace(),
+    dependencies({
+      fastPaymentTrackAnswer: async () => {
+        paymentCalls += 1;
+        return { mode: "local", answer: "$500 outstanding.", suggestions: [] };
+      },
+    }),
+  );
+  assert.equal(result?.workflow, "outstanding_payments");
+  assert.equal(paymentCalls, 1);
+
+  for (const message of ["this", "hello project team", "你好，显示欠款"]) {
+    const routed = await runDeterministicWorkflow(provider(), message, new AgentTrace(), dependencies());
+    assert.notEqual(routed?.workflow, "greeting", message);
+  }
+});
+
+test("the built-in workspace overview suggestion uses a deterministic read-only workflow", async () => {
+  let overviewCalls = 0;
+  const trace = new AgentTrace();
+  const result = await runDeterministicWorkflow(
+    provider(),
+    "Give me a workspace overview",
+    trace,
+    dependencies({
+      fastWorkspaceOverviewAnswer: async () => {
+        overviewCalls += 1;
+        return { mode: "local", answer: "Workspace overview: live totals.", suggestions: [] };
+      },
+    }),
+  );
+  assert.equal(result?.workflow, "workspace_overview");
+  assert.equal(result?.answer, "Workspace overview: live totals.");
+  assert.equal(overviewCalls, 1);
+  assert.equal(trace.snapshot().workflow, "workspace_overview");
+  assert.equal(trace.snapshot().steps[0]?.name, "workspace.overview");
+});
 
 test("registers exactly eight read-only E3 business skills", () => {
   assert.equal(E3_BUSINESS_SKILLS.length, 8);

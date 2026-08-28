@@ -103,6 +103,7 @@ async function processAgentRequest(request: Request) {
   const knowledgeRequest = isKnowledgeConversationIntent(input.message, input.history.slice(-2).map((item) => item.content));
   const trace = new AgentTrace();
   const warnings: string[] = [];
+  let modelStatus: "available" | "unavailable" | "not_checked" = "not_checked";
   let settings: ResolvedAgentSettings;
   try {
     const [legacySettings, deepSeekSettings] = await Promise.all([
@@ -132,22 +133,29 @@ async function processAgentRequest(request: Request) {
     if (workflowAnswer) {
       data = workflowAnswer;
     } else {
-      data = await trace.step("model.openai_compatible", "model", () => answerWithOpenAICompatible({
-        provider,
-        auth,
-        message: input.message,
-        history: input.history,
-        section: input.section,
-        apiKey: settings.apiKey,
-        baseUrl: settings.baseUrl,
-        model: settings.model,
-      }));
+      modelStatus = "unavailable";
+      data = await trace.step("model.openai_compatible", "model", async () => {
+        const answer = await answerWithOpenAICompatible({
+          provider,
+          auth,
+          message: input.message,
+          history: input.history,
+          section: input.section,
+          apiKey: settings.apiKey,
+          baseUrl: settings.baseUrl,
+          model: settings.model,
+        });
+        modelStatus = "available";
+        return answer;
+      });
     }
   } catch (primaryError) {
     // Errors can originate from a live deterministic source or from the model.
     // Their messages may contain upstream response bodies, so log only the class.
     console.error("Agent primary answer path unavailable; using local fallback", safeErrorKind(primaryError));
-    warnings.push("The primary live answer path is temporarily unavailable. Local read-only query mode is being used.");
+    warnings.push(modelStatus === "unavailable"
+      ? "Model unavailable. Local read-only mode is active."
+      : "Live workspace query unavailable. Local read-only mode is active.");
     trace.markOutcome("fallback");
     try {
       data = knowledgeRequest
@@ -168,7 +176,8 @@ async function processAgentRequest(request: Request) {
     meta: {
       source: provider.source,
       generatedAt: new Date().toISOString(),
-      configured: true,
+      configured: Boolean(settings.apiKey),
+      modelStatus,
       model: settings.model,
       trace: traceSnapshot,
       ...(warnings.length ? { warning: warnings.join(" ") } : {}),

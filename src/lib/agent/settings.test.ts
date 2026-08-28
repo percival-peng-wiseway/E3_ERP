@@ -13,6 +13,10 @@ const originalEnvironment = new Map([
   "AGENT_BASE_URL",
   "AGENT_MODEL",
   "AGENT_ALLOWED_API_HOSTS",
+  "DEEPSEEK_API_KEY",
+  "DEEPSEEK_BASE_URL",
+  "DEEPSEEK_MODEL_FAST",
+  "DEEPSEEK_MODEL_COMPLEX",
 ].map((key) => [key, mutableProcessEnv[key]]));
 
 mutableProcessEnv.AGENT_SETTINGS_DATA_DIR = testDataDirectory;
@@ -20,6 +24,10 @@ delete mutableProcessEnv.AGENT_API_KEY;
 delete mutableProcessEnv.AGENT_BASE_URL;
 delete mutableProcessEnv.AGENT_MODEL;
 delete mutableProcessEnv.AGENT_ALLOWED_API_HOSTS;
+delete mutableProcessEnv.DEEPSEEK_API_KEY;
+delete mutableProcessEnv.DEEPSEEK_BASE_URL;
+delete mutableProcessEnv.DEEPSEEK_MODEL_FAST;
+delete mutableProcessEnv.DEEPSEEK_MODEL_COMPLEX;
 
 const settingsModule = "./settings.ts";
 const {
@@ -31,6 +39,7 @@ const {
   DEFAULT_DEEPSEEK_FAST_MODEL,
   clearAgentSettings,
   preferredAgentModelSettings,
+  publicAgentSettings,
   resolveDeepSeekSettings,
   resolveEnvironmentAgentSettings,
   saveAgentSettings,
@@ -83,6 +92,26 @@ test("saved DeepSeek key is masked publicly and resolves only on the server", as
   const resolved = await resolveDeepSeekSettings();
   assert.equal(resolved.apiKey, secret);
   assert.equal(resolved.source, "saved");
+  const cleared = await clearAgentSettings();
+  assert.equal(cleared.configured, false);
+});
+
+test("public configured state reflects whether the preferred endpoint has a real key", async () => {
+  await clearAgentSettings();
+  assert.equal((await publicAgentSettings()).configured, false);
+
+  const savedWithoutKey = await saveAgentSettings({
+    baseUrl: DEFAULT_AGENT_BASE_URL,
+    model: DEFAULT_AGENT_MODEL,
+  });
+  assert.equal(savedWithoutKey.configured, false);
+
+  const savedLegacyKey = await saveAgentSettings({
+    apiKey: "legacy-test-secret-key",
+    baseUrl: DEFAULT_AGENT_BASE_URL,
+    model: DEFAULT_AGENT_MODEL,
+  });
+  assert.equal(savedLegacyKey.configured, true);
   await clearAgentSettings();
 });
 

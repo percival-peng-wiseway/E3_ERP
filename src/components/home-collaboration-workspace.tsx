@@ -453,6 +453,7 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
   const [agentError, setAgentError] = useState("");
   const [agentNotice, setAgentNotice] = useState("");
   const [agentConfigured, setAgentConfigured] = useState<boolean | null>(null);
+  const [agentModelStatus, setAgentModelStatus] = useState<"available" | "unavailable" | "not_checked">("not_checked");
   const agentAbortRef = useRef<AbortController | null>(null);
   const agentConversationRevisionRef = useRef(0);
   const agentStorageClearGuardRef = useRef(false);
@@ -487,6 +488,7 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
       const body = await readJsonResponse<{ data?: { configured?: unknown } }>(response);
       if (mountedRef.current && typeof body.data?.configured === "boolean") {
         setAgentConfigured(body.data.configured);
+        setAgentModelStatus("not_checked");
       }
     } catch {
       // A failed settings check does not prevent local Agent queries from working.
@@ -771,7 +773,7 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
         answer?: unknown;
         response?: unknown;
         suggestions?: unknown;
-        meta?: { configured?: unknown; warning?: unknown };
+        meta?: { configured?: unknown; modelStatus?: unknown; warning?: unknown };
       };
       if (
         !mountedRef.current
@@ -797,6 +799,14 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
         setAgentConfigured(body.meta.configured);
       } else if (mode === "openai" || mode === "deepseek") {
         setAgentConfigured(true);
+      }
+      if (
+        body.meta?.modelStatus === "available"
+        || body.meta?.modelStatus === "unavailable"
+      ) {
+        setAgentModelStatus(body.meta.modelStatus);
+      } else if (mode === "openai" || mode === "deepseek") {
+        setAgentModelStatus("available");
       }
       if (typeof body.meta?.warning === "string") setAgentNotice(body.meta.warning);
       setAgentMessages((current) => limitAgentMessages([
@@ -847,11 +857,14 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
     setAgentLoading(false);
   };
 
-  const agentStatusLabel = agentConfigured === false
+  const agentUsingLocalMode = agentConfigured === false || agentModelStatus === "unavailable";
+  const agentStatusLabel = agentUsingLocalMode
     ? "Local mode"
-    : agentConfigured === true
+    : agentModelStatus === "available"
       ? "Model ready"
-      : "Workspace connected";
+      : agentConfigured === true
+        ? "Model configured"
+        : "Workspace connected";
   const notificationSyncLabel = notificationsError
     ? "Refresh needed"
     : notificationsGeneratedAt
@@ -1080,7 +1093,7 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
             <div className={styles.panelTitle}>
               <h2>E3 Agent</h2>
             </div>
-            <span className={`${styles.statusBadge} ${agentConfigured === false ? styles.localBadge : ""}`}>
+            <span className={`${styles.statusBadge} ${agentUsingLocalMode ? styles.localBadge : ""}`}>
               <i />{agentStatusLabel}
             </span>
             <button className={styles.iconButton} type="button" onClick={onOpenSettings} disabled={!onOpenSettings} title="Open Agent settings" aria-label="Open Agent settings">
@@ -1094,7 +1107,7 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
           {agentConfigured === false && (
             <div className={styles.setupNotice}>
               <AlertCircle size={15} />
-              <span>The model endpoint is unavailable. E3 Agent is using local workspace queries.</span>
+              <span>No model is configured. Local workspace queries are active.</span>
               {onOpenSettings && <button type="button" onClick={onOpenSettings}>Open Settings</button>}
             </div>
           )}

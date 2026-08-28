@@ -27,6 +27,20 @@ test("inventory tool preserves ERP quantities and rejects extra arguments", asyn
   assert.equal(calls, 1);
 });
 
+test("inventory accepts strict empty warehouse IDs and omits them from the provider call", async () => {
+  const calls: Array<{ sku: string; warehouse_id?: string }> = [];
+  const provider: BusinessDataProvider = {
+    async getInventory(args) { calls.push(args); return ok([]); },
+    async searchKnowledge() { return ok([]); }, async getProject() { throw new Error("unused"); }, async getOrderFinance() { throw new Error("unused"); },
+  };
+  const executor = new BusinessToolExecutor(provider, context("admin"));
+  const strict = await executor.execute("get_inventory", JSON.stringify({ sku: "INV-1", warehouse_id: "" }));
+  const legacy = await executor.execute("get_inventory", JSON.stringify({ sku: "INV-2" }));
+  assert.equal(strict.result.ok, true);
+  assert.equal(legacy.result.ok, true);
+  assert.deepEqual(calls, [{ sku: "INV-1" }, { sku: "INV-2" }]);
+});
+
 test("tool layer blocks finance before touching the provider", async () => {
   let called = false;
   const provider = {
@@ -59,6 +73,31 @@ test("knowledge scope comes only from server auth and is rejected in model argum
   const valid = await executor.execute("search_knowledge_base", JSON.stringify({ query: "warranty", limit: 4 }));
   assert.equal(valid.result.ok, true);
   assert.equal(called, true);
+});
+
+test("knowledge accepts strict empty filters without forwarding them", async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  const provider = {
+    async getInventory() { return ok([]); },
+    async searchKnowledge(args: Record<string, unknown>) { calls.push(args); return ok([]); },
+    async getProject() { throw new Error("unused"); },
+    async getOrderFinance() { throw new Error("unused"); },
+  } satisfies BusinessDataProvider;
+  const executor = new BusinessToolExecutor(provider, context("admin"));
+  const strict = await executor.execute("search_knowledge_base", JSON.stringify({
+    query: "warranty",
+    product: "",
+    region: "   ",
+    effective_date: "",
+    limit: 4,
+  }));
+  const legacy = await executor.execute("search_knowledge_base", JSON.stringify({ query: "warranty", limit: 4 }));
+  assert.equal(strict.result.ok, true);
+  assert.equal(legacy.result.ok, true);
+  assert.deepEqual(calls, [
+    { query: "warranty", limit: 4 },
+    { query: "warranty", limit: 4 },
+  ]);
 });
 
 test("unknown is preserved as a finance status and never rewritten as not started", async () => {

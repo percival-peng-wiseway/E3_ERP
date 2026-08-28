@@ -2,6 +2,8 @@ import type { AgentAnswer, ERPProvider, QuotationStatus } from "@/lib/erp";
 import type { AgentTrace } from "./trace";
 
 export type DeterministicWorkflowName =
+  | "greeting"
+  | "workspace_overview"
   | "inventory_query"
   | "outstanding_payments"
   | "project_track_query"
@@ -15,6 +17,7 @@ export type DeterministicWorkflowName =
 export type DeterministicWorkflowResult = AgentAnswer & { workflow: DeterministicWorkflowName };
 
 export type DeterministicWorkflowDependencies = {
+  fastWorkspaceOverviewAnswer: (provider: ERPProvider, message: string) => Promise<AgentAnswer | null>;
   fastInventoryAnswer: (message: string) => Promise<AgentAnswer | null>;
   fastPaymentTrackAnswer: (message: string) => Promise<AgentAnswer | null>;
   fastWeeklyScheduleAnswer: (provider: ERPProvider, message: string) => Promise<AgentAnswer | null>;
@@ -53,6 +56,34 @@ function answer(workflow: DeterministicWorkflowName, text: string): Deterministi
   return { workflow, mode: "local", answer: text, suggestions };
 }
 
+function greetingAnswer(rawMessage: string): DeterministicWorkflowResult | null {
+  const message = rawMessage.trim().normalize("NFKC").toLocaleLowerCase("en-AU");
+  const trailingPunctuation = String.raw`[\s,.!?，。！？…~～]*`;
+  const englishGreeting = new RegExp(`^(?:hi|hello)${trailingPunctuation}$`, "u");
+  const chineseGreeting = new RegExp(`^(?:你好|嗨)${trailingPunctuation}$`, "u");
+  if (chineseGreeting.test(message)) {
+    return {
+      workflow: "greeting",
+      mode: "local",
+      answer: "你好！想查看 E3 ERP 里的什么内容？",
+      suggestions: ["查看工作区总览", "哪些库存需要关注？", "显示未排期的 Weekly Schedule 任务"],
+    };
+  }
+  if (!englishGreeting.test(message)) return null;
+  return {
+    workflow: "greeting",
+    mode: "local",
+    answer: "Hi! What would you like to check in E3 ERP?",
+    suggestions: ["Give me a workspace overview", "Which stock items need attention?", "Show unscheduled Weekly Schedule work"],
+  };
+}
+
+function hasWorkspaceOverviewIntent(rawMessage: string) {
+  const message = rawMessage.trim().normalize("NFKC").toLocaleLowerCase("en-AU");
+  return /^(?:(?:give|show)\s+me\s+|show\s+)?(?:a\s+|the\s+)?workspace\s+(?:overview|summary)[\s,.!?，。！？…~～]*$/u.test(message)
+    || /^(?:给我|显示|查看)?(?:工作区|业务)(?:总览|概况)[\s,.!?，。！？…~～]*$/u.test(message);
+}
+
 function quotationStatus(message: string): QuotationStatus | undefined {
   if (/draft|drafting|草稿|起草/u.test(message)) return "draft";
   if (/accepted|done|完成|接受/u.test(message)) return "accepted";
@@ -88,6 +119,20 @@ export async function runDeterministicWorkflow(
   dependencies: DeterministicWorkflowDependencies,
 ): Promise<DeterministicWorkflowResult | null> {
   const message = rawMessage.trim().toLocaleLowerCase("en-AU");
+
+  const greeting = greetingAnswer(rawMessage);
+  if (greeting) {
+    trace.selectWorkflow("greeting");
+    return greeting;
+  }
+
+  if (hasWorkspaceOverviewIntent(rawMessage)) {
+    trace.selectWorkflow("workspace_overview");
+    const workspaceOverview = await trace.step("workspace.overview", "tool", () => (
+      dependencies.fastWorkspaceOverviewAnswer(provider, rawMessage)
+    ));
+    return workspaceOverview ? { ...workspaceOverview, workflow: "workspace_overview" } : null;
+  }
 
   const runInventoryWorkflow = async (): Promise<DeterministicWorkflowResult | null> => {
     trace.selectWorkflow("inventory_query");

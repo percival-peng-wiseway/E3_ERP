@@ -4,6 +4,7 @@ import { listSiteVisits } from "@/lib/site-visits/repository";
 import {
   fastInventoryAnswer,
   fastPaymentTrackAnswer,
+  fastWorkspaceOverviewAnswer,
   fastWeeklyScheduleAnswer,
   runAgentTool,
 } from "./tools";
@@ -12,6 +13,7 @@ import type { DeterministicWorkflowDependencies } from "./workflows";
 export const deterministicWorkflowDependencies = {
   fastInventoryAnswer,
   fastPaymentTrackAnswer,
+  fastWorkspaceOverviewAnswer,
   fastWeeklyScheduleAnswer,
   runAgentTool,
   getReportContent,
