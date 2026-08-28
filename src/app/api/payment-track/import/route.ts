@@ -1,8 +1,5 @@
 import { NextRequest } from "next/server";
-import {
-  PaymentAgreementParseError,
-  parsePaymentAgreementPdf,
-} from "@/lib/payment-track/pdf-parser";
+import { parsePaymentTrackCreateInput } from "@/lib/payment-track/create-input";
 import {
   createImportedPaymentTrackProject,
   PaymentTrackRepositoryError,
@@ -23,7 +20,9 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const MAX_AGREEMENT_SIZE = 15 * 1024 * 1024;
-const MAX_MULTIPART_SIZE = MAX_AGREEMENT_SIZE + 256 * 1024;
+const MAX_PARSED_AGREEMENT_SIZE = 128 * 1024;
+const MAX_MULTIPART_SIZE = MAX_AGREEMENT_SIZE + MAX_PARSED_AGREEMENT_SIZE + 256 * 1024;
+const CLIENT_EXTRACTION_VERSION = 1;
 
 export async function POST(request: NextRequest) {
   if (!isAuthorizedMutationRequest(request)) return paymentTrackError(403, "forbidden", "This request is not allowed.");
@@ -33,7 +32,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const form = await readPaymentTrackForm(request, MAX_MULTIPART_SIZE);
-    if (!strictFormFields(form, new Set(["agreement", "actorRole"]))) {
+    if (!strictFormFields(form, new Set(["agreement", "actorRole", "parsedAgreement"]))) {
       return paymentTrackError(400, "invalid_form", "The proposal form contains invalid or duplicate fields.");
     }
     if (form.get("actorRole") !== "sales") {
@@ -49,34 +48,46 @@ export async function POST(request: NextRequest) {
     if (agreement.type !== "application/pdf") {
       return paymentTrackError(415, "unsupported_agreement", "The Solar Proposal must be a PDF.");
     }
-    const bytes = new Uint8Array(await agreement.arrayBuffer());
-    if (!paymentTrackFileSignatureMatches("application/pdf", bytes)) {
+    const signature = new Uint8Array(await agreement.slice(0, 5).arrayBuffer());
+    const trailer = new TextDecoder().decode(new Uint8Array(
+      await agreement.slice(Math.max(0, agreement.size - 4_096)).arrayBuffer(),
+    ));
+    if (!paymentTrackFileSignatureMatches("application/pdf", signature) || !trailer.includes("%%EOF")) {
       return paymentTrackError(415, "invalid_agreement_content", "The uploaded file is not a valid Solar Proposal PDF.");
     }
-
-    const parsed = await parsePaymentAgreementPdf(bytes);
-    const project = await createImportedPaymentTrackProject({
-      quoteNumber: parsed.quoteNumber,
-      specialist: parsed.specialist,
-      customer: parsed.customer,
-      items: parsed.items,
-      balanceDueCents: parsed.balanceDueCents,
-      expectedDepositCents: parsed.expectedDepositCents,
-      stcSolarRequired: parsed.stcSolarRequired,
-      stcBatteryRequired: parsed.stcBatteryRequired,
-      solarRebateRequired: parsed.solarRebateRequired,
-      solarRebateQrRequired: parsed.solarRebateRequired,
-    }, {
-      bytes,
+    const parsedAgreement = form.get("parsedAgreement");
+    if (typeof parsedAgreement !== "string"
+      || new TextEncoder().encode(parsedAgreement).byteLength > MAX_PARSED_AGREEMENT_SIZE) {
+      return paymentTrackError(400, "client_parse_required", "Refresh the page and choose the Solar Proposal again.");
+    }
+    const parsedBody: unknown = JSON.parse(parsedAgreement);
+    if (!parsedBody || typeof parsedBody !== "object" || Array.isArray(parsedBody)) {
+      return paymentTrackError(400, "invalid_agreement_data", "The extracted proposal details are invalid.");
+    }
+    const { extractionVersion, ...createFields } = parsedBody as Record<string, unknown>;
+    if (extractionVersion !== CLIENT_EXTRACTION_VERSION) {
+      return paymentTrackError(400, "client_parse_required", "Refresh the page and choose the Solar Proposal again.");
+    }
+    // Extraction runs in the first-party browser because instantiating PDF.js
+    // exceeds the Worker's fixed memory budget. The authenticated Sales role
+    // already has the equivalent Manual Entry permission; the server still
+    // enforces exact fields, all value bounds, the PDF envelope and duplicate
+    // Proposal Number protection before it writes anything.
+    const input = parsePaymentTrackCreateInput(createFields, {
+      exact: true,
+      deriveStcFlags: true,
+    });
+    if (!input) {
+      return paymentTrackError(400, "invalid_agreement_data", "The extracted proposal details are invalid.");
+    }
+    const project = await createImportedPaymentTrackProject(input, {
+      blob: agreement,
       originalName: safePaymentTrackOriginalName(agreement.name, "agreement.pdf"),
       contentType: "application/pdf",
       size: agreement.size,
     });
     return paymentTrackJson({ data: project }, { status: 201 });
   } catch (error) {
-    if (error instanceof PaymentAgreementParseError) {
-      return paymentTrackError(422, "extraction_failed", error.message, { missingFields: error.missingFields });
-    }
     if (error instanceof PaymentTrackRepositoryError) return paymentTrackError(error.status, error.code, error.message);
     if (error instanceof PaymentTrackRequestBodyTooLarge) {
       return paymentTrackError(413, "file_too_large", "The Solar Proposal must be 15 MB or smaller.");

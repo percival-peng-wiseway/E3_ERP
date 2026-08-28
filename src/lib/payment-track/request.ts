@@ -1,8 +1,17 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import type { PaymentTrackUploadContentType } from "./types";
-
-export class PaymentTrackRequestBodyTooLarge extends Error {}
+import { readLimitedPaymentTrackBody } from "./body-reader";
+export {
+  PaymentTrackRequestBodyTooLarge,
+  readLimitedPaymentTrackBody,
+  readPaymentTrackForm,
+} from "./body-reader";
+export {
+  optionalPaymentTrackText,
+  paymentTrackAmountToCents,
+  requiredPaymentTrackText,
+} from "./input-validation";
 
 export function paymentTrackJson(body: unknown, init?: ResponseInit) {
   const response = NextResponse.json(body, init);
@@ -19,42 +28,11 @@ export function declaredPaymentTrackBodyTooLarge(request: Request, maximum: numb
   return Number.isFinite(value) && value > maximum;
 }
 
-export async function readLimitedPaymentTrackBody(request: Request, maximum: number) {
-  if (!request.body) return new Uint8Array();
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > maximum) {
-      await reader.cancel().catch(() => undefined);
-      throw new PaymentTrackRequestBodyTooLarge();
-    }
-    chunks.push(value);
-  }
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return bytes;
-}
-
 export async function readPaymentTrackJson(request: Request, maximum: number) {
   const bytes = await readLimitedPaymentTrackBody(request, maximum);
   const value: unknown = JSON.parse(new TextDecoder().decode(bytes));
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new SyntaxError("Expected an object");
   return value as Record<string, unknown>;
-}
-
-export async function readPaymentTrackForm(request: Request, maximum: number) {
-  const contentType = request.headers.get("content-type") || "";
-  if (!contentType.toLowerCase().startsWith("multipart/form-data;")) throw new TypeError("Expected multipart form data");
-  const bytes = await readLimitedPaymentTrackBody(request, maximum);
-  return new Response(bytes, { headers: { "content-type": contentType } }).formData();
 }
 
 export function strictFormFields(form: FormData, allowed: Set<string>) {
@@ -64,28 +42,6 @@ export function strictFormFields(form: FormData, allowed: Set<string>) {
     seen.add(name);
   }
   return true;
-}
-
-export function requiredPaymentTrackText(value: unknown, maximum: number) {
-  if (typeof value !== "string") return null;
-  const text = value.trim();
-  return text && text.length <= maximum ? text : null;
-}
-
-export function optionalPaymentTrackText(value: unknown, maximum: number) {
-  if (value === undefined || value === null || value === "") return "";
-  if (typeof value !== "string") return null;
-  const text = value.trim();
-  return text.length <= maximum ? text : null;
-}
-
-export function paymentTrackAmountToCents(value: unknown) {
-  if (typeof value !== "string") return null;
-  const normalized = value.trim().replace(/^\$\s*/, "").replaceAll(",", "");
-  if (!/^(?:0|[1-9]\d{0,9})(?:\.\d{1,2})?$/.test(normalized)) return null;
-  const [whole, fraction = ""] = normalized.split(".");
-  const cents = Number(whole) * 100 + Number(fraction.padEnd(2, "0"));
-  return Number.isSafeInteger(cents) && cents >= 0 && cents <= 100_000_000_000 ? cents : null;
 }
 
 export function safePaymentTrackOriginalName(value: string, fallback: string) {

@@ -48,7 +48,7 @@ test("delete removes a payment project and its stored files, then reports not fo
     stcBatteryRequired: false,
     solarRebateRequired: false,
   }, {
-    bytes: contract,
+    blob: new Blob([contract], { type: "application/pdf" }),
     originalName: "agreement.pdf",
     contentType: "application/pdf",
     size: contract.byteLength,

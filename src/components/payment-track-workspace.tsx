@@ -958,9 +958,27 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
     setBusy(true);
     setError("");
     try {
+      const { parsePaymentAgreementPdf } = await import("@/lib/payment-track/pdf-parser");
+      const parsed = await parsePaymentAgreementPdf(new Uint8Array(await agreement.arrayBuffer()));
+      const parsedAgreement = {
+        extractionVersion: 1,
+        actorRole: "sales" as const,
+        quoteNumber: parsed.quoteNumber,
+        specialist: parsed.specialist,
+        customer: parsed.customer,
+        items: parsed.items,
+        balanceDue: (parsed.balanceDueCents / 100).toFixed(2),
+        expectedDeposit: parsed.expectedDepositCents === null
+          ? null
+          : (parsed.expectedDepositCents / 100).toFixed(2),
+        stcSolarRequired: parsed.stcSolarRequired,
+        stcBatteryRequired: parsed.stcBatteryRequired,
+        solarRebateRequired: parsed.solarRebateRequired,
+      };
       const body = new FormData();
       body.set("agreement", agreement);
       body.set("actorRole", "sales");
+      body.set("parsedAgreement", JSON.stringify(parsedAgreement));
       const response = await fetch("/api/payment-track/import", { method: "POST", body });
       const result = await readJsonResponse<PaymentTrackMutationResponse & { error?: string }>(response);
       if (!response.ok) throw new Error(apiError(result, "Unable to import this proposal."));

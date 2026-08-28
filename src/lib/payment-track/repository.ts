@@ -140,12 +140,16 @@ export type CreatePaymentTrackInput = {
   solarRebateQrRequired?: boolean;
 };
 
-export type PaymentTrackUpload = {
-  bytes: Uint8Array;
+type PaymentTrackUploadMetadata = {
   originalName: string;
   contentType: PaymentTrackUploadContentType;
   size: number;
 };
+
+export type PaymentTrackUpload = PaymentTrackUploadMetadata & (
+  | { bytes: Uint8Array; blob?: never }
+  | { blob: Blob; bytes?: never }
+);
 
 export type PaymentTrackTransitionInput = {
   actorRole: PaymentTrackRole;
@@ -774,6 +778,12 @@ async function storedUpload(
   upload: PaymentTrackUpload,
   timestamp: string,
 ) {
+  const contentSize = upload.blob?.size ?? upload.bytes?.byteLength ?? -1;
+  if (contentSize !== upload.size
+    || upload.size < 1
+    || Boolean(upload.blob?.type && upload.blob.type !== upload.contentType)) {
+    throw new PaymentTrackRepositoryError("The uploaded file metadata is invalid.", 400, "invalid_file");
+  }
   const id = randomUUID();
   const storedName = `${randomUUID()}.${MIME_EXTENSIONS[upload.contentType]}`;
   const file = {
@@ -792,11 +802,17 @@ async function storedUpload(
     if (!bindings.files) {
       throw new CloudflareStorageConfigurationError("The ERP_FILES binding is missing.");
     }
-    await bindings.files.put(storedFileObjectKey(file), upload.bytes);
+    await bindings.files.put(
+      storedFileObjectKey(file),
+      upload.blob ? upload.blob.stream() : upload.bytes,
+    );
   } else {
     const directory = kind === "contract" ? contractsPath : proofsPath;
     const filePath = path.join(/* turbopackIgnore: true */ directory, storedName);
-    await writeFile(filePath, upload.bytes, { flag: "wx", mode: 0o600 });
+    const bytes = upload.blob
+      ? new Uint8Array(await upload.blob.arrayBuffer())
+      : upload.bytes;
+    await writeFile(filePath, bytes, { flag: "wx", mode: 0o600 });
   }
   return {
     file,
