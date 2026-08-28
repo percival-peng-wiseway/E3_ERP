@@ -56,6 +56,9 @@ export async function processKnowledgeIndexJob(
   jobId: string,
   dependencies: IndexServiceDependencies = {},
 ): Promise<void> {
+  const backgroundDeadlineAt = Date.now()
+    + KNOWLEDGE_INDEX_EXECUTION_CONFIG.backgroundBudgetMs
+    - KNOWLEDGE_INDEX_EXECUTION_CONFIG.backgroundCompletionReserveMs;
   const workerId = `knowledge-indexer:${randomUUID()}`;
   const job = await claimKnowledgeIndexJob({
     jobId,
@@ -97,7 +100,12 @@ export async function processKnowledgeIndexJob(
     }
 
     provider = await (dependencies.getProvider || knowledgeSearchBinding)();
-    uploaded = await uploadKnowledgeChunks({ provider, document, chunks });
+    uploaded = await uploadKnowledgeChunks({
+      provider,
+      document,
+      chunks,
+      deadlineAt: backgroundDeadlineAt,
+    });
 
     const latest = await getKnowledgeDocument(document.id, KNOWLEDGE_TENANT_ID);
     if (!latest || latest.status === "disabled" || latest.indexGeneration !== job.indexGeneration) {

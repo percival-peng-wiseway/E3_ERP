@@ -135,11 +135,12 @@ export async function uploadKnowledgeChunks(input: {
   provider: ErpAiSearch;
   document: KnowledgeDocument;
   chunks: KnowledgeChunkDraft[];
+  /** Absolute background deadline, leaving time for activation or cleanup. */
+  deadlineAt?: number;
   /** Deterministic clock used only by focused timeout tests. */
   timing?: KnowledgeUploadTiming;
 }) {
   const timing = input.timing || DEFAULT_UPLOAD_TIMING;
-  const deadline = timing.now() + KNOWLEDGE_INDEX_EXECUTION_CONFIG.providerBatchTimeoutMs;
   const uploads: Array<{ chunk: KnowledgeChunkDraft; id: string; key: string }> = new Array(input.chunks.length);
   const expectedKeys = new Set(input.chunks.map((_, index) => itemName(input.document, index)));
   const knownIds = new Set<string>();
@@ -179,6 +180,13 @@ export async function uploadKnowledgeChunks(input: {
     throw firstFailure;
   }
 
+  // Uploading a multi-chunk document can consume several seconds. Give the
+  // provider its full indexing window only after every item has been accepted,
+  // while still respecting the Worker's overall background budget.
+  const deadline = Math.min(
+    timing.now() + KNOWLEDGE_INDEX_EXECUTION_CONFIG.providerBatchTimeoutMs,
+    input.deadlineAt ?? Number.POSITIVE_INFINITY,
+  );
   try {
     while (true) {
       // One provider call observes the whole generation; the timeout is global,

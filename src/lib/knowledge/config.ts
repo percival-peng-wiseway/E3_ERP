@@ -28,6 +28,7 @@ export const KNOWLEDGE_RETRIEVAL_CONFIG = Object.freeze({
  */
 export const KNOWLEDGE_INDEX_EXECUTION_CONFIG = Object.freeze({
   backgroundBudgetMs: 30_000,
+  backgroundCompletionReserveMs: 3_000,
   maximumChunksPerDocument: 24,
   providerUploadConcurrency: 4,
   providerBatchPollIntervalMs: 750,
