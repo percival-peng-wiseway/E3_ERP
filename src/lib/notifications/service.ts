@@ -34,6 +34,12 @@ const ACCESSORY_STOCK_ASSIGNEE = {
 } as const;
 const ACCESSORY_REORDER_THRESHOLD = 3;
 const ACCESSORY_REORDER_SKUS = new Set(["BOLLARD", "CANOPY"]);
+const MELBOURNE_DATE_FORMATTER = new Intl.DateTimeFormat("en-AU", {
+  timeZone: "Australia/Melbourne",
+  year: "numeric",
+  month: "numeric",
+  day: "numeric",
+});
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -173,17 +179,12 @@ function earliestOperationalCreatedAt(orders: OperationalOrder[]) {
 }
 
 function melbourneTodayUtc(now: Date) {
-  const parts = new Intl.DateTimeFormat("en-AU", {
-    timeZone: "Australia/Melbourne",
-    year: "numeric",
-    month: "numeric",
-    day: "numeric",
-  }).formatToParts(now);
+  const parts = MELBOURNE_DATE_FORMATTER.formatToParts(now);
   const part = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((entry) => entry.type === type)?.value);
   return Date.UTC(part("year"), part("month") - 1, part("day"));
 }
 
-function daysUntilDate(value: string | null, now: Date): number | null {
+function daysUntilDate(value: string | null, melbourneToday: number): number | null {
   const match = value?.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (!match) return null;
   const year = Number(match[1]);
@@ -196,7 +197,7 @@ function daysUntilDate(value: string | null, now: Date): number | null {
     || targetDate.getUTCMonth() !== month - 1
     || targetDate.getUTCDate() !== day
   ) return null;
-  return Math.round((target - melbourneTodayUtc(now)) / DAY_MS);
+  return Math.round((target - melbourneToday) / DAY_MS);
 }
 
 function preScheduleDescription(
@@ -325,12 +326,19 @@ async function loadOperationalSnapshot(): Promise<OperationalSnapshot> {
   return { orders, inventory };
 }
 
-export function buildPaymentTrackNotifications(projects: PaymentTrackProject[], now: Date) {
+export function buildPaymentTrackNotifications(
+  projects: PaymentTrackProject[],
+  now: Date,
+  role: NotificationRoleFilter = "all",
+) {
   const items: WorkspaceNotification[] = [];
+  const melbourneToday = role === "all" || role === "pm" ? melbourneTodayUtc(now) : 0;
   for (const project of projects.slice(0, MAX_SOURCE_RECORDS)) {
+    const tasks = paymentTrackResponsibilities(project).filter((task) => role === "all" || task.role === role);
+    if (!tasks.length) continue;
     const customerName = projectCustomerName(project);
     const customerAddress = projectCustomerAddress(project);
-    for (const task of paymentTrackResponsibilities(project)) {
+    for (const task of tasks) {
       if (task.action === "upload_deposit_proof") {
         items.push(notification({
           role: task.role,
@@ -383,7 +391,7 @@ export function buildPaymentTrackNotifications(projects: PaymentTrackProject[], 
         }));
       } else if (task.action === "manage_delivery") {
         const scheduledFor = project.deliveryScheduledFor;
-        const daysUntil = daysUntilDate(scheduledFor, now);
+        const daysUntil = daysUntilDate(scheduledFor, melbourneToday);
         const hasSchedule = daysUntil !== null
           && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(cleanText(project.deliveryScheduledTime, 5))
           && Boolean(cleanText(project.deliveryAssignee, 80));
@@ -456,7 +464,7 @@ export function buildPaymentTrackNotifications(projects: PaymentTrackProject[], 
         }));
       } else if (task.action === "manage_installation") {
         const scheduledFor = project.installationScheduledFor;
-        const daysUntil = daysUntilDate(scheduledFor, now);
+        const daysUntil = daysUntilDate(scheduledFor, melbourneToday);
         const hasSchedule = daysUntil !== null
           && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(cleanText(project.installationScheduledTime, 5))
           && Boolean(cleanText(project.installationAssignee, 80));
@@ -495,7 +503,7 @@ export function buildPaymentTrackNotifications(projects: PaymentTrackProject[], 
         const scheduledFor = deliveredAwaitingInstall
           ? project.installationScheduledFor
           : project.deliveryScheduledFor || project.installationScheduledFor;
-        const daysUntil = daysUntilDate(scheduledFor, now);
+        const daysUntil = daysUntilDate(scheduledFor, melbourneToday);
         const hasSchedule = Boolean(project.workMode && scheduledFor && !deliveredAwaitingInstall);
         let priority: NotificationPriority = "high";
         if (hasSchedule && daysUntil !== null) {
@@ -607,6 +615,7 @@ function reimbursementNotifications(claims: ReimbursementClaim[]) {
 }
 
 export function buildOperationalProjectNotifications(orders: OperationalOrder[], now: Date) {
+  const melbourneToday = melbourneTodayUtc(now);
   const groups = new Map<string, OperationalOrder[]>();
   for (const order of orders) {
     const current = groups.get(order.group);
@@ -653,7 +662,7 @@ export function buildOperationalProjectNotifications(orders: OperationalOrder[],
       continue;
     }
     if (primary.status !== "scheduled") continue;
-    const daysUntil = daysUntilDate(primary.plannedDate, now);
+    const daysUntil = daysUntilDate(primary.plannedDate, melbourneToday);
     const scheduleComplete = primary.scheduleComplete && daysUntil !== null;
     if (scheduleComplete && (daysUntil < -30 || daysUntil > 7)) continue;
     const priority: NotificationPriority = !scheduleComplete
@@ -750,7 +759,7 @@ export async function buildWorkspaceNotifications(
     ])
     : Promise.resolve<WorkspaceNotification[]>([]);
   const [payments, reimbursements, operations] = await Promise.allSettled([
-    listPaymentTrackProjects().then((projects) => buildPaymentTrackNotifications(projects, now)),
+    listPaymentTrackProjects().then((projects) => buildPaymentTrackNotifications(projects, now, role)),
     reimbursementTask,
     deliveryOperationsTask,
   ]);

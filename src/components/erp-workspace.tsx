@@ -27,6 +27,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
+import dynamic from "next/dynamic";
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 import e3EnergyMark from "@/assets/e3-energy-mark.png";
@@ -42,17 +43,51 @@ import {
   countOngoingSiteVisits,
   type SiteVisitListResponse,
 } from "@/lib/site-visits/types";
-import { AgentSettingsDialog } from "./agent-settings-dialog";
-import { FilesWorkspace } from "./files-workspace";
-import { HomeCollaborationWorkspace } from "./home-collaboration-workspace";
-import { InventoryOperationsWorkspace } from "./inventory-operations-workspace";
-import { ProjectDeliveryBoard } from "./project-delivery-board";
-import { QuoteHelpWorkspace } from "./quotehelp-workspace";
-import { ReimbursementWorkspace } from "./reimbursement-workspace";
-import { ReportsWorkspace } from "./reports-workspace";
-import { PaymentTrackWorkspace } from "./payment-track-workspace";
-import { SiteVisitingWorkspace } from "./site-visiting-workspace";
-import { UserManagementDialog } from "./user-management-dialog";
+
+const AgentSettingsDialog = dynamic(
+  () => import("./agent-settings-dialog").then((module) => module.AgentSettingsDialog),
+  { ssr: false, loading: WorkspaceLoading },
+);
+const FilesWorkspace = dynamic(
+  () => import("./files-workspace").then((module) => module.FilesWorkspace),
+  { ssr: false, loading: WorkspaceLoading },
+);
+const HomeCollaborationWorkspace = dynamic(
+  () => import("./home-collaboration-workspace").then((module) => module.HomeCollaborationWorkspace),
+  { ssr: false, loading: WorkspaceLoading },
+);
+const InventoryOperationsWorkspace = dynamic(
+  () => import("./inventory-operations-workspace").then((module) => module.InventoryOperationsWorkspace),
+  { ssr: false, loading: WorkspaceLoading },
+);
+const ProjectDeliveryBoard = dynamic(
+  () => import("./project-delivery-board").then((module) => module.ProjectDeliveryBoard),
+  { ssr: false, loading: WorkspaceLoading },
+);
+const QuoteHelpWorkspace = dynamic(
+  () => import("./quotehelp-workspace").then((module) => module.QuoteHelpWorkspace),
+  { ssr: false, loading: WorkspaceLoading },
+);
+const ReimbursementWorkspace = dynamic(
+  () => import("./reimbursement-workspace").then((module) => module.ReimbursementWorkspace),
+  { ssr: false, loading: WorkspaceLoading },
+);
+const ReportsWorkspace = dynamic(
+  () => import("./reports-workspace").then((module) => module.ReportsWorkspace),
+  { ssr: false, loading: WorkspaceLoading },
+);
+const PaymentTrackWorkspace = dynamic(
+  () => import("./payment-track-workspace").then((module) => module.PaymentTrackWorkspace),
+  { ssr: false, loading: WorkspaceLoading },
+);
+const SiteVisitingWorkspace = dynamic(
+  () => import("./site-visiting-workspace").then((module) => module.SiteVisitingWorkspace),
+  { ssr: false, loading: WorkspaceLoading },
+);
+const UserManagementDialog = dynamic(
+  () => import("./user-management-dialog").then((module) => module.UserManagementDialog),
+  { ssr: false, loading: WorkspaceLoading },
+);
 
 type ModuleId = "home" | "files" | "inventory" | "quotations" | "projects" | "site-visits" | "payments" | "reimbursements" | "reports" | "finance";
 type EntityNavigationTarget = { module: ModuleId; entityId: string; requestId: number };
@@ -488,8 +523,12 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
       </div>
       {currentUser.role === "admin" ? (
         <>
-          <AgentSettingsDialog open={agentSettingsOpen} onClose={() => setAgentSettingsOpen(false)} />
-          <UserManagementDialog open={userManagementOpen} onClose={() => setUserManagementOpen(false)} currentUsername={currentUser.username} />
+          {agentSettingsOpen ? (
+            <AgentSettingsDialog open onClose={() => setAgentSettingsOpen(false)} />
+          ) : null}
+          {userManagementOpen ? (
+            <UserManagementDialog open onClose={() => setUserManagementOpen(false)} currentUsername={currentUser.username} />
+          ) : null}
         </>
       ) : null}
     </div>
@@ -498,4 +537,8 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
 
 function ComingSoon() {
   return <section className="module-placeholder"><span><CircleDollarSign size={26} /></span><h1>Finance &amp; Accounting is not available yet</h1><button className="ghost-button"><CheckCircle2 size={15} />View Implementation Checklist</button></section>;
+}
+
+function WorkspaceLoading() {
+  return <section className="module-placeholder" role="status" aria-label="Loading workspace" />;
 }

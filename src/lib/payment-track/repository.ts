@@ -3,10 +3,6 @@ import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promis
 import path from "node:path";
 // @ts-expect-error -- focused Node ESM tests require the explicit extension.
 import * as cloudflareStorage from "../server/cloudflare-storage.ts";
-// The focused tests execute source TypeScript directly under Node ESM, which
-// requires the explicit extension; Next's server bundler supports this path.
-// @ts-expect-error -- the project intentionally does not enable TS emit-time extension imports.
-import { paymentAgreementRequiresSolarRebatePdf } from "./pdf-parser.ts";
 // @ts-expect-error -- explicit extension is required by the focused Node ESM tests.
 import * as paymentTrackTypes from "./types.ts";
 import type {
@@ -200,7 +196,6 @@ const MIME_EXTENSIONS: Record<PaymentTrackUploadContentType, string> = {
 };
 
 const SOLAR_REBATE_ASSESSMENT_VERSION = 2;
-const SOLAR_REBATE_ASSESSMENT_RETRY_MS = 60_000;
 
 const dataRoot = path.resolve(
   /* turbopackIgnore: true */
@@ -212,10 +207,6 @@ const proofsPath = path.join(dataRoot, "proofs");
 const CLOUDFLARE_DOCUMENT_KEY = "payment-track/records";
 const MAXIMUM_STORAGE_RETRIES = 5;
 let mutationQueue: Promise<void> = Promise.resolve();
-const solarRebateAssessmentRetries = new Map<string, {
-  fileFingerprint: string;
-  retryAfter: number;
-}>();
 
 function storedFileObjectKey(file: StoredFile) {
   const expectedDirectory = file.kind === "contract" ? contractsPath : proofsPath;
@@ -751,77 +742,17 @@ async function migrateLegacyProjectStages(projects: StoredProject[], fallbackTim
     }
 
     if (!solarRebateAssessmentIsCurrent(project)) {
-      if (!project.contract) {
-        if (typeof project.solarRebateRequired !== "boolean") {
-          project.solarRebateRequired = false;
-        }
-        project.solarRebateAssessmentVersion = SOLAR_REBATE_ASSESSMENT_VERSION;
-        changed = true;
-      } else {
-        let fileFingerprint: string;
-        let contractBytes: Uint8Array;
-        try {
-          const storedContract = await readStoredFileContent(project.contract);
-          contractBytes = storedContract.bytes;
-          fileFingerprint = storedContract.fingerprint;
-        } catch {
-          solarRebateAssessmentRetries.set(project.id, {
-            fileFingerprint: `unavailable:${project.contract.storedName}`,
-            retryAfter: Date.now() + SOLAR_REBATE_ASSESSMENT_RETRY_MS,
-          });
-          continue;
-        }
-
-        const retry = solarRebateAssessmentRetries.get(project.id);
-        if (retry?.fileFingerprint === fileFingerprint && retry.retryAfter > Date.now()) continue;
-
-        let required: boolean | null;
-        try {
-          required = await paymentAgreementRequiresSolarRebatePdf(contractBytes);
-        } catch {
-          solarRebateAssessmentRetries.set(project.id, {
-            fileFingerprint,
-            retryAfter: Date.now() + SOLAR_REBATE_ASSESSMENT_RETRY_MS,
-          });
-          continue;
-        }
-        if (required === null) {
-          solarRebateAssessmentRetries.set(project.id, {
-            fileFingerprint,
-            retryAfter: Date.now() + SOLAR_REBATE_ASSESSMENT_RETRY_MS,
-          });
-          continue;
-        }
-
-        solarRebateAssessmentRetries.delete(project.id);
-        const previouslyRequired = project.solarRebateRequired === true;
-        project.solarRebateRequired = required;
-        project.solarRebateAssessmentVersion = SOLAR_REBATE_ASSESSMENT_VERSION;
-        changed = true;
-
-        if (required !== previouslyRequired) {
-          project.updatedAt = fallbackTimestamp;
-        }
-        const reopened = required
-          && project.stage === "done"
-          && !project.solarRebateReceivedAt;
-        if (reopened) {
-          project.stage = "stc_rebate";
-          project.completedAt = null;
-          project.updatedAt = fallbackTimestamp;
-        }
-        if (required && (!previouslyRequired || reopened)) {
-          project.history.push(historyEntry(
-            "solar_rebate_requirement_backfilled",
-            fallbackTimestamp,
-            "admin",
-            "System",
-            reopened
-              ? "The contract requires Solar Rebate confirmation, so this project was reopened."
-              : "The contract requires separate Solar Rebate confirmation.",
-          ));
-        }
+      // Solar Rebate is assessed while a new proposal PDF is imported. Never
+      // re-open and parse every historical contract from a list/read request:
+      // that makes the Project Track and notifications hot paths depend on KV
+      // file availability and can exhaust the Workers CPU budget. Preserve the
+      // legacy decision (defaulting only genuinely missing data to no gate) and
+      // mark the lightweight metadata migration complete.
+      if (typeof project.solarRebateRequired !== "boolean") {
+        project.solarRebateRequired = false;
       }
+      project.solarRebateAssessmentVersion = SOLAR_REBATE_ASSESSMENT_VERSION;
+      changed = true;
     }
 
     if (!solarRebateAssessmentIsCurrent(project)) continue;
@@ -1032,7 +963,6 @@ export function deletePaymentTrackProject(id: string) {
     // Commit the record deletion first. If the D1 CAS fails, every attachment
     // remains reachable from the still-live project and the mutation can retry.
     await writeStoredProjects(projects, storedDocument.version);
-    solarRebateAssessmentRetries.delete(id);
     await Promise.allSettled([...uniqueFiles.values()].map((file) => deleteStoredFile(file)));
     return publicProject(deleted);
   });

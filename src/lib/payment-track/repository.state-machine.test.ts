@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { readFile, rm, stat, writeFile } from "node:fs/promises";
+import { readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
@@ -1501,7 +1501,7 @@ test("legacy WIP records without QR fields default to no gate and remain schedul
   assert.equal(project.deliveryScheduledFor, "2026-08-28");
 });
 
-test("an old imported contract backfills Solar Rebate and safely reopens an incorrect Done project", async () => {
+test("an old imported contract preserves its stored Solar Rebate assessment without reopening", async () => {
   let project = await createInstalledProject({
     stcSolarRequired: false,
     stcBatteryRequired: false,
@@ -1524,59 +1524,36 @@ test("an old imported contract backfills Solar Rebate and safely reopens an inco
   const records = JSON.parse(await readFile(recordsPath, "utf8")) as Array<Record<string, unknown>>;
   const storedProject = records.find((candidate) => candidate.id === project.id);
   assert.ok(storedProject);
+  const contract = storedProject.contract as { storedName: string };
   storedProject.solarRebateRequired = false;
   delete storedProject.solarRebateAssessmentVersion;
   await writeFile(recordsPath, `${JSON.stringify(records, null, 2)}\n`, "utf8");
+  await unlink(path.join(testDataDirectory, "contracts", contract.storedName));
 
   const firstList = await listPaymentTrackProjects();
   const secondList = await listPaymentTrackProjects();
-  const backfilled = firstList.find((candidate) => candidate.id === project.id);
-  assert.equal(backfilled?.solarRebateRequired, true);
-  assert.equal(backfilled?.solarRebateReceivedAt, null);
-  assert.equal(backfilled?.stage, "stc_rebate");
-  assert.equal(backfilled?.completedAt, null);
+  const migrated = firstList.find((candidate) => candidate.id === project.id);
+  assert.equal(migrated?.solarRebateRequired, false);
+  assert.equal(migrated?.solarRebateReceivedAt, null);
+  assert.equal(migrated?.stage, "done");
+  assert.ok(migrated?.completedAt);
   assert.equal(
-    backfilled?.history.filter((entry) => entry.action === "solar_rebate_requirement_backfilled").length,
-    1,
+    migrated?.history.filter((entry) => entry.action === "solar_rebate_requirement_backfilled").length,
+    0,
   );
   assert.equal(
     secondList.find((candidate) => candidate.id === project.id)?.history
       .filter((entry) => entry.action === "solar_rebate_requirement_backfilled").length,
-    1,
+    0,
   );
-
-  project = await transitionPaymentTrackProject(project.id, "confirm_solar_rebate", {
-    actorRole: "admin",
-  });
-  assert.equal(project.stage, "done");
-  assert.ok(project.solarRebateReceivedAt);
-  assert.ok(project.completedAt);
-  assert.equal(project.history.filter((entry) => entry.action === "completed").length, 2);
 
   const persisted = JSON.parse(await readFile(recordsPath, "utf8")) as Array<Record<string, unknown>>;
   const persistedProject = persisted.find((candidate) => candidate.id === project.id);
   assert.equal(persistedProject?.solarRebateAssessmentVersion, 2);
-  assert.equal(persistedProject?.solarRebateRequired, true);
-
-  const alreadyRequiredRecords = JSON.parse(await readFile(recordsPath, "utf8")) as Array<Record<string, unknown>>;
-  const alreadyRequiredProject = alreadyRequiredRecords.find((candidate) => candidate.id === project.id);
-  assert.ok(alreadyRequiredProject);
-  alreadyRequiredProject.solarRebateRequired = true;
-  alreadyRequiredProject.solarRebateReceivedAt = null;
-  delete alreadyRequiredProject.solarRebateAssessmentVersion;
-  await writeFile(recordsPath, `${JSON.stringify(alreadyRequiredRecords, null, 2)}\n`, "utf8");
-
-  const rechecked = await listPaymentTrackProjects();
-  const recheckedProject = rechecked.find((candidate) => candidate.id === project.id);
-  assert.equal(recheckedProject?.stage, "stc_rebate");
-  assert.equal(recheckedProject?.completedAt, null);
-  assert.equal(
-    recheckedProject?.history.filter((entry) => entry.action === "solar_rebate_requirement_backfilled").length,
-    2,
-  );
+  assert.equal(persistedProject?.solarRebateRequired, false);
 });
 
-test("an unevaluated contract without an authoritative price block cannot advance", async () => {
+test("an unevaluated legacy contract does not parse its attachment from a workflow mutation", async () => {
   const contractLines = [
     "System Quote for Battery Storage System",
     "Less Federal Battery Rebate $2,000.00",
@@ -1607,24 +1584,13 @@ test("an unevaluated contract without an authoritative price block cannot advanc
     ]),
   );
 
-  await assert.rejects(
-    transitionPaymentTrackProject(project.id, "mark_coes_received", { actorRole: "pm" }),
-    (error: unknown) => (
-      typeof error === "object"
-      && error !== null
-      && "code" in error
-      && error.code === "solar_rebate_assessment_pending"
-    ),
-  );
+  const completed = await transitionPaymentTrackProject(project.id, "mark_coes_received", {
+    actorRole: "pm",
+  });
+  assert.equal(completed.stage, "done");
+  assert.equal(completed.solarRebateRequired, false);
   const listed = await listPaymentTrackProjects();
-  assert.equal(listed.find((candidate) => candidate.id === project.id)?.stage, "waiting_coes");
-
-  await writeFile(
-    path.join(testDataDirectory, "contracts", contract.storedName),
-    textPdf(contractLines),
-  );
-  const retried = await listPaymentTrackProjects();
-  assert.equal(retried.find((candidate) => candidate.id === project.id)?.solarRebateRequired, false);
+  assert.equal(listed.find((candidate) => candidate.id === project.id)?.stage, "done");
 });
 
 test("a mutation normalizes and persists a legacy COES-confirmed stage before acting", async () => {

@@ -280,6 +280,34 @@ test("each Sales-recorded payment creates an Administrator reminder until it is 
   assert.match(zeroBalanceStillPending[0].id, /payment-2/);
 });
 
+test("payment notifications can be generated only for the signed-in role", () => {
+  const pendingPayment = {
+    ...project().deposit,
+    id: "payment-awaiting-admin",
+    createdAt: "2026-08-24T04:00:00.000Z",
+    acknowledgedAt: "2026-08-24T04:00:00.000Z",
+    acknowledgedBy: "Sales",
+    reportedAmountCents: 2_000,
+  };
+  const mixedProject = project({
+    stage: "working_in_progress",
+    finalPayments: [pendingPayment],
+  });
+
+  assert.deepEqual(
+    buildPaymentTrackNotifications([mixedProject], NOW, "pm").map((item) => item.role),
+    ["pm"],
+  );
+  assert.deepEqual(
+    buildPaymentTrackNotifications([mixedProject], NOW, "sales").map((item) => item.role),
+    ["sales"],
+  );
+  assert.deepEqual(
+    buildPaymentTrackNotifications([mixedProject], NOW, "admin").map((item) => item.role),
+    ["admin"],
+  );
+});
+
 test("Solar Rebate WIP reminds PM to upload the QR code before scheduling work", () => {
   const waitingNotifications = buildPaymentTrackNotifications([project({
     stage: "working_in_progress",
