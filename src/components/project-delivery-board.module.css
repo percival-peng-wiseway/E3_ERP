@@ -402,6 +402,180 @@
   scrollbar-width: thin;
 }
 
+.scheduledProjectsSection {
+  border-color: #d7dcf2;
+  background: #f7f8ff;
+}
+
+.traySection > .scheduledProjectsHeader {
+  position: static;
+  display: flex;
+  width: auto;
+  height: auto;
+  min-height: 44px;
+  overflow: visible;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 14px;
+  clip: auto;
+  clip-path: none;
+  border-bottom: 1px solid var(--line);
+  white-space: normal;
+}
+
+.scheduledProjectsHeader small {
+  flex: 0 0 auto;
+  color: #727c8e;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.scheduledProjectsList {
+  display: flex;
+  min-height: 230px;
+  gap: 10px;
+  overflow-x: auto;
+  margin: 0;
+  padding: 12px;
+  list-style: none;
+  scroll-snap-type: x proximity;
+  scrollbar-color: #c4cbd5 transparent;
+  scrollbar-width: thin;
+}
+
+.scheduledProjectItem {
+  flex: 0 0 300px;
+  min-width: 0;
+  scroll-snap-align: start;
+}
+
+.scheduledProjectCard {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 206px !important;
+  min-width: 0;
+  align-items: stretch;
+  flex-direction: column;
+  gap: 7px;
+  padding: 12px;
+  border: 1px solid #d9dfea;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(25, 34, 48, 0.04);
+  color: #303849;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease;
+}
+
+.scheduledProjectCard:hover:not(:disabled) {
+  border-color: #aeb8e8;
+  box-shadow: 0 5px 14px rgba(47, 58, 111, 0.1);
+  transform: translateY(-1px);
+}
+
+.scheduledProjectCard:focus-visible {
+  outline-offset: 2px;
+}
+
+.scheduledProjectTopline {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+}
+
+.scheduledProjectOverdueBadge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  width: max-content;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border-radius: 5px;
+  background: #fbe8e6;
+  color: #a34137;
+  font-size: 11px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.scheduledProjectCustomer {
+  overflow: hidden;
+  margin-top: 1px;
+  color: #252d3d;
+  font-size: 14px;
+  font-weight: 780;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scheduledProjectProposal {
+  overflow: hidden;
+  color: #727d90;
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scheduledProjectMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 2px;
+  padding-top: 8px;
+  border-top: 1px solid #edf0f3;
+}
+
+.scheduledProjectMeta > span,
+.scheduledProjectDetail {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 5px;
+  overflow: hidden;
+  color: #626e82;
+  font-size: 12px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scheduledProjectMeta svg,
+.scheduledProjectDetail svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.scheduledProjectAction {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: auto;
+  padding-top: 4px;
+  color: #4d5bc9;
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.scheduledProjectsEmpty {
+  display: flex;
+  min-height: 112px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 18px;
+  color: #747f91;
+  font-size: 13px;
+  text-align: center;
+}
+
 .unscheduledCard {
   display: flex;
   flex: 0 0 290px;
@@ -1095,8 +1269,13 @@
 @media (prefers-reduced-motion: reduce) {
   .completedDayToggle,
   .completedDayChevron,
-  .completedDayChevronExpanded {
+  .completedDayChevronExpanded,
+  .scheduledProjectCard {
     transition: none;
+  }
+
+  .scheduledProjectCard:hover:not(:disabled) {
+    transform: none;
   }
 }
 
@@ -1609,6 +1788,20 @@
     align-items: flex-start;
     flex-direction: column;
     gap: 4px;
+  }
+
+  .scheduledProjectsList {
+    min-height: 0;
+    padding: 10px;
+    scroll-snap-type: x mandatory;
+  }
+
+  .scheduledProjectItem {
+    flex-basis: min(82vw, 290px);
+  }
+
+  .scheduledProjectCard {
+    min-height: 218px !important;
   }
 
   .formGrid {

@@ -39,6 +39,15 @@ export interface ProjectScheduleSourceOverride {
   updatedBy: string;
 }
 
+export function isProjectScheduleSourceOverride(value: unknown): value is ProjectScheduleSourceOverride {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const candidate = value as Partial<ProjectScheduleSourceOverride>;
+  return typeof candidate.entryId === "string"
+    && PROJECT_SCHEDULE_SOURCE_OVERRIDE_STATES.includes(candidate.state as ProjectScheduleSourceOverrideState)
+    && typeof candidate.updatedAt === "string"
+    && typeof candidate.updatedBy === "string";
+}
+
 export const PROJECT_SCHEDULE_SOURCE_ENTRY_ID_MAX_LENGTH = 512;
 
 const SOURCE_ENTRY_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;

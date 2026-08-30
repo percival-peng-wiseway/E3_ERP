@@ -42,6 +42,7 @@ import {
   type PaymentTrackProject,
   type PaymentTrackScheduleAssignee,
 } from "@/lib/payment-track/types";
+import { scheduledIncompletePaymentTrackProjects } from "@/lib/payment-track/scheduled-work";
 import styles from "./project-delivery-board.module.css";
 
 type OrderStatus = "pending" | "scheduled" | "delivered" | "cancelled";
@@ -367,13 +368,15 @@ function emptyCustomEditor(date: string): CustomEditorState {
   return { job: null, title: "", scheduledDate: date, startTime: "09:00", endTime: "10:00", assignee: "", location: "", notes: "" };
 }
 
-export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget }: {
+export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget, onOpenProjectTrackProject }: {
   authenticatedRole: ErpRole;
   openEntityTarget?: { entityId: string; requestId: number };
+  onOpenProjectTrackProject?: (projectId: string) => void;
 }) {
   const [weekStart, setWeekStart] = useState(() => weekStartFor(melbourneToday()));
   const [operations, setOperations] = useState<OperationsState>(EMPTY_OPERATIONS);
   const [projects, setProjects] = useState<ScheduledPaymentProject[]>([]);
+  const [paymentSourceReady, setPaymentSourceReady] = useState(false);
   const [siteVisits, setSiteVisits] = useState<SiteVisit[]>([]);
   const [customJobs, setCustomJobs] = useState<ProjectScheduleJob[]>([]);
   const [sourceOverrides, setSourceOverrides] = useState<ProjectScheduleSourceOverride[]>([]);
@@ -425,11 +428,15 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget }: {
       setOperations(EMPTY_OPERATIONS);
       warnings.push("Inventory dispatches could not be refreshed.");
     }
-    if (paymentResult.status === "fulfilled" && paymentResult.value.response.ok) {
+    if (paymentResult.status === "fulfilled"
+      && paymentResult.value.response.ok
+      && Array.isArray(paymentResult.value.body.data)) {
       successfulSources += 1;
-      setProjects(Array.isArray(paymentResult.value.body.data) ? paymentResult.value.body.data as ScheduledPaymentProject[] : []);
+      setProjects(paymentResult.value.body.data as ScheduledPaymentProject[]);
+      setPaymentSourceReady(true);
     } else {
       setProjects([]);
+      setPaymentSourceReady(false);
       warnings.push("Project Track could not be refreshed.");
     }
     if (siteVisitResult.status === "fulfilled" && siteVisitResult.value.response.ok) {
@@ -546,6 +553,16 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget }: {
     () => new Map(sourceOverrides.map((override) => [override.entryId, override.state] as const)),
     [sourceOverrides],
   );
+
+  const scheduledIncompleteProjects = useMemo(() => {
+    if (!paymentSourceReady || !sourceOverridesReady) return [];
+    const projectsById = new Map(projects.map((project) => [project.id.toLowerCase(), project] as const));
+    return scheduledIncompletePaymentTrackProjects(projects, sourceOverrideState).flatMap((scheduled) => {
+      const project = projectsById.get(scheduled.projectId.toLowerCase());
+      return project ? [{ scheduled, project }] : [];
+    });
+  }, [paymentSourceReady, projects, sourceOverrideState, sourceOverridesReady]);
+  const scheduledIncompleteReady = paymentSourceReady && sourceOverridesReady;
 
   const allDatedEntries = useMemo<CalendarEntry[]>(() => {
     const inventoryEntries: CalendarEntry[] = sourceOverridesReady ? [...scheduledInventoryGroups, ...completedInventoryGroups]
@@ -1200,6 +1217,9 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget }: {
           ? `${sourceLabel(entry.source)} restored in Weekly Schedule.`
           : `${sourceLabel(entry.source)} removed from Weekly Schedule.`;
       await refreshAll(message);
+      window.dispatchEvent(new CustomEvent("erp:project-schedule-updated", {
+        detail: { source: "weekly-schedule" },
+      }));
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Unable to update this Weekly Schedule card.");
     } finally {
@@ -1322,6 +1342,42 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget }: {
     </article>
   );
 
+  const renderScheduledIncompleteProject = ({ scheduled, project }: (typeof scheduledIncompleteProjects)[number]) => {
+    const customer = customerName(project);
+    const proposal = project.quoteNumber ? `Proposal ${project.quoteNumber}` : project.reference;
+    const isOverdue = scheduled.scheduledDate < today;
+    return (
+      <li key={scheduled.projectId} className={styles.scheduledProjectItem}>
+        <button
+          type="button"
+          className={styles.scheduledProjectCard}
+          onClick={() => onOpenProjectTrackProject?.(scheduled.projectId)}
+          disabled={!onOpenProjectTrackProject}
+          aria-label={`Open ${customer}${proposal ? `, ${proposal}` : ""} in Project Track`}
+        >
+          <span className={styles.scheduledProjectTopline}>
+            <span className={sourceBadgeClass(scheduled.source)}>{sourceLabel(scheduled.source)}</span>
+            <span className={isOverdue ? styles.scheduledProjectOverdueBadge : styles.scheduledBadge}>
+              {isOverdue ? <AlertCircle size={12} aria-hidden="true" /> : <CalendarCheck2 size={12} aria-hidden="true" />}
+              {isOverdue ? "Overdue" : "Scheduled"}
+            </span>
+          </span>
+          <span className={styles.scheduledProjectCustomer}>{customer}</span>
+          <span className={styles.scheduledProjectProposal}>
+            {[project.reference, proposal].filter(Boolean).filter((value, index, values) => values.indexOf(value) === index).join(" · ")}
+          </span>
+          <span className={styles.scheduledProjectMeta}>
+            <span><CalendarDays size={14} aria-hidden="true" />{shortDate(scheduled.scheduledDate)}</span>
+            <span><Clock3 size={14} aria-hidden="true" />{timeLabel(scheduled.scheduledTime)}</span>
+          </span>
+          <span className={styles.scheduledProjectDetail}><MapPin size={14} aria-hidden="true" />{customerAddress(project) || "Address required"}</span>
+          <span className={styles.scheduledProjectDetail}><UserRound size={14} aria-hidden="true" />{scheduled.assigneeLabel}</span>
+          <span className={styles.scheduledProjectAction}>Open Project Track <ChevronRight size={15} aria-hidden="true" /></span>
+        </button>
+      </li>
+    );
+  };
+
   return (
     <section className={styles.workspace}>
       <header className={styles.pageHeader}>
@@ -1389,6 +1445,37 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget }: {
       {error ? <div className={styles.errorBanner} role="alert"><AlertCircle size={17} /><span>{error}</span><button type="button" onClick={() => void load()}>Retry</button></div> : null}
       {sourceWarnings.length && !error ? <div className={styles.warningBanner} role="status"><AlertCircle size={17} /><span>{sourceWarnings.join(" ")} Showing the other available sources.</span><button type="button" onClick={() => void load(true)}>Retry</button></div> : null}
       {notice ? <div className={styles.notice} role="status"><CheckCircle2 size={16} /><span>{notice}</span><button type="button" onClick={() => setNotice("")} aria-label="Dismiss notification"><X size={15} /></button></div> : null}
+
+      <section
+        className={`${styles.traySection} ${styles.scheduledProjectsSection}`}
+        aria-labelledby="scheduled-projects-title"
+        aria-busy={loading && !scheduledIncompleteReady}
+      >
+        <header className={styles.scheduledProjectsHeader}>
+          <div>
+            <CalendarCheck2 size={18} aria-hidden="true" />
+            <h2 id="scheduled-projects-title">Scheduled projects · Not completed</h2>
+            <span aria-label={scheduledIncompleteReady ? `${scheduledIncompleteProjects.length} scheduled projects not completed` : "Scheduled projects count unavailable"}>
+              {scheduledIncompleteReady ? scheduledIncompleteProjects.length : "—"}
+            </span>
+          </div>
+          <small>All dates</small>
+        </header>
+        {scheduledIncompleteReady ? (
+          scheduledIncompleteProjects.length ? (
+            <ul className={styles.scheduledProjectsList}>
+              {scheduledIncompleteProjects.map(renderScheduledIncompleteProject)}
+            </ul>
+          ) : (
+            <div className={styles.scheduledProjectsEmpty}><CalendarCheck2 size={20} aria-hidden="true" /> No scheduled Project Track projects awaiting completion</div>
+          )
+        ) : (
+          <div className={styles.scheduledProjectsEmpty} role="status">
+            {loading ? <LoaderCircle size={20} className={styles.spinning} aria-hidden="true" /> : <AlertCircle size={20} aria-hidden="true" />}
+            {loading ? "Loading scheduled Project Track projects…" : "Scheduled Project Track projects could not be loaded"}
+          </div>
+        )}
+      </section>
 
       {visibleOverdue.length ? (
         <section className={`${styles.traySection} ${styles.overdueSection}`} aria-labelledby="overdue-title">
