@@ -15,9 +15,43 @@ test("Weekly Schedule uses one calendar-aligned WIP unscheduled rail", () => {
   assert.match(componentSource, /wipUnscheduledPaymentTrackProjects\(projects\)/);
   assert.match(componentSource, /<strong id="schedule-rail-title">WIP · Unscheduled<\/strong>/);
   assert.match(componentSource, /id="wip-unscheduled-projects-rail-panel"/);
-  assert.match(componentSource, /wipUnscheduledProjects\.map\(renderWipUnscheduledProject\)/);
+  assert.match(componentSource, /projectsToRender\.map\(renderWipUnscheduledProject\)/);
+  assert.match(
+    componentSource,
+    /<div className=\{styles\.calendarScheduleFrame\}>[\s\S]*?\{renderWipUnscheduledRail\(\)\}[\s\S]*?<div className=\{styles\.calendarScroller\}>/,
+  );
+  assert.match(
+    styleSource,
+    /\.calendarScheduleFrame > \.calendarScroller\s*\{[\s\S]*?align-items:\s*stretch;/,
+  );
   assert.doesNotMatch(componentSource, /ScheduleRailView|railView|scheduleRailTabs/);
   assert.doesNotMatch(componentSource, /Scheduled · Not completed/);
+});
+
+test("the calendar WIP rail shows exactly three projects per page", () => {
+  assert.match(componentSource, /const WIP_PROJECTS_PER_PAGE = 3;/);
+  assert.match(
+    componentSource,
+    /const wipUnscheduledPageStart = activeWipUnscheduledPage \* WIP_PROJECTS_PER_PAGE;[\s\S]*?wipUnscheduledProjects\.slice\([\s\S]*?wipUnscheduledPageStart,[\s\S]*?wipUnscheduledPageStart \+ WIP_PROJECTS_PER_PAGE/,
+  );
+  assert.match(
+    componentSource,
+    /setWipUnscheduledPage\(\(current\) => Math\.min\(current, wipUnscheduledPageCount - 1\)\)/,
+  );
+  assert.match(componentSource, /aria-label="Previous WIP projects page"/);
+  assert.match(componentSource, /aria-label="Next WIP projects page"/);
+  assert.match(componentSource, /aria-controls="wip-unscheduled-projects-rail-panel"/);
+  assert.match(componentSource, /Page \{activeWipUnscheduledPage \+ 1\} of \{wipUnscheduledPageCount\}/);
+  assert.match(styleSource, /--calendar-frame-min-height:\s*744px/);
+  assert.equal((styleSource.match(/min-height:\s*var\(--calendar-frame-min-height\)/g) ?? []).length, 2);
+  assert.match(
+    componentSource,
+    /renderWipUnscheduledList\(styles\.scheduledRailProjectList, pagedWipUnscheduledProjects\)/,
+  );
+  assert.match(
+    componentSource,
+    /renderWipUnscheduledList\(styles\.scheduledProjectsList\)/,
+  );
 });
 
 test("WIP cards open the exact Project Track project", () => {

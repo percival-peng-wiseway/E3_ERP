@@ -149,6 +149,7 @@ type SourceOverrideAction = "cancel" | "restore" | "delete";
 
 const MELBOURNE_TIME_ZONE = "Australia/Melbourne";
 const EMPTY_OPERATIONS: OperationsState = { orders: [], deliveryHistory: [] };
+const WIP_PROJECTS_PER_PAGE = 3;
 const FILTERS: Array<{ id: ScheduleFilter; label: string }> = [
   { id: "all", label: "All" },
   { id: "material_delivery", label: "Material Delivery" },
@@ -383,6 +384,7 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget, onOp
   const [sourceOverridesReady, setSourceOverridesReady] = useState(false);
   const [filter, setFilter] = useState<ScheduleFilter>("all");
   const [view, setView] = useState<ScheduleView>("calendar");
+  const [wipUnscheduledPage, setWipUnscheduledPage] = useState(0);
   const [expandedCompletedDays, setExpandedCompletedDays] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -562,9 +564,24 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget, onOp
         const project = projectsById.get(unscheduled.projectId.toLowerCase());
         return project ? [{ unscheduled, project }] : [];
       })
-      .sort((left, right) => customerName(left.project).localeCompare(customerName(right.project)));
+      .sort((left, right) => customerName(left.project).localeCompare(customerName(right.project))
+        || left.unscheduled.projectId.localeCompare(right.unscheduled.projectId));
   }, [paymentSourceReady, projects]);
   const wipUnscheduledReady = paymentSourceReady;
+  const wipUnscheduledPageCount = Math.max(1, Math.ceil(wipUnscheduledProjects.length / WIP_PROJECTS_PER_PAGE));
+  const activeWipUnscheduledPage = Math.min(wipUnscheduledPage, wipUnscheduledPageCount - 1);
+  const wipUnscheduledPageStart = activeWipUnscheduledPage * WIP_PROJECTS_PER_PAGE;
+  const pagedWipUnscheduledProjects = useMemo(
+    () => wipUnscheduledProjects.slice(
+      wipUnscheduledPageStart,
+      wipUnscheduledPageStart + WIP_PROJECTS_PER_PAGE,
+    ),
+    [wipUnscheduledPageStart, wipUnscheduledProjects],
+  );
+
+  useEffect(() => {
+    setWipUnscheduledPage((current) => Math.min(current, wipUnscheduledPageCount - 1));
+  }, [wipUnscheduledPageCount]);
 
   const allDatedEntries = useMemo<CalendarEntry[]>(() => {
     const inventoryEntries: CalendarEntry[] = sourceOverridesReady ? [...scheduledInventoryGroups, ...completedInventoryGroups]
@@ -1380,10 +1397,13 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget, onOp
     );
   };
 
-  const renderWipUnscheduledList = (className: string) => wipUnscheduledReady ? (
+  const renderWipUnscheduledList = (
+    className: string,
+    projectsToRender = wipUnscheduledProjects,
+  ) => wipUnscheduledReady ? (
     wipUnscheduledProjects.length ? (
       <ul className={className}>
-        {wipUnscheduledProjects.map(renderWipUnscheduledProject)}
+        {projectsToRender.map(renderWipUnscheduledProject)}
       </ul>
     ) : (
       <div className={styles.scheduledProjectsEmpty}><CalendarCheck2 size={20} aria-hidden="true" /> No unscheduled Working in Progress projects</div>
@@ -1393,6 +1413,59 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget, onOp
       {loading ? <LoaderCircle size={20} className={styles.spinning} aria-hidden="true" /> : <AlertCircle size={20} aria-hidden="true" />}
       {loading ? "Loading Working in Progress projects…" : "Working in Progress projects could not be loaded"}
     </div>
+  );
+
+  const renderWipUnscheduledRail = () => (
+    <aside className={styles.unscheduledRail} aria-labelledby="schedule-rail-title">
+      <header>
+        <div className={styles.scheduleRailHeading}>
+          <div>
+            <Wrench size={16} aria-hidden="true" />
+            <strong id="schedule-rail-title">WIP · Unscheduled</strong>
+          </div>
+          <span aria-label={wipUnscheduledReady
+            ? `${wipUnscheduledProjects.length} Working in Progress projects unscheduled`
+            : "Working in Progress unscheduled project count unavailable"}
+          >
+            {wipUnscheduledReady ? wipUnscheduledProjects.length : "—"}
+          </span>
+        </div>
+      </header>
+      <div
+        id="wip-unscheduled-projects-rail-panel"
+        className={styles.scheduledRailEntries}
+        role="region"
+        aria-labelledby="schedule-rail-title"
+        aria-busy={loading && !wipUnscheduledReady}
+      >
+        {renderWipUnscheduledList(styles.scheduledRailProjectList, pagedWipUnscheduledProjects)}
+      </div>
+      {wipUnscheduledReady && wipUnscheduledProjects.length ? (
+        <nav className={styles.scheduleRailPagination} aria-label="WIP unscheduled project pages">
+          <button
+            type="button"
+            onClick={() => setWipUnscheduledPage((current) => Math.max(0, current - 1))}
+            disabled={activeWipUnscheduledPage === 0}
+            aria-label="Previous WIP projects page"
+            aria-controls="wip-unscheduled-projects-rail-panel"
+          >
+            <ChevronLeft size={16} aria-hidden="true" />
+          </button>
+          <span aria-live="polite" aria-atomic="true">
+            Page {activeWipUnscheduledPage + 1} of {wipUnscheduledPageCount} · {wipUnscheduledPageStart + 1}–{Math.min(wipUnscheduledPageStart + WIP_PROJECTS_PER_PAGE, wipUnscheduledProjects.length)} of {wipUnscheduledProjects.length}
+          </span>
+          <button
+            type="button"
+            onClick={() => setWipUnscheduledPage((current) => Math.min(wipUnscheduledPageCount - 1, current + 1))}
+            disabled={activeWipUnscheduledPage === wipUnscheduledPageCount - 1}
+            aria-label="Next WIP projects page"
+            aria-controls="wip-unscheduled-projects-rail-panel"
+          >
+            <ChevronRight size={16} aria-hidden="true" />
+          </button>
+        </nav>
+      ) : null}
+    </aside>
   );
 
   return (
@@ -1417,34 +1490,7 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget, onOp
         </div>
       </header>
 
-      <div className={`${styles.scheduleFrame} ${view === "calendar" ? styles.calendarScheduleFrame : ""}`}>
-      {view === "calendar" ? (
-        <aside className={styles.unscheduledRail} aria-labelledby="schedule-rail-title">
-          <header>
-            <div className={styles.scheduleRailHeading}>
-              <div>
-                <Wrench size={16} aria-hidden="true" />
-                <strong id="schedule-rail-title">WIP · Unscheduled</strong>
-              </div>
-              <span aria-label={wipUnscheduledReady
-                ? `${wipUnscheduledProjects.length} Working in Progress projects unscheduled`
-                : "Working in Progress unscheduled project count unavailable"}
-              >
-                {wipUnscheduledReady ? wipUnscheduledProjects.length : "—"}
-              </span>
-            </div>
-          </header>
-          <div
-            id="wip-unscheduled-projects-rail-panel"
-            className={styles.scheduledRailEntries}
-            role="region"
-            aria-labelledby="schedule-rail-title"
-            aria-busy={loading && !wipUnscheduledReady}
-          >
-            {renderWipUnscheduledList(styles.scheduledRailProjectList)}
-          </div>
-        </aside>
-      ) : null}
+      <div className={styles.scheduleFrame}>
       <div className={styles.scheduleMain}>
 
       <div className={styles.weekToolbar}>
@@ -1518,11 +1564,14 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget, onOp
         </section>
       ) : null}
 
-      {loading ? (
-        <div className={styles.loading}><LoaderCircle size={27} className={styles.spinning} /> Loading weekly schedule…</div>
-      ) : view === "calendar" ? (
-        <div className={styles.calendarScroller}>
-          <div className={styles.calendarGrid} role="region" aria-labelledby="project-schedule-title">
+      {view === "calendar" ? (
+        <div className={styles.calendarScheduleFrame}>
+          {renderWipUnscheduledRail()}
+          {loading ? (
+            <div className={styles.loading}><LoaderCircle size={27} className={styles.spinning} /> Loading weekly schedule…</div>
+          ) : (
+            <div className={styles.calendarScroller}>
+              <div className={styles.calendarGrid} role="region" aria-labelledby="project-schedule-title">
             {days.map((day) => {
               const entries = visibleEntries.filter((entry) => entry.date === day);
               const activeEntries = entries.filter((entry) => !entry.completed || entry.cancelled);
@@ -1564,8 +1613,12 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget, onOp
                 </section>
               );
             })}
-          </div>
+              </div>
+            </div>
+          )}
         </div>
+      ) : loading ? (
+        <div className={styles.loading}><LoaderCircle size={27} className={styles.spinning} /> Loading weekly schedule…</div>
       ) : (
         <div className={styles.scheduleListScroller} role="region" aria-label={`Weekly Schedule list for ${weekRangeLabel(weekStart, weekEnd)}`} tabIndex={0}>
           <table className={styles.scheduleList}>

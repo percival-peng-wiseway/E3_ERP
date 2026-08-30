@@ -134,16 +134,28 @@
 .scheduleMain { min-width: 0; }
 
 .calendarScheduleFrame {
+  --calendar-frame-min-height: 744px;
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
   align-items: stretch;
   gap: 12px;
 }
 
+.calendarScheduleFrame > .calendarScroller {
+  display: flex;
+  min-height: var(--calendar-frame-min-height);
+  align-items: stretch;
+  padding-bottom: 0;
+}
+
+.calendarScheduleFrame > .calendarScroller > .calendarGrid {
+  flex: 1 0 1540px;
+}
+
 .unscheduledRail {
   display: flex;
   min-width: 0;
-  min-height: 654px;
+  min-height: var(--calendar-frame-min-height);
   overflow: hidden;
   flex-direction: column;
   background: #f3f5f7;
@@ -211,7 +223,7 @@
 
 .scheduledRailProjectList .scheduledProjectCard {
   height: auto;
-  min-height: 206px !important;
+  min-height: 184px !important;
 }
 
 .scheduledRailEntries > .scheduledProjectsEmpty {
@@ -219,6 +231,42 @@
   border: 1px dashed #d6dce6;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.72);
+}
+
+.scheduleRailPagination {
+  display: grid;
+  min-height: 48px;
+  flex: 0 0 auto;
+  grid-template-columns: 34px minmax(0, 1fr) 34px;
+  align-items: center;
+  padding: 6px 9px;
+  gap: 8px;
+  border-top: 1px solid var(--line);
+  background: #fff;
+}
+
+.scheduleRailPagination button {
+  display: inline-flex;
+  width: 34px;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid #d8dee7;
+  border-radius: 7px;
+  background: #fff;
+  color: #4654ca;
+  cursor: pointer;
+}
+
+.scheduleRailPagination span {
+  overflow: hidden;
+  color: #626d80;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .weekToolbar {
@@ -1801,8 +1849,9 @@
 
 @media (max-width: 680px) {
   .calendarScheduleFrame { display: block; }
-  .unscheduledRail { min-height: 0; max-height: 320px; margin-bottom: 12px; }
-  .unscheduledRailEntries { min-height: 145px; max-height: 260px; }
+  .calendarScheduleFrame > .calendarScroller { min-height: 0; }
+  .unscheduledRail { min-height: 0; margin-bottom: 12px; }
+  .unscheduledRailEntries { min-height: 145px; }
 
   .pageHeader {
     align-items: flex-start;
