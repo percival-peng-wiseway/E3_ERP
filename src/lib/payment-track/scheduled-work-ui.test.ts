@@ -11,26 +11,36 @@ const styleSource = await readFile(
   "utf8",
 );
 
-test("Weekly Schedule shows one global scheduled-incomplete Project Track tray", () => {
+test("Weekly Schedule defaults the calendar-aligned rail to global scheduled-incomplete Project Track work", () => {
   assert.match(
     componentSource,
     /scheduledIncompletePaymentTrackProjects\(projects, sourceOverrideState\)/,
-    "the tray and navigation badge should share the override-aware selector",
+    "the rail and navigation badge should share the override-aware selector",
   );
-  assert.match(componentSource, /Scheduled projects · Not completed/);
+  assert.match(componentSource, /useState<ScheduleRailView>\("scheduled"\)/);
+  assert.match(componentSource, /"Scheduled · Not completed"/);
+  assert.match(componentSource, /id="scheduled-projects-rail-panel"/);
   assert.match(componentSource, /<small>All dates<\/small>/);
   assert.match(componentSource, /scheduledIncompleteProjects\.map\(renderScheduledIncompleteProject\)/);
   assert.match(componentSource, /onOpenProjectTrackProject\?\.\(scheduled\.projectId\)/);
   assert.match(componentSource, /Open Project Track/);
 });
 
-test("the tray does not report a false zero while either source is unavailable", () => {
+test("the rail does not report a false zero while either source is unavailable", () => {
   assert.match(componentSource, /scheduledIncompleteReady = paymentSourceReady && sourceOverridesReady/);
   assert.match(componentSource, /scheduledIncompleteReady \? scheduledIncompleteProjects\.length : "—"/);
   assert.match(componentSource, /Scheduled Project Track projects could not be loaded/);
 });
 
-test("scheduled project cards scroll horizontally and fit mobile screens", () => {
+test("scheduled cards stack vertically in the calendar rail and remain responsive in list view", () => {
+  assert.match(
+    styleSource,
+    /\.scheduledRailProjectList\s*\{[\s\S]*?flex-direction:\s*column;/,
+  );
+  assert.match(
+    styleSource,
+    /\.scheduledRailProjectList \.scheduledProjectItem\s*\{[\s\S]*?width:\s*100%;[\s\S]*?flex:\s*0 0 auto;/,
+  );
   assert.match(
     styleSource,
     /\.scheduledProjectsList\s*\{[\s\S]*?display:\s*flex;[\s\S]*?overflow-x:\s*auto;/,

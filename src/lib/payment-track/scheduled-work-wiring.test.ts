@@ -75,7 +75,7 @@ test("scheduled cards navigate to the exact Project Track project", () => {
   assert.match(boardSource, /Open Project Track <ChevronRight/);
 });
 
-test("the global scheduled-incomplete tray is independent of the selected week and filter", () => {
+test("the global scheduled-incomplete rail is independent of the selected week and filter", () => {
   assert.match(
     boardSource,
     /import \{ scheduledIncompletePaymentTrackProjects \} from "@\/lib\/payment-track\/scheduled-work";/,
@@ -97,10 +97,14 @@ test("the global scheduled-incomplete tray is independent of the selected week a
   assert.match(boardSource, /<small>All dates<\/small>/);
 });
 
-test("the new tray preserves Pending Schedule counts and waits for both source datasets", () => {
+test("the calendar rail defaults to scheduled work, preserves Pending Schedule, and waits for both source datasets", () => {
   assert.match(
     boardSource,
-    /<strong id="unscheduled-column-title">Pending Schedule<\/strong><\/div>\s*<span>\{visibleUnscheduled\.length\}<\/span>/,
+    /const \[railView, setRailView\] = useState<ScheduleRailView>\("scheduled"\);/,
+  );
+  assert.match(
+    boardSource,
+    /id="pending-projects-rail-tab"[\s\S]*?onClick=\{\(\) => setRailView\("pending"\)\}/,
   );
   assert.match(
     boardSource,
@@ -120,17 +124,25 @@ test("the new tray preserves Pending Schedule counts and waits for both source d
   );
 });
 
-test("the aligned tray exposes a visible header, count, and one button card per project", () => {
-  assert.match(boardSource, /aria-labelledby="scheduled-projects-title"/);
+test("the calendar-aligned rail exposes a visible header, global count, and one button card per project", () => {
+  assert.match(boardSource, /aria-labelledby="schedule-rail-title"/);
   assert.match(
     boardSource,
-    /<h2 id="scheduled-projects-title">Scheduled projects · Not completed<\/h2>/,
+    /<strong id="schedule-rail-title">\{railView === "scheduled" \? "Scheduled · Not completed" : "Pending Schedule"\}<\/strong>/,
   );
   assert.match(boardSource, /scheduledIncompleteProjects\.map\(renderScheduledIncompleteProject\)/);
-  assert.match(boardSource, /<ul className=\{styles\.scheduledProjectsList\}>/);
+  assert.match(boardSource, /renderScheduledIncompleteList\(styles\.scheduledRailProjectList\)/);
   assert.match(boardSource, /<li key=\{scheduled\.projectId\}/);
   assert.match(boardSource, /type="button"\s*className=\{styles\.scheduledProjectCard\}/);
   assert.match(boardSource, /aria-label=\{`Open \$\{customer\}.*in Project Track`\}/);
+});
+
+test("the horizontal scheduled tray is list-only instead of sitting above the calendar", () => {
+  assert.match(
+    boardSource,
+    /\{view === "list" \? \(\s*<section\s*className=\{`\$\{styles\.traySection\} \$\{styles\.scheduledProjectsSection\}`\}/,
+  );
+  assert.match(boardSource, /renderScheduledIncompleteList\(styles\.scheduledProjectsList\)/);
 });
 
 test("override updates immediately refresh the shared navigation count", () => {
@@ -147,7 +159,19 @@ test("override updates immediately refresh the shared navigation count", () => {
   );
 });
 
-test("scheduled project cards stay in a visible, horizontal, responsive calendar-aligned box", () => {
+test("scheduled project cards stack in the calendar rail while the list view stays horizontal and responsive", () => {
+  assert.match(
+    boardStyleSource,
+    /\.scheduledRailEntries\s*\{[\s\S]*?flex:\s*1;[\s\S]*?overflow-y:\s*auto;/,
+  );
+  assert.match(
+    boardStyleSource,
+    /\.scheduledRailProjectList\s*\{[\s\S]*?flex-direction:\s*column;/,
+  );
+  assert.match(
+    boardStyleSource,
+    /\.scheduledRailProjectList \.scheduledProjectItem\s*\{[\s\S]*?width:\s*100%;[\s\S]*?flex:\s*0 0 auto;/,
+  );
   assert.match(
     boardStyleSource,
     /\.traySection > \.scheduledProjectsHeader\s*\{[\s\S]*?position:\s*static;[\s\S]*?width:\s*auto;[\s\S]*?height:\s*auto;[\s\S]*?overflow:\s*visible;[\s\S]*?clip:\s*auto;[\s\S]*?clip-path:\s*none;[\s\S]*?white-space:\s*normal;/,

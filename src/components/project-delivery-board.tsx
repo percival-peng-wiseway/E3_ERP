@@ -93,6 +93,7 @@ type ProjectScheduleSourceOverride = {
 
 type ScheduleFilter = "all" | "material_delivery" | "installing" | "combined" | "site_visit" | "custom";
 type ScheduleView = "calendar" | "list";
+type ScheduleRailView = "scheduled" | "pending";
 type PaymentScheduleKind = "delivery" | "installation" | "combined";
 type InventoryEditorState = {
   group: DeliveryGroup;
@@ -383,6 +384,7 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget, onOp
   const [sourceOverridesReady, setSourceOverridesReady] = useState(false);
   const [filter, setFilter] = useState<ScheduleFilter>("all");
   const [view, setView] = useState<ScheduleView>("calendar");
+  const [railView, setRailView] = useState<ScheduleRailView>("scheduled");
   const [expandedCompletedDays, setExpandedCompletedDays] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -1378,6 +1380,21 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget, onOp
     );
   };
 
+  const renderScheduledIncompleteList = (className: string) => scheduledIncompleteReady ? (
+    scheduledIncompleteProjects.length ? (
+      <ul className={className}>
+        {scheduledIncompleteProjects.map(renderScheduledIncompleteProject)}
+      </ul>
+    ) : (
+      <div className={styles.scheduledProjectsEmpty}><CalendarCheck2 size={20} aria-hidden="true" /> No scheduled Project Track projects awaiting completion</div>
+    )
+  ) : (
+    <div className={styles.scheduledProjectsEmpty} role="status">
+      {loading ? <LoaderCircle size={20} className={styles.spinning} aria-hidden="true" /> : <AlertCircle size={20} aria-hidden="true" />}
+      {loading ? "Loading scheduled Project Track projects…" : "Scheduled Project Track projects could not be loaded"}
+    </div>
+  );
+
   return (
     <section className={styles.workspace}>
       <header className={styles.pageHeader}>
@@ -1402,15 +1419,64 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget, onOp
 
       <div className={`${styles.scheduleFrame} ${view === "calendar" ? styles.calendarScheduleFrame : ""}`}>
       {view === "calendar" ? (
-        <aside className={styles.unscheduledRail} aria-labelledby="unscheduled-column-title">
+        <aside className={styles.unscheduledRail} aria-labelledby="schedule-rail-title">
           <header>
-            <div><Clock3 size={16} /><strong id="unscheduled-column-title">Pending Schedule</strong></div>
-            <span>{visibleUnscheduled.length}</span>
+            <div className={styles.scheduleRailHeading}>
+              <div>
+                {railView === "scheduled" ? <CalendarCheck2 size={16} aria-hidden="true" /> : <Clock3 size={16} aria-hidden="true" />}
+                <strong id="schedule-rail-title">{railView === "scheduled" ? "Scheduled · Not completed" : "Pending Schedule"}</strong>
+              </div>
+              <span aria-label={railView === "scheduled"
+                ? scheduledIncompleteReady ? `${scheduledIncompleteProjects.length} scheduled projects not completed` : "Scheduled projects count unavailable"
+                : `${visibleUnscheduled.length} projects pending schedule`}
+              >
+                {railView === "scheduled" ? scheduledIncompleteReady ? scheduledIncompleteProjects.length : "—" : visibleUnscheduled.length}
+              </span>
+            </div>
+            <div className={styles.scheduleRailTabs} role="group" aria-label="Project schedule queues">
+              <button
+                id="scheduled-projects-rail-tab"
+                type="button"
+                aria-pressed={railView === "scheduled"}
+                aria-controls="scheduled-projects-rail-panel"
+                className={railView === "scheduled" ? styles.activeScheduleRailTab : ""}
+                onClick={() => setRailView("scheduled")}
+              >
+                Scheduled
+              </button>
+              <button
+                id="pending-projects-rail-tab"
+                type="button"
+                aria-pressed={railView === "pending"}
+                aria-controls="pending-projects-rail-panel"
+                className={railView === "pending" ? styles.activeScheduleRailTab : ""}
+                onClick={() => setRailView("pending")}
+              >
+                Pending
+              </button>
+            </div>
           </header>
-          <div className={styles.unscheduledRailEntries}>
-            {visibleUnscheduled.map(renderUnscheduledEntry)}
-            {!visibleUnscheduled.length ? <div className={styles.emptyDay}>No pending Project Track jobs</div> : null}
-          </div>
+          {railView === "scheduled" ? (
+            <div
+              id="scheduled-projects-rail-panel"
+              className={styles.scheduledRailEntries}
+              role="region"
+              aria-labelledby="scheduled-projects-rail-tab"
+              aria-busy={loading && !scheduledIncompleteReady}
+            >
+              {renderScheduledIncompleteList(styles.scheduledRailProjectList)}
+            </div>
+          ) : (
+            <div
+              id="pending-projects-rail-panel"
+              className={styles.unscheduledRailEntries}
+              role="region"
+              aria-labelledby="pending-projects-rail-tab"
+            >
+              {visibleUnscheduled.map(renderUnscheduledEntry)}
+              {!visibleUnscheduled.length ? <div className={styles.emptyDay}>No pending Project Track jobs</div> : null}
+            </div>
+          )}
         </aside>
       ) : null}
       <div className={styles.scheduleMain}>
@@ -1446,36 +1512,25 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget, onOp
       {sourceWarnings.length && !error ? <div className={styles.warningBanner} role="status"><AlertCircle size={17} /><span>{sourceWarnings.join(" ")} Showing the other available sources.</span><button type="button" onClick={() => void load(true)}>Retry</button></div> : null}
       {notice ? <div className={styles.notice} role="status"><CheckCircle2 size={16} /><span>{notice}</span><button type="button" onClick={() => setNotice("")} aria-label="Dismiss notification"><X size={15} /></button></div> : null}
 
-      <section
-        className={`${styles.traySection} ${styles.scheduledProjectsSection}`}
-        aria-labelledby="scheduled-projects-title"
-        aria-busy={loading && !scheduledIncompleteReady}
-      >
-        <header className={styles.scheduledProjectsHeader}>
-          <div>
-            <CalendarCheck2 size={18} aria-hidden="true" />
-            <h2 id="scheduled-projects-title">Scheduled projects · Not completed</h2>
-            <span aria-label={scheduledIncompleteReady ? `${scheduledIncompleteProjects.length} scheduled projects not completed` : "Scheduled projects count unavailable"}>
-              {scheduledIncompleteReady ? scheduledIncompleteProjects.length : "—"}
-            </span>
-          </div>
-          <small>All dates</small>
-        </header>
-        {scheduledIncompleteReady ? (
-          scheduledIncompleteProjects.length ? (
-            <ul className={styles.scheduledProjectsList}>
-              {scheduledIncompleteProjects.map(renderScheduledIncompleteProject)}
-            </ul>
-          ) : (
-            <div className={styles.scheduledProjectsEmpty}><CalendarCheck2 size={20} aria-hidden="true" /> No scheduled Project Track projects awaiting completion</div>
-          )
-        ) : (
-          <div className={styles.scheduledProjectsEmpty} role="status">
-            {loading ? <LoaderCircle size={20} className={styles.spinning} aria-hidden="true" /> : <AlertCircle size={20} aria-hidden="true" />}
-            {loading ? "Loading scheduled Project Track projects…" : "Scheduled Project Track projects could not be loaded"}
-          </div>
-        )}
-      </section>
+      {view === "list" ? (
+        <section
+          className={`${styles.traySection} ${styles.scheduledProjectsSection}`}
+          aria-labelledby="scheduled-projects-title"
+          aria-busy={loading && !scheduledIncompleteReady}
+        >
+          <header className={styles.scheduledProjectsHeader}>
+            <div>
+              <CalendarCheck2 size={18} aria-hidden="true" />
+              <h2 id="scheduled-projects-title">Scheduled projects · Not completed</h2>
+              <span aria-label={scheduledIncompleteReady ? `${scheduledIncompleteProjects.length} scheduled projects not completed` : "Scheduled projects count unavailable"}>
+                {scheduledIncompleteReady ? scheduledIncompleteProjects.length : "—"}
+              </span>
+            </div>
+            <small>All dates</small>
+          </header>
+          {renderScheduledIncompleteList(styles.scheduledProjectsList)}
+        </section>
+      ) : null}
 
       {visibleOverdue.length ? (
         <section className={`${styles.traySection} ${styles.overdueSection}`} aria-labelledby="overdue-title">
