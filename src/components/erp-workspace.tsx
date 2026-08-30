@@ -38,11 +38,7 @@ import {
   type PaymentTrackListResponse,
   type PaymentTrackUpdatedEventDetail,
 } from "@/lib/payment-track/types";
-import { countScheduledIncompletePaymentTrackProjects } from "@/lib/payment-track/scheduled-work";
-import {
-  isProjectScheduleSourceOverride,
-  type ProjectScheduleSourceOverride,
-} from "@/lib/project-schedule/types";
+import { countWipUnscheduledPaymentTrackProjects } from "@/lib/payment-track/wip-unscheduled-work";
 import {
   countOngoingSiteVisits,
   type SiteVisitListResponse,
@@ -136,25 +132,12 @@ const MODULE_LABELS: Record<ModuleId, string> = {
 
 const ERP_BROWSER_ACCOUNT_KEY = "e3-erp-browser-account:v1";
 const LEGACY_AGENT_CONVERSATION_KEY = "e3-agent-conversation:v1";
-const MELBOURNE_TIME_ZONE = "Australia/Melbourne";
-
-function melbourneTodayIso() {
-  const parts = new Intl.DateTimeFormat("en-AU", {
-    timeZone: MELBOURNE_TIME_ZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date());
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${values.year}-${values.month}-${values.day}`;
-}
-
 export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
   const [activeModule, setActiveModule] = useState<ModuleId>("home");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [agentSettingsOpen, setAgentSettingsOpen] = useState(false);
   const [userManagementOpen, setUserManagementOpen] = useState(false);
-  const [scheduledIncompleteProjectCount, setScheduledIncompleteProjectCount] = useState<number | null>(null);
+  const [wipUnscheduledProjectCount, setWipUnscheduledProjectCount] = useState<number | null>(null);
   const [activeProjectTrackCount, setActiveProjectTrackCount] = useState<number | null>(null);
   const [activeSiteVisitCount, setActiveSiteVisitCount] = useState<number | null>(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -215,41 +198,28 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
     let active = true;
     let latestRequest = 0;
 
-    async function loadScheduledIncompleteProjectCount() {
+    async function loadWipUnscheduledProjectCount() {
       const requestId = ++latestRequest;
       try {
-        const today = melbourneTodayIso();
-        const [paymentResponse, scheduleResponse] = await Promise.all([
-          fetch("/api/payment-track", { cache: "no-store" }),
-          fetch(`/api/project-schedule?from=${encodeURIComponent(today)}&to=${encodeURIComponent(today)}`, { cache: "no-store" }),
-        ]);
-        if (!paymentResponse.ok || !scheduleResponse.ok) return;
-        const [paymentBody, scheduleBody] = await Promise.all([
-          readJsonResponse<PaymentTrackListResponse>(paymentResponse),
-          readJsonResponse<{ data?: { overrides?: unknown[] } }>(scheduleResponse),
-        ]);
+        const paymentResponse = await fetch("/api/payment-track", { cache: "no-store" });
+        if (!paymentResponse.ok) return;
+        const paymentBody = await readJsonResponse<PaymentTrackListResponse>(paymentResponse);
         if (!active
           || requestId !== latestRequest
-          || !Array.isArray(paymentBody.data)
-          || !Array.isArray(scheduleBody.data?.overrides)
-          || !scheduleBody.data.overrides.every(isProjectScheduleSourceOverride)) return;
-        setScheduledIncompleteProjectCount(countScheduledIncompletePaymentTrackProjects(
-          paymentBody.data,
-          scheduleBody.data.overrides as ProjectScheduleSourceOverride[],
-        ));
+          || !Array.isArray(paymentBody.data)) return;
+        setWipUnscheduledProjectCount(countWipUnscheduledPaymentTrackProjects(paymentBody.data));
       } catch {
-        // Retain the last confirmed count while either Project Track or Weekly Schedule is unavailable.
+        // Retain the last confirmed count while Project Track is unavailable.
       }
     }
 
-    const refresh = () => void loadScheduledIncompleteProjectCount();
+    const refresh = () => void loadWipUnscheduledProjectCount();
     const refreshWhenVisible = () => {
       if (!document.hidden) refresh();
     };
 
     refresh();
     window.addEventListener("erp:payment-track-updated", refresh);
-    window.addEventListener("erp:project-schedule-updated", refresh);
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refreshWhenVisible);
     const refreshTimer = window.setInterval(refreshWhenVisible, 60_000);
@@ -259,7 +229,6 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
       latestRequest += 1;
       window.clearInterval(refreshTimer);
       window.removeEventListener("erp:payment-track-updated", refresh);
-      window.removeEventListener("erp:project-schedule-updated", refresh);
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
@@ -420,9 +389,9 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
               <p>{section.group}</p>
               {section.items.map((item) => {
                 const Icon = item.icon;
-                const scheduledIncompleteLabel = scheduledIncompleteProjectCount === null
-                  ? "Scheduled Project Track project count is loading"
-                  : `${scheduledIncompleteProjectCount} scheduled Project Track ${scheduledIncompleteProjectCount === 1 ? "project" : "projects"} not completed`;
+                const wipUnscheduledLabel = wipUnscheduledProjectCount === null
+                  ? "Working in Progress unscheduled project count is loading"
+                  : `${wipUnscheduledProjectCount} Working in Progress ${wipUnscheduledProjectCount === 1 ? "project is" : "projects are"} unscheduled`;
                 const activeProjectTrackLabel = activeProjectTrackCount === null
                   ? "Active Project Track count is loading"
                   : `${activeProjectTrackCount} active ${activeProjectTrackCount === 1 ? "project" : "projects"}`;
@@ -437,20 +406,20 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
                     title={!item.enabled
                       ? "Not available yet"
                       : item.id === "projects"
-                        ? scheduledIncompleteLabel
+                        ? wipUnscheduledLabel
                         : item.id === "payments"
                           ? activeProjectTrackLabel
                           : item.id === "site-visits" ? activeSiteVisitLabel : undefined}
                   >
                     <Icon size={17} strokeWidth={1.8} />
                     <span className="nav-item-label">{item.label}</span>
-                    {item.id === "projects" && scheduledIncompleteProjectCount !== null && (
+                    {item.id === "projects" && wipUnscheduledProjectCount !== null && (
                       <span
                         className="nav-count-badge"
-                        aria-label={scheduledIncompleteLabel}
+                        aria-label={wipUnscheduledLabel}
                         aria-live="polite"
                       >
-                        {scheduledIncompleteProjectCount > 99 ? "99+" : scheduledIncompleteProjectCount}
+                        {wipUnscheduledProjectCount > 99 ? "99+" : wipUnscheduledProjectCount}
                       </span>
                     )}
                     {item.id === "payments" && activeProjectTrackCount !== null && (

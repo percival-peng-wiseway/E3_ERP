@@ -42,7 +42,7 @@ import {
   type PaymentTrackProject,
   type PaymentTrackScheduleAssignee,
 } from "@/lib/payment-track/types";
-import { scheduledIncompletePaymentTrackProjects } from "@/lib/payment-track/scheduled-work";
+import { wipUnscheduledPaymentTrackProjects } from "@/lib/payment-track/wip-unscheduled-work";
 import styles from "./project-delivery-board.module.css";
 
 type OrderStatus = "pending" | "scheduled" | "delivered" | "cancelled";
@@ -93,7 +93,6 @@ type ProjectScheduleSourceOverride = {
 
 type ScheduleFilter = "all" | "material_delivery" | "installing" | "combined" | "site_visit" | "custom";
 type ScheduleView = "calendar" | "list";
-type ScheduleRailView = "scheduled" | "pending";
 type PaymentScheduleKind = "delivery" | "installation" | "combined";
 type InventoryEditorState = {
   group: DeliveryGroup;
@@ -384,7 +383,6 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget, onOp
   const [sourceOverridesReady, setSourceOverridesReady] = useState(false);
   const [filter, setFilter] = useState<ScheduleFilter>("all");
   const [view, setView] = useState<ScheduleView>("calendar");
-  const [railView, setRailView] = useState<ScheduleRailView>("scheduled");
   const [expandedCompletedDays, setExpandedCompletedDays] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -556,15 +554,17 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget, onOp
     [sourceOverrides],
   );
 
-  const scheduledIncompleteProjects = useMemo(() => {
-    if (!paymentSourceReady || !sourceOverridesReady) return [];
+  const wipUnscheduledProjects = useMemo(() => {
+    if (!paymentSourceReady) return [];
     const projectsById = new Map(projects.map((project) => [project.id.toLowerCase(), project] as const));
-    return scheduledIncompletePaymentTrackProjects(projects, sourceOverrideState).flatMap((scheduled) => {
-      const project = projectsById.get(scheduled.projectId.toLowerCase());
-      return project ? [{ scheduled, project }] : [];
-    });
-  }, [paymentSourceReady, projects, sourceOverrideState, sourceOverridesReady]);
-  const scheduledIncompleteReady = paymentSourceReady && sourceOverridesReady;
+    return wipUnscheduledPaymentTrackProjects(projects)
+      .flatMap((unscheduled) => {
+        const project = projectsById.get(unscheduled.projectId.toLowerCase());
+        return project ? [{ unscheduled, project }] : [];
+      })
+      .sort((left, right) => customerName(left.project).localeCompare(customerName(right.project)));
+  }, [paymentSourceReady, projects]);
+  const wipUnscheduledReady = paymentSourceReady;
 
   const allDatedEntries = useMemo<CalendarEntry[]>(() => {
     const inventoryEntries: CalendarEntry[] = sourceOverridesReady ? [...scheduledInventoryGroups, ...completedInventoryGroups]
@@ -780,6 +780,10 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget, onOp
   const visibleEntries = useMemo(() => calendarEntries.filter((entry) => isScheduleFilterMatch(entry.source, filter)), [calendarEntries, filter]);
   const visibleOverdue = useMemo(() => overdueEntries.filter((entry) => isScheduleFilterMatch(entry.source, filter)), [filter, overdueEntries]);
   const visibleUnscheduled = useMemo(() => unscheduledEntries.filter((entry) => isScheduleFilterMatch(entry.source, filter)), [filter, unscheduledEntries]);
+  const visibleLegacyPending = useMemo(
+    () => visibleUnscheduled.filter((entry) => entry.project.stage !== "working_in_progress"),
+    [visibleUnscheduled],
+  );
   const filterCounts = useMemo(() => Object.fromEntries(FILTERS.map(({ id }) => [
     id,
     calendarEntries.filter((entry) => isScheduleFilterMatch(entry.source, id)).length
@@ -1344,54 +1348,50 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget, onOp
     </article>
   );
 
-  const renderScheduledIncompleteProject = ({ scheduled, project }: (typeof scheduledIncompleteProjects)[number]) => {
+  const renderWipUnscheduledProject = ({ unscheduled, project }: (typeof wipUnscheduledProjects)[number]) => {
     const customer = customerName(project);
     const proposal = project.quoteNumber ? `Proposal ${project.quoteNumber}` : project.reference;
-    const isOverdue = scheduled.scheduledDate < today;
+    const workLabel = project.deliveredAt
+      ? "Delivery complete · Installation not scheduled"
+      : project.workMode ? sourceLabel(unscheduled.source) : "Work type not selected";
     return (
-      <li key={scheduled.projectId} className={styles.scheduledProjectItem}>
+      <li key={unscheduled.projectId} className={styles.scheduledProjectItem}>
         <button
           type="button"
           className={styles.scheduledProjectCard}
-          onClick={() => onOpenProjectTrackProject?.(scheduled.projectId)}
+          onClick={() => onOpenProjectTrackProject?.(unscheduled.projectId)}
           disabled={!onOpenProjectTrackProject}
           aria-label={`Open ${customer}${proposal ? `, ${proposal}` : ""} in Project Track`}
         >
           <span className={styles.scheduledProjectTopline}>
-            <span className={sourceBadgeClass(scheduled.source)}>{sourceLabel(scheduled.source)}</span>
-            <span className={isOverdue ? styles.scheduledProjectOverdueBadge : styles.scheduledBadge}>
-              {isOverdue ? <AlertCircle size={12} aria-hidden="true" /> : <CalendarCheck2 size={12} aria-hidden="true" />}
-              {isOverdue ? "Overdue" : "Scheduled"}
-            </span>
+            <span className={sourceBadgeClass(unscheduled.source)}>{project.workMode ? sourceLabel(unscheduled.source) : "Working in Progress"}</span>
+            <span className={styles.unscheduledBadge}><AlertCircle size={12} aria-hidden="true" /> Unscheduled</span>
           </span>
           <span className={styles.scheduledProjectCustomer}>{customer}</span>
           <span className={styles.scheduledProjectProposal}>
             {[project.reference, proposal].filter(Boolean).filter((value, index, values) => values.indexOf(value) === index).join(" · ")}
           </span>
-          <span className={styles.scheduledProjectMeta}>
-            <span><CalendarDays size={14} aria-hidden="true" />{shortDate(scheduled.scheduledDate)}</span>
-            <span><Clock3 size={14} aria-hidden="true" />{timeLabel(scheduled.scheduledTime)}</span>
-          </span>
+          <span className={styles.scheduledProjectDetail}><Wrench size={14} aria-hidden="true" />{workLabel}</span>
           <span className={styles.scheduledProjectDetail}><MapPin size={14} aria-hidden="true" />{customerAddress(project) || "Address required"}</span>
-          <span className={styles.scheduledProjectDetail}><UserRound size={14} aria-hidden="true" />{scheduled.assigneeLabel}</span>
+          <span className={styles.scheduledProjectDetail}>{paymentItemsSummary(project)}</span>
           <span className={styles.scheduledProjectAction}>Open Project Track <ChevronRight size={15} aria-hidden="true" /></span>
         </button>
       </li>
     );
   };
 
-  const renderScheduledIncompleteList = (className: string) => scheduledIncompleteReady ? (
-    scheduledIncompleteProjects.length ? (
+  const renderWipUnscheduledList = (className: string) => wipUnscheduledReady ? (
+    wipUnscheduledProjects.length ? (
       <ul className={className}>
-        {scheduledIncompleteProjects.map(renderScheduledIncompleteProject)}
+        {wipUnscheduledProjects.map(renderWipUnscheduledProject)}
       </ul>
     ) : (
-      <div className={styles.scheduledProjectsEmpty}><CalendarCheck2 size={20} aria-hidden="true" /> No scheduled Project Track projects awaiting completion</div>
+      <div className={styles.scheduledProjectsEmpty}><CalendarCheck2 size={20} aria-hidden="true" /> No unscheduled Working in Progress projects</div>
     )
   ) : (
     <div className={styles.scheduledProjectsEmpty} role="status">
       {loading ? <LoaderCircle size={20} className={styles.spinning} aria-hidden="true" /> : <AlertCircle size={20} aria-hidden="true" />}
-      {loading ? "Loading scheduled Project Track projects…" : "Scheduled Project Track projects could not be loaded"}
+      {loading ? "Loading Working in Progress projects…" : "Working in Progress projects could not be loaded"}
     </div>
   );
 
@@ -1423,60 +1423,26 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget, onOp
           <header>
             <div className={styles.scheduleRailHeading}>
               <div>
-                {railView === "scheduled" ? <CalendarCheck2 size={16} aria-hidden="true" /> : <Clock3 size={16} aria-hidden="true" />}
-                <strong id="schedule-rail-title">{railView === "scheduled" ? "Scheduled · Not completed" : "Pending Schedule"}</strong>
+                <Wrench size={16} aria-hidden="true" />
+                <strong id="schedule-rail-title">WIP · Unscheduled</strong>
               </div>
-              <span aria-label={railView === "scheduled"
-                ? scheduledIncompleteReady ? `${scheduledIncompleteProjects.length} scheduled projects not completed` : "Scheduled projects count unavailable"
-                : `${visibleUnscheduled.length} projects pending schedule`}
+              <span aria-label={wipUnscheduledReady
+                ? `${wipUnscheduledProjects.length} Working in Progress projects unscheduled`
+                : "Working in Progress unscheduled project count unavailable"}
               >
-                {railView === "scheduled" ? scheduledIncompleteReady ? scheduledIncompleteProjects.length : "—" : visibleUnscheduled.length}
+                {wipUnscheduledReady ? wipUnscheduledProjects.length : "—"}
               </span>
             </div>
-            <div className={styles.scheduleRailTabs} role="group" aria-label="Project schedule queues">
-              <button
-                id="scheduled-projects-rail-tab"
-                type="button"
-                aria-pressed={railView === "scheduled"}
-                aria-controls="scheduled-projects-rail-panel"
-                className={railView === "scheduled" ? styles.activeScheduleRailTab : ""}
-                onClick={() => setRailView("scheduled")}
-              >
-                Scheduled
-              </button>
-              <button
-                id="pending-projects-rail-tab"
-                type="button"
-                aria-pressed={railView === "pending"}
-                aria-controls="pending-projects-rail-panel"
-                className={railView === "pending" ? styles.activeScheduleRailTab : ""}
-                onClick={() => setRailView("pending")}
-              >
-                Pending
-              </button>
-            </div>
           </header>
-          {railView === "scheduled" ? (
-            <div
-              id="scheduled-projects-rail-panel"
-              className={styles.scheduledRailEntries}
-              role="region"
-              aria-labelledby="scheduled-projects-rail-tab"
-              aria-busy={loading && !scheduledIncompleteReady}
-            >
-              {renderScheduledIncompleteList(styles.scheduledRailProjectList)}
-            </div>
-          ) : (
-            <div
-              id="pending-projects-rail-panel"
-              className={styles.unscheduledRailEntries}
-              role="region"
-              aria-labelledby="pending-projects-rail-tab"
-            >
-              {visibleUnscheduled.map(renderUnscheduledEntry)}
-              {!visibleUnscheduled.length ? <div className={styles.emptyDay}>No pending Project Track jobs</div> : null}
-            </div>
-          )}
+          <div
+            id="wip-unscheduled-projects-rail-panel"
+            className={styles.scheduledRailEntries}
+            role="region"
+            aria-labelledby="schedule-rail-title"
+            aria-busy={loading && !wipUnscheduledReady}
+          >
+            {renderWipUnscheduledList(styles.scheduledRailProjectList)}
+          </div>
         </aside>
       ) : null}
       <div className={styles.scheduleMain}>
@@ -1515,20 +1481,20 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget, onOp
       {view === "list" ? (
         <section
           className={`${styles.traySection} ${styles.scheduledProjectsSection}`}
-          aria-labelledby="scheduled-projects-title"
-          aria-busy={loading && !scheduledIncompleteReady}
+          aria-labelledby="wip-unscheduled-projects-title"
+          aria-busy={loading && !wipUnscheduledReady}
         >
           <header className={styles.scheduledProjectsHeader}>
             <div>
-              <CalendarCheck2 size={18} aria-hidden="true" />
-              <h2 id="scheduled-projects-title">Scheduled projects · Not completed</h2>
-              <span aria-label={scheduledIncompleteReady ? `${scheduledIncompleteProjects.length} scheduled projects not completed` : "Scheduled projects count unavailable"}>
-                {scheduledIncompleteReady ? scheduledIncompleteProjects.length : "—"}
+              <Wrench size={18} aria-hidden="true" />
+              <h2 id="wip-unscheduled-projects-title">WIP · Unscheduled</h2>
+              <span aria-label={wipUnscheduledReady ? `${wipUnscheduledProjects.length} Working in Progress projects unscheduled` : "Working in Progress unscheduled project count unavailable"}>
+                {wipUnscheduledReady ? wipUnscheduledProjects.length : "—"}
               </span>
             </div>
-            <small>All dates</small>
+            <small>Project Track</small>
           </header>
-          {renderScheduledIncompleteList(styles.scheduledProjectsList)}
+          {renderWipUnscheduledList(styles.scheduledProjectsList)}
         </section>
       ) : null}
 
@@ -1541,14 +1507,13 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget, onOp
         </section>
       ) : null}
 
-      {view === "list" ? (
+      {view === "list" && visibleLegacyPending.length ? (
         <section className={styles.traySection} aria-labelledby="unscheduled-title">
           <header>
-            <div><Clock3 size={18} /><h2 id="unscheduled-title">Pending Schedule</h2><span>{visibleUnscheduled.length}</span></div>
+            <div><Clock3 size={18} /><h2 id="unscheduled-title">Pending Schedule</h2><span>{visibleLegacyPending.length}</span></div>
           </header>
           <div className={styles.trayList}>
-            {visibleUnscheduled.map(renderUnscheduledEntry)}
-            {!visibleUnscheduled.length ? <div className={styles.emptyTray}><CalendarCheck2 size={20} /> No pending Project Track jobs in this view</div> : null}
+            {visibleLegacyPending.map(renderUnscheduledEntry)}
           </div>
         </section>
       ) : null}

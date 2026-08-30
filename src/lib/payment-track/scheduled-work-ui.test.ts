@@ -11,28 +11,28 @@ const styleSource = await readFile(
   "utf8",
 );
 
-test("Weekly Schedule defaults the calendar-aligned rail to global scheduled-incomplete Project Track work", () => {
-  assert.match(
-    componentSource,
-    /scheduledIncompletePaymentTrackProjects\(projects, sourceOverrideState\)/,
-    "the rail and navigation badge should share the override-aware selector",
-  );
-  assert.match(componentSource, /useState<ScheduleRailView>\("scheduled"\)/);
-  assert.match(componentSource, /"Scheduled · Not completed"/);
-  assert.match(componentSource, /id="scheduled-projects-rail-panel"/);
-  assert.match(componentSource, /<small>All dates<\/small>/);
-  assert.match(componentSource, /scheduledIncompleteProjects\.map\(renderScheduledIncompleteProject\)/);
-  assert.match(componentSource, /onOpenProjectTrackProject\?\.\(scheduled\.projectId\)/);
-  assert.match(componentSource, /Open Project Track/);
+test("Weekly Schedule uses one calendar-aligned WIP unscheduled rail", () => {
+  assert.match(componentSource, /wipUnscheduledPaymentTrackProjects\(projects\)/);
+  assert.match(componentSource, /<strong id="schedule-rail-title">WIP · Unscheduled<\/strong>/);
+  assert.match(componentSource, /id="wip-unscheduled-projects-rail-panel"/);
+  assert.match(componentSource, /wipUnscheduledProjects\.map\(renderWipUnscheduledProject\)/);
+  assert.doesNotMatch(componentSource, /ScheduleRailView|railView|scheduleRailTabs/);
+  assert.doesNotMatch(componentSource, /Scheduled · Not completed/);
 });
 
-test("the rail does not report a false zero while either source is unavailable", () => {
-  assert.match(componentSource, /scheduledIncompleteReady = paymentSourceReady && sourceOverridesReady/);
-  assert.match(componentSource, /scheduledIncompleteReady \? scheduledIncompleteProjects\.length : "—"/);
-  assert.match(componentSource, /Scheduled Project Track projects could not be loaded/);
+test("WIP cards open the exact Project Track project", () => {
+  assert.match(componentSource, /onOpenProjectTrackProject\?\.\(unscheduled\.projectId\)/);
+  assert.match(componentSource, /aria-label=\{`Open \$\{customer\}.*in Project Track`\}/);
+  assert.match(componentSource, /Open Project Track <ChevronRight/);
 });
 
-test("scheduled cards stack vertically in the calendar rail and remain responsive in list view", () => {
+test("the WIP queue does not report a false zero while Project Track is unavailable", () => {
+  assert.match(componentSource, /const wipUnscheduledReady = paymentSourceReady;/);
+  assert.match(componentSource, /wipUnscheduledReady \? wipUnscheduledProjects\.length : "—"/);
+  assert.match(componentSource, /Working in Progress projects could not be loaded/);
+});
+
+test("WIP cards stack vertically in the calendar rail and remain responsive in list view", () => {
   assert.match(
     styleSource,
     /\.scheduledRailProjectList\s*\{[\s\S]*?flex-direction:\s*column;/,
