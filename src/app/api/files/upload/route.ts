@@ -94,7 +94,7 @@ export async function POST(request: NextRequest) {
             errorCode: "source_unavailable",
           };
       if (knowledgeIndex.status === "queued" && knowledgeIndex.jobId) {
-        continueKnowledgeIndex(knowledgeIndex.jobId);
+        await continueKnowledgeIndex(knowledgeIndex.jobId);
       }
     } catch {
       // The Files object and metadata are already durable. Knowledge setup is

@@ -69,6 +69,16 @@ test("list and content queries accept only the documented exact shapes", () => {
     query: undefined,
     view: "trash",
   });
+  assert.deepEqual(parseWorkspaceFilesListQuery(new URLSearchParams({ view: "knowledge" })), {
+    parentId: null,
+    query: undefined,
+    view: "knowledge",
+  });
+  assert.deepEqual(parseWorkspaceFilesListQuery(new URLSearchParams({ view: "knowledge", query: "manual" })), {
+    parentId: null,
+    query: "manual",
+    view: "knowledge",
+  });
   for (const query of [
     "owner=jerry",
     "parentId=invalid",
@@ -78,6 +88,7 @@ test("list and content queries accept only the documented exact shapes", () => {
     `parentId=${ID}&query=report`,
     "view=trash&query=report",
     `view=trash&parentId=${ID}`,
+    `view=knowledge&parentId=${ID}`,
   ]) {
     assert.equal(parseWorkspaceFilesListQuery(new URLSearchParams(query)), null, query);
   }

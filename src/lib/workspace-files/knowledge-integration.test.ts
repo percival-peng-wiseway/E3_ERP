@@ -39,8 +39,10 @@ test("knowledge request parsing is exact, bounded and allow-listed", () => {
   assert.match(sources.request, /effectiveTo < effectiveFrom/);
 });
 
-test("indexing is queued and continued after the response lifecycle", () => {
+test("indexing is queued into a durable Workflow in production", () => {
   assert.match(sources.background, /after\(async \(\) =>/);
+  assert.match(sources.background, /knowledgeIndexWorkflow\.create/);
+  assert.match(sources.background, /params: \{ jobId \}/);
   assert.match(sources.background, /processKnowledgeIndexJob\(jobId\)/);
   for (const name of ["create", "update", "reindex"] as const) {
     assert.match(sources[name], /enqueueKnowledgeIndexJob/);
@@ -48,7 +50,28 @@ test("indexing is queued and continued after the response lifecycle", () => {
   }
 });
 
+test("Cloudflare entrypoint exports the durable knowledge index Workflow", async () => {
+  const [worker, wrangler] = await Promise.all([
+    readFile(new URL("../../../worker.ts", import.meta.url), "utf8"),
+    readFile(new URL("../../../wrangler.jsonc", import.meta.url), "utf8"),
+  ]);
+  assert.match(worker, /class KnowledgeIndexWorkflow extends WorkflowEntrypoint/);
+  assert.match(worker, /timeout: "12 minutes"/);
+  assert.match(worker, /workflowProviderTimeoutMs/);
+  assert.match(worker, /workflowLeaseSeconds/);
+  assert.match(worker, /knowledge-workflow:\$\{event\.instanceId\}/);
+  assert.match(wrangler, /"main": "worker\.ts"/);
+  assert.match(wrangler, /"binding": "KNOWLEDGE_INDEX_WORKFLOW"/);
+  assert.match(wrangler, /"class_name": "KnowledgeIndexWorkflow"/);
+  assert.match(wrangler, /"binding": "KNOWLEDGE_VECTORS"/);
+  assert.match(wrangler, /"index_name": "e3-knowledge"/);
+  assert.match(wrangler, /"binding": "AI"/);
+  assert.doesNotMatch(wrangler, /KNOWLEDGE_SEARCH|ai-search/);
+});
+
 test("Files applies knowledge ACL before listing and downloading", () => {
+  assert.match(sources.filesList, /query\.view === "knowledge" && session\.user\.role !== "admin"/);
+  assert.match(sources.filesList, /listActiveKnowledgeChunkCounts/);
   assert.match(sources.filesList, /canAccessKnowledgeScope\(session\.user\.role, document\.accessScope\)/);
   assert.match(sources.filesContent, /getKnowledgeDocumentByFileId/);
   assert.match(sources.filesContent, /canAccessKnowledgeScope\(session\.user\.role, knowledgeDocument\.accessScope\)/);
@@ -75,7 +98,7 @@ test("knowledge controls are limited to administrators and supported unstructure
   assert.match(sources.component, /\\\.txt\$/);
   assert.match(sources.component, /text\/markdown/);
   assert.match(sources.component, /\\\.md\$/);
-  for (const status of ["Pending", "Indexing", "Ready", "Failed", "Disabled"]) {
+  for (const status of ["Pending", "Vectorizing", "Ready", "Failed", "Disabled"]) {
     assert.match(sources.component, new RegExp(`"${status}"`));
   }
 });

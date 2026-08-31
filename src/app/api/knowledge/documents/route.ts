@@ -110,7 +110,7 @@ export async function POST(request: NextRequest) {
         requestedBy: session.user.username,
         reason: result.action === "reindex_required" ? "file_updated" : "document_added",
       });
-      continueKnowledgeIndex(job.id);
+      await continueKnowledgeIndex(job.id);
       queued = true;
     }
     return knowledgeJson({ data: { document: knowledgeDocumentView(result.document) } }, { status: queued ? 202 : 200 });

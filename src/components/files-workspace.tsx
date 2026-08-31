@@ -5,6 +5,8 @@ import {
   BookOpen,
   CheckCircle2,
   ChevronRight,
+  Cpu,
+  Database,
   Download,
   Eye,
   File as FileIcon,
@@ -18,6 +20,7 @@ import {
   HardDrive,
   House,
   LayoutList,
+  Layers3,
   LoaderCircle,
   MoreHorizontal,
   Move,
@@ -76,6 +79,9 @@ const PREVIEW_TYPES = new Set([
   "image/jpeg",
   "image/png",
   "image/webp",
+  "text/plain",
+  "text/markdown",
+  "text/x-markdown",
 ]);
 
 type SortKey = "name" | "updated" | "size";
@@ -181,14 +187,14 @@ function uploadKnowledgeMessage(task: UploadTask, isAdmin: boolean) {
   if (task.state === "failed") return "Upload failed.";
   switch (task.knowledgeIndex?.status) {
     case "queued": return isAdmin
-      ? "File saved · Indexing for Agent"
-      : "File saved · Sent for Agent indexing";
+      ? "File saved · Vectorizing for Agent"
+      : "File saved · Sent for Agent vectorization";
     case "ready": return "File saved · Ready for Agent";
     case "duplicate": return "File saved · Same content already available to Agent";
-    case "not_supported": return "File saved · This file type is not indexed for Agent";
+    case "not_supported": return "File saved · This file type cannot be vectorized for Agent";
     case "failed": return isAdmin
-      ? "File saved · Agent indexing failed — open the file menu to retry"
-      : "File saved · Agent indexing failed — ask an administrator to retry";
+      ? "File saved · Vectorization failed — open the file menu to retry"
+      : "File saved · Vectorization failed — ask an administrator to retry";
     default: return `${formatBytes(task.file.size)} · Uploaded`;
   }
 }
@@ -260,7 +266,7 @@ function knowledgeFormFor(item: WorkspaceFileItem): KnowledgeFormState {
 
 function knowledgeStatusLabel(status: WorkspaceKnowledgeSummary["status"]) {
   return status === "pending" ? "Pending"
-    : status === "indexing" ? "Indexing"
+    : status === "indexing" ? "Vectorizing"
       : status === "ready" ? "Ready"
         : status === "failed" ? "Failed"
           : "Disabled";
@@ -310,6 +316,7 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
   const [previewItem, setPreviewItem] = useState<WorkspaceFileItem | null>(null);
   const [knowledgeItem, setKnowledgeItem] = useState<WorkspaceFileItem | null>(null);
   const [knowledgeForm, setKnowledgeForm] = useState<KnowledgeFormState | null>(null);
+  const [selectedKnowledgeId, setSelectedKnowledgeId] = useState("");
   const [previewFailed, setPreviewFailed] = useState(false);
   const [uploadTasks, setUploadTasks] = useState<UploadTask[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -343,6 +350,7 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
     try {
       const params = new URLSearchParams();
       if (view === "trash") params.set("view", "trash");
+      else if (view === "knowledge") params.set("view", "knowledge");
       else if (appliedQuery) params.set("query", appliedQuery);
       else if (parentId !== ROOT_PARENT) params.set("parentId", parentId);
       const queryString = params.toString();
@@ -400,10 +408,20 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
 
   const indexWorkInProgress = items.some((item) => item.knowledge?.status === "pending" || item.knowledge?.status === "indexing");
   useEffect(() => {
-    if (currentUser.role !== "admin" || !indexWorkInProgress) return;
+    if (currentUser.role !== "admin" || (!indexWorkInProgress && view !== "knowledge")) return;
     const timer = window.setInterval(() => void loadFiles(true), 5_000);
     return () => window.clearInterval(timer);
-  }, [currentUser.role, indexWorkInProgress, loadFiles]);
+  }, [currentUser.role, indexWorkInProgress, loadFiles, view]);
+
+  useEffect(() => {
+    if (view !== "knowledge") {
+      setSelectedKnowledgeId("");
+      return;
+    }
+    if (selectedKnowledgeId && !items.some((item) => item.id === selectedKnowledgeId)) {
+      setSelectedKnowledgeId("");
+    }
+  }, [items, selectedKnowledgeId, view]);
 
   useEffect(() => {
     if (!menuItemId) return;
@@ -494,6 +512,9 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
   }, [items, sortKey]);
 
   const currentFolderName = breadcrumbs.at(-1)?.name || "All files";
+  const selectedKnowledgeItem = view === "knowledge"
+    ? items.find((item) => item.id === selectedKnowledgeId) || null
+    : null;
   const currentParentId = parentId === ROOT_PARENT ? null : parentId;
   const uploadingCount = uploadTasks.filter((task) => task.state === "queued" || task.state === "uploading").length;
   const failedCount = uploadTasks.filter((task) => task.state === "failed").length;
@@ -510,6 +531,7 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
     setAppliedQuery("");
     setMenuItemId("");
     setNotice("");
+    setSelectedKnowledgeId("");
   };
 
   const navigateFolder = (id: string) => {
@@ -694,7 +716,7 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
       setNotice(current
         ? current.status === "disabled"
           ? `Knowledge settings for “${knowledgeItem.name}” saved.`
-          : `Knowledge settings for “${knowledgeItem.name}” saved and queued for indexing.`
+          : `Knowledge settings for “${knowledgeItem.name}” saved and queued for vectorization.`
         : `“${knowledgeItem.name}” added to the knowledge base.`);
       await loadFiles(true);
     } catch (saveError) {
@@ -727,7 +749,7 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
       }
       setNotice(action === "disable"
         ? `“${item.name}” removed from active knowledge search.`
-        : `“${item.name}” queued for indexing.`);
+        : `“${item.name}” queued for vectorization.`);
       await loadFiles(true);
     } catch (stateError) {
       setError(stateError instanceof Error ? stateError.message : `Unable to ${action} this knowledge document.`);
@@ -737,7 +759,7 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
   };
 
   const uploadFiles = async (selectedFiles: File[]) => {
-    if (uploading || view !== "active" || !selectedFiles.length) return;
+    if (uploading || (view !== "active" && view !== "knowledge") || !selectedFiles.length) return;
     const tasks: UploadTask[] = selectedFiles.map((file) => ({
       id: uploadTaskId(),
       file,
@@ -776,7 +798,7 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
     }
     setUploading(false);
     if (completed) {
-      setNotice(`${completed} ${completed === 1 ? "file" : "files"} uploaded to ${currentFolderName}. Supported documents are indexed for Agent automatically.`);
+      setNotice(`${completed} ${completed === 1 ? "file" : "files"} uploaded to ${currentFolderName}. Supported documents are vectorized for Agent automatically.`);
       await loadFiles(true);
     }
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -789,13 +811,13 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
 
   const hasDraggedFiles = (event: ReactDragEvent<HTMLElement>) => Array.from(event.dataTransfer.types).includes("Files");
   const handleDragEnter = (event: ReactDragEvent<HTMLElement>) => {
-    if (view !== "active" || !hasDraggedFiles(event)) return;
+    if ((view !== "active" && view !== "knowledge") || !hasDraggedFiles(event)) return;
     event.preventDefault();
     dragDepthRef.current += 1;
     setDragActive(true);
   };
   const handleDragOver = (event: ReactDragEvent<HTMLElement>) => {
-    if (view !== "active" || !hasDraggedFiles(event)) return;
+    if ((view !== "active" && view !== "knowledge") || !hasDraggedFiles(event)) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = "copy";
   };
@@ -806,7 +828,7 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
     if (!dragDepthRef.current) setDragActive(false);
   };
   const handleDrop = (event: ReactDragEvent<HTMLElement>) => {
-    if (view !== "active" || !hasDraggedFiles(event)) return;
+    if ((view !== "active" && view !== "knowledge") || !hasDraggedFiles(event)) return;
     event.preventDefault();
     dragDepthRef.current = 0;
     setDragActive(false);
@@ -842,9 +864,9 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
       >
         {item.kind === "file" && canPreview(item) ? <button role="menuitem" type="button" onClick={() => openPreview(item)}><Eye size={15} />Preview</button> : null}
         {item.kind === "file" ? <a role="menuitem" href={contentUrl(item, "download")} onClick={() => setMenuItemId("")}><Download size={15} />Download</a> : null}
-        {view === "active" && currentUser.role === "admin" && (item.knowledge || canUseForKnowledge(item)) ? <button role="menuitem" type="button" onClick={() => openKnowledge(item)}><BookOpen size={15} />{item.knowledge ? "Knowledge settings" : "Index for Agent"}</button> : null}
-        {view === "active" && currentUser.role === "admin" && canUseForKnowledge(item) && item.knowledge && (item.knowledge.status === "ready" || item.knowledge.status === "failed") ? <button role="menuitem" type="button" onClick={() => void changeKnowledgeState(item, "reindex")}><RefreshCw size={15} />{item.knowledge.status === "failed" ? "Retry indexing" : "Reindex"}</button> : null}
-        {view === "active" && currentUser.role === "admin" && item.knowledge && (item.knowledge.status !== "disabled" || canUseForKnowledge(item)) ? <button role="menuitem" type="button" onClick={() => void changeKnowledgeState(item, item.knowledge?.status === "disabled" ? "enable" : "disable")}><BookOpen size={15} />{item.knowledge.status === "disabled" ? "Enable knowledge" : "Disable knowledge"}</button> : null}
+        {(view === "active" || view === "knowledge") && currentUser.role === "admin" && (item.knowledge || canUseForKnowledge(item)) ? <button role="menuitem" type="button" onClick={() => openKnowledge(item)}><BookOpen size={15} />{item.knowledge ? "Knowledge settings" : "Index for Agent"}</button> : null}
+        {(view === "active" || view === "knowledge") && currentUser.role === "admin" && canUseForKnowledge(item) && item.knowledge && (item.knowledge.status === "ready" || item.knowledge.status === "failed") ? <button role="menuitem" type="button" onClick={() => void changeKnowledgeState(item, "reindex")}><RefreshCw size={15} />{item.knowledge.status === "failed" ? "Retry vectorization" : "Vectorize again"}</button> : null}
+        {(view === "active" || view === "knowledge") && currentUser.role === "admin" && item.knowledge && (item.knowledge.status !== "disabled" || canUseForKnowledge(item)) ? <button role="menuitem" type="button" onClick={() => void changeKnowledgeState(item, item.knowledge?.status === "disabled" ? "enable" : "disable")}><BookOpen size={15} />{item.knowledge.status === "disabled" ? "Enable knowledge" : "Disable knowledge"}</button> : null}
         {view === "active" && item.capabilities.rename ? <button role="menuitem" type="button" onClick={() => openDialog({ type: "rename", item })}><Pencil size={15} />Rename</button> : null}
         {view === "active" && item.capabilities.move ? <button role="menuitem" type="button" onClick={() => openDialog({ type: "move", item })}><Move size={15} />Move</button> : null}
         {view === "active" && item.capabilities.trash ? <button role="menuitem" type="button" className={styles.menuDanger} onClick={() => openDialog({ type: "trash", item })}><Trash2 size={15} />Move to Trash</button> : null}
@@ -878,10 +900,10 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
 
   const renderPrimaryItemButton = (item: WorkspaceFileItem, className: string) => {
     const Icon = itemIcon(item);
-    const itemSubtitle = item.knowledge ? <><i className={`${styles.knowledgeStatus} ${styles[`knowledge${knowledgeStatusLabel(item.knowledge.status)}`]}`}>{knowledgeStatusLabel(item.knowledge.status)}</i>{item.knowledge.lastIndexedAt ? ` · Indexed ${formatDate(item.knowledge.lastIndexedAt)}` : " · Agent knowledge"}</>
+    const itemSubtitle = item.knowledge ? <><i className={`${styles.knowledgeStatus} ${styles[`knowledge${knowledgeStatusLabel(item.knowledge.status)}`]}`}>{knowledgeStatusLabel(item.knowledge.status)}</i>{item.knowledge.lastIndexedAt ? ` · Vectorized ${formatDate(item.knowledge.lastIndexedAt)}` : " · Agent knowledge"}</>
       : item.kind === "folder" ? "Folder"
-        : currentUser.role === "admin" && canUseForKnowledge(item) ? <><i className={`${styles.knowledgeStatus} ${styles.knowledgePending}`}>Not indexed</i><span> · Agent knowledge</span></>
-          : !canUseForKnowledge(item) ? <><i className={`${styles.knowledgeStatus} ${styles.knowledgeDisabled}`}>Saved only</i><span> · Not indexed for Agent</span></>
+        : currentUser.role === "admin" && canUseForKnowledge(item) ? <><i className={`${styles.knowledgeStatus} ${styles.knowledgePending}`}>Not vectorized</i><span> · Agent knowledge</span></>
+          : !canUseForKnowledge(item) ? <><i className={`${styles.knowledgeStatus} ${styles.knowledgeDisabled}`}>Saved only</i><span> · Not vectorized for Agent</span></>
             : item.contentType || "File";
     if (view === "trash") {
       return (
@@ -889,6 +911,20 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
           <span className={`${styles.itemIcon} ${itemTone(item)}`}><Icon size={20} /></span>
           <span className={styles.itemName}><strong>{item.name}</strong><small>{item.kind === "folder" ? "Folder in Trash" : "File in Trash"}</small></span>
         </div>
+      );
+    }
+    if (view === "knowledge") {
+      return (
+        <button
+          type="button"
+          className={className}
+          aria-label={`Inspect knowledge resource ${item.name}`}
+          aria-pressed={selectedKnowledgeId === item.id}
+          onClick={() => setSelectedKnowledgeId(item.id)}
+        >
+          <span className={`${styles.itemIcon} ${itemTone(item)}`}><Icon size={20} /></span>
+          <span className={styles.itemName}><strong>{item.name}</strong><small>{itemSubtitle}</small></span>
+        </button>
       );
     }
     const opens = item.kind === "folder" ? "folder" : canPreview(item) ? "preview" : "download";
@@ -949,7 +985,7 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
         </div>
         <div className={styles.headerActions}>
           <button type="button" className={styles.secondaryButton} disabled={view !== "active"} onClick={(event) => openDialog({ type: "create" }, event.currentTarget)}><FolderPlus size={17} />New folder</button>
-          <button type="button" className={styles.primaryButton} disabled={view !== "active" || uploading} onClick={() => fileInputRef.current?.click()}><UploadCloud size={17} />Upload files</button>
+          <button type="button" className={styles.primaryButton} disabled={view === "trash" || uploading} onClick={() => fileInputRef.current?.click()}><UploadCloud size={17} />{view === "knowledge" ? "Upload knowledge" : "Upload files"}</button>
           <input
             ref={fileInputRef}
             className={styles.hiddenInput}
@@ -965,14 +1001,15 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
       {notice ? <div className={styles.notice} role="status" aria-live="polite"><CheckCircle2 size={17} /><span>{notice}</span><button type="button" onClick={() => setNotice("")} aria-label="Dismiss notification"><X size={15} /></button></div> : null}
       {error ? <div className={styles.error} role="alert"><AlertCircle size={17} /><span>{error}</span><button type="button" onClick={() => setError("")} aria-label="Dismiss error"><X size={15} /></button></div> : null}
 
-      <div className={styles.driveShell}>
+      <div className={`${styles.driveShell} ${view === "knowledge" ? styles.knowledgeShell : ""}`}>
         <aside className={styles.viewRail} aria-label="Files views">
           <div className={styles.railActions}>
-            <button type="button" className={styles.railNewButton} disabled={view !== "active"} onClick={(event) => openDialog({ type: "create" }, event.currentTarget)}><Plus size={18} />New</button>
+            <button type="button" className={styles.railNewButton} disabled={view === "trash"} onClick={(event) => view === "knowledge" ? fileInputRef.current?.click() : openDialog({ type: "create" }, event.currentTarget)}>{view === "knowledge" ? <UploadCloud size={18} /> : <Plus size={18} />}{view === "knowledge" ? "Upload" : "New"}</button>
           </div>
           <nav>
             <button type="button" className={view === "active" ? styles.activeRailItem : ""} aria-current={view === "active" ? "page" : undefined} onClick={() => switchView("active")}><FolderOpen size={18} /><span>All files</span></button>
             <button type="button" className={view === "trash" ? styles.activeRailItem : ""} aria-current={view === "trash" ? "page" : undefined} onClick={() => switchView("trash")}><Trash2 size={18} /><span>Trash</span></button>
+            {currentUser.role === "admin" ? <button type="button" className={view === "knowledge" ? styles.activeRailItem : ""} aria-current={view === "knowledge" ? "page" : undefined} onClick={() => switchView("knowledge")}><Database size={18} /><span>Knowledge resource</span></button> : null}
           </nav>
           <div className={styles.storageSummary}>
             <span><HardDrive size={18} /></span>
@@ -983,7 +1020,7 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
           </div>
         </aside>
 
-        <section className={styles.contentPanel} aria-label={view === "trash" ? "Trash" : currentFolderName}>
+        <section className={styles.contentPanel} aria-label={view === "trash" ? "Trash" : view === "knowledge" ? "Knowledge resources" : currentFolderName}>
           <div className={styles.toolbar}>
             <label className={`${styles.searchBox} ${view === "trash" ? styles.searchDisabled : ""}`}>
               <Search size={17} />
@@ -992,8 +1029,8 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
                 value={query}
                 maxLength={120}
                 disabled={view === "trash"}
-                placeholder={view === "trash" ? "Search is unavailable in Trash" : "Search files and folders"}
-                aria-label="Search files and folders"
+                placeholder={view === "trash" ? "Search is unavailable in Trash" : view === "knowledge" ? "Search knowledge resources" : "Search files and folders"}
+                aria-label={view === "knowledge" ? "Search knowledge resources" : "Search files and folders"}
                 onChange={(event) => setQuery(event.target.value)}
               />
               {query ? <button type="button" onClick={() => setQuery("")} aria-label="Clear file search"><X size={14} /></button> : null}
@@ -1025,7 +1062,9 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
                   })}
                 </ol>
               </nav>
-            ) : <div className={styles.trashHeading}><Trash2 size={16} /><strong>Trash</strong><span>Items stay here until an administrator deletes them forever.</span></div>}
+            ) : view === "knowledge"
+              ? <div className={styles.trashHeading}><Database size={16} /><strong>Knowledge resource</strong><span>Uploaded documents are chunked, embedded and stored in Vectorize.</span></div>
+              : <div className={styles.trashHeading}><Trash2 size={16} /><strong>Trash</strong><span>Items stay here until an administrator deletes them forever.</span></div>}
             <span className={styles.itemCount}>{sortedItems.length} {sortedItems.length === 1 ? "item" : "items"}</span>
           </div>
 
@@ -1033,18 +1072,19 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
             <div className={styles.loadingState} role="status"><LoaderCircle className={styles.spinning} size={23} />Loading files…</div>
           ) : !sortedItems.length ? (
             <div className={styles.emptyState}>
-              <span>{view === "trash" ? <Trash2 size={27} /> : appliedQuery ? <Search size={27} /> : <FolderOpen size={27} />}</span>
-              <h2>{view === "trash" ? "Trash is empty" : appliedQuery ? "No files match your search" : `No files in ${currentFolderName}`}</h2>
+              <span>{view === "trash" ? <Trash2 size={27} /> : view === "knowledge" ? <Database size={27} /> : appliedQuery ? <Search size={27} /> : <FolderOpen size={27} />}</span>
+              <h2>{view === "trash" ? "Trash is empty" : view === "knowledge" ? appliedQuery ? "No knowledge resources match" : "No knowledge resources yet" : appliedQuery ? "No files match your search" : `No files in ${currentFolderName}`}</h2>
               {view === "active" && !appliedQuery ? <div><button type="button" className={styles.secondaryButton} onClick={(event) => openDialog({ type: "create" }, event.currentTarget)}><FolderPlus size={16} />New folder</button><button type="button" className={styles.primaryButton} onClick={() => fileInputRef.current?.click()}><UploadCloud size={16} />Upload files</button></div> : null}
+              {view === "knowledge" && !appliedQuery ? <div><button type="button" className={styles.primaryButton} onClick={() => fileInputRef.current?.click()}><UploadCloud size={16} />Upload knowledge document</button></div> : null}
             </div>
           ) : layout === "list" ? (
             <div className={styles.listRegion}>
               <table className={styles.fileTable}>
-                <caption className={styles.srOnly}>{view === "trash" ? "Files and folders in Trash" : `Files and folders in ${currentFolderName}`}</caption>
+                <caption className={styles.srOnly}>{view === "trash" ? "Files and folders in Trash" : view === "knowledge" ? "Knowledge resources" : `Files and folders in ${currentFolderName}`}</caption>
                 <thead><tr><th scope="col">Name</th><th scope="col">Owner</th><th scope="col">Modified</th><th scope="col">Size</th><th scope="col"><span className={styles.srOnly}>Actions</span></th></tr></thead>
                 <tbody>
                   {sortedItems.map((item) => (
-                    <tr key={item.id}>
+                    <tr className={selectedKnowledgeId === item.id ? styles.selectedItem : ""} key={item.id}>
                       <td>{renderPrimaryItemButton(item, styles.nameButton)}</td>
                       <td className={styles.ownerCell}><span className={item.ownerUsername === currentUser.username ? styles.youAvatar : ""}>{item.ownerDisplayName.slice(0, 1).toLocaleUpperCase("en-AU")}</span><div><strong>{item.ownerDisplayName}</strong><small>{item.ownerUsername === currentUser.username ? "You" : `@${item.ownerUsername}`}</small></div></td>
                       <td className={styles.modifiedCell}><span>{formatDate(item.updatedAt)}</span><small>by {item.updatedBy}</small></td>
@@ -1059,7 +1099,7 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
             <div className={styles.fileGrid}>
               {sortedItems.map((item) => {
                 return (
-                  <article className={styles.fileCard} key={item.id}>
+                  <article className={`${styles.fileCard} ${selectedKnowledgeId === item.id ? styles.selectedItem : ""}`} key={item.id}>
                     <div className={styles.cardTop}><span>{item.kind === "folder" ? "Folder" : "File"}</span>{renderActionButton(item)}</div>
                     {renderPrimaryItemButton(item, styles.cardPrimary)}
                     <div className={styles.cardMeta}><span>{item.ownerUsername === currentUser.username ? "You" : item.ownerDisplayName}</span><span>{formatDate(item.updatedAt)}</span><span>{item.kind === "folder" ? "Folder" : formatBytes(item.size)}</span></div>
@@ -1069,13 +1109,62 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
             </div>
           )}
         </section>
+        {view === "knowledge" ? (
+          <aside className={styles.knowledgeInspector} aria-label="Knowledge vector details">
+            {selectedKnowledgeItem?.knowledge ? (
+              <>
+                <header>
+                  <span className={`${styles.itemIcon} ${itemTone(selectedKnowledgeItem)}`}><FileText size={21} /></span>
+                  <div><small>KNOWLEDGE RESOURCE</small><h2>{selectedKnowledgeItem.name}</h2><p>{selectedKnowledgeItem.knowledge.title}</p></div>
+                </header>
+                <div className={styles.inspectorStatus}>
+                  <i className={`${styles.knowledgeStatus} ${styles[`knowledge${knowledgeStatusLabel(selectedKnowledgeItem.knowledge.status)}`]}`}>{knowledgeStatusLabel(selectedKnowledgeItem.knowledge.status)}</i>
+                  <span>{selectedKnowledgeItem.knowledge.status === "ready" ? "Available to Agent" : selectedKnowledgeItem.knowledge.status === "failed" ? "Vectorization needs attention" : "Vectorization in progress"}</span>
+                </div>
+                <section className={styles.vectorSummary}>
+                  <h3><Database size={15} />Vectorize</h3>
+                  <dl>
+                    <div><dt>Provider</dt><dd>{selectedKnowledgeItem.knowledge.vectorProvider}</dd></div>
+                    <div><dt>Model</dt><dd title={selectedKnowledgeItem.knowledge.embeddingModel}>Qwen3 Embedding 0.6B</dd></div>
+                    <div><dt>Dimensions</dt><dd>{selectedKnowledgeItem.knowledge.vectorDimensions.toLocaleString("en-AU")}</dd></div>
+                    <div><dt>Metric</dt><dd>{selectedKnowledgeItem.knowledge.vectorMetric}</dd></div>
+                    <div><dt>Active chunks</dt><dd>{selectedKnowledgeItem.knowledge.activeChunks}</dd></div>
+                    <div><dt>Generation</dt><dd>{selectedKnowledgeItem.knowledge.indexGeneration}</dd></div>
+                  </dl>
+                </section>
+                <section className={styles.resourceSummary}>
+                  <h3><Layers3 size={15} />Resource</h3>
+                  <dl>
+                    <div><dt>Access</dt><dd>{selectedKnowledgeItem.knowledge.accessScope}</dd></div>
+                    <div><dt>Language</dt><dd>{selectedKnowledgeItem.knowledge.language}</dd></div>
+                    <div><dt>Version</dt><dd>{selectedKnowledgeItem.knowledge.documentVersion}</dd></div>
+                    <div><dt>File size</dt><dd>{formatBytes(selectedKnowledgeItem.size)}</dd></div>
+                  </dl>
+                  <p>{selectedKnowledgeItem.knowledge.lastIndexedAt ? `Last vectorized ${formatDate(selectedKnowledgeItem.knowledge.lastIndexedAt)}` : "Not vectorized yet"}</p>
+                </section>
+                {selectedKnowledgeItem.knowledge.errorMessage ? <div className={styles.inspectorError}><AlertCircle size={15} />{selectedKnowledgeItem.knowledge.errorMessage}</div> : null}
+                <div className={styles.inspectorActions}>
+                  <button type="button" className={styles.primaryButton} disabled={!canPreview(selectedKnowledgeItem)} onClick={(event) => openPreview(selectedKnowledgeItem, event.currentTarget)}><Eye size={16} />Open preview</button>
+                  <a className={styles.secondaryButton} href={contentUrl(selectedKnowledgeItem, "download")}><Download size={16} />Download</a>
+                  <button type="button" className={styles.secondaryButton} onClick={(event) => openKnowledge(selectedKnowledgeItem, event.currentTarget)}><Cpu size={16} />Vector settings</button>
+                </div>
+              </>
+            ) : (
+              <div className={styles.inspectorEmpty}>
+                <span><Database size={27} /></span>
+                <h2>Select a resource</h2>
+                <p>Choose a knowledge document to inspect its Vectorize status and open the source preview.</p>
+              </div>
+            )}
+          </aside>
+        ) : null}
       </div>
 
-      {dragActive ? <div className={styles.dropOverlay} aria-hidden="true"><span><UploadCloud size={32} /></span><strong>Drop files in {currentFolderName}</strong><small>PDF, images, text and Microsoft Office files · 20 MB each</small></div> : null}
+      {dragActive ? <div className={styles.dropOverlay} aria-hidden="true"><span><UploadCloud size={32} /></span><strong>{view === "knowledge" ? "Drop knowledge documents" : `Drop files in ${currentFolderName}`}</strong><small>PDF, DOCX, TXT and Markdown are vectorized automatically · 20 MB each</small></div> : null}
 
       {uploadTasks.length ? (
         <aside className={styles.uploadQueue} aria-label="File uploads" aria-live="polite">
-          <header><strong>{uploadingCount ? `Uploading ${uploadingCount} ${uploadingCount === 1 ? "file" : "files"}` : failedCount ? `${failedCount} upload ${failedCount === 1 ? "needs" : "need"} attention` : indexingCount ? `Indexing ${indexingCount} ${indexingCount === 1 ? "file" : "files"} for Agent` : indexFailedCount ? `${indexFailedCount} Agent ${indexFailedCount === 1 ? "index needs" : "indexes need"} attention` : "Uploads complete"}</strong><button type="button" disabled={uploading} onClick={() => setUploadTasks([])} aria-label="Close upload status"><X size={17} /></button></header>
+          <header><strong>{uploadingCount ? `Uploading ${uploadingCount} ${uploadingCount === 1 ? "file" : "files"}` : failedCount ? `${failedCount} upload ${failedCount === 1 ? "needs" : "need"} attention` : indexingCount ? `Vectorizing ${indexingCount} ${indexingCount === 1 ? "file" : "files"} for Agent` : indexFailedCount ? `${indexFailedCount} ${indexFailedCount === 1 ? "vectorization needs" : "vectorizations need"} attention` : "Uploads complete"}</strong><button type="button" disabled={uploading} onClick={() => setUploadTasks([])} aria-label="Close upload status"><X size={17} /></button></header>
           <div className={styles.uploadList}>
             {uploadTasks.map((task) => (
               <div className={styles.uploadRow} key={task.id}>
@@ -1124,7 +1213,7 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
             {knowledgeItem.knowledge ? (
               <div className={styles.knowledgeState}>
                 <i className={`${styles.knowledgeStatus} ${styles[`knowledge${knowledgeStatusLabel(knowledgeItem.knowledge.status)}`]}`}>{knowledgeStatusLabel(knowledgeItem.knowledge.status)}</i>
-                <span>{knowledgeItem.knowledge.lastIndexedAt ? `Last indexed ${formatDate(knowledgeItem.knowledge.lastIndexedAt)}` : "Not indexed yet"}</span>
+                <span>{knowledgeItem.knowledge.lastIndexedAt ? `Last vectorized ${formatDate(knowledgeItem.knowledge.lastIndexedAt)}` : "Not vectorized yet"}</span>
                 {knowledgeItem.knowledge.errorMessage ? <strong>{knowledgeItem.knowledge.errorMessage}</strong> : null}
               </div>
             ) : null}
@@ -1142,7 +1231,7 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
                 <label>Effective from<input type="date" value={knowledgeForm.effectiveFrom} onChange={(event) => setKnowledgeForm({ ...knowledgeForm, effectiveFrom: event.target.value })} /></label>
                 <label>Effective to<input type="date" min={knowledgeForm.effectiveFrom || undefined} value={knowledgeForm.effectiveTo} onChange={(event) => setKnowledgeForm({ ...knowledgeForm, effectiveTo: event.target.value })} /></label>
               </div>
-              <footer><button type="button" className={styles.secondaryButton} disabled={Boolean(busyItemId)} onClick={closeModal}>Cancel</button><button type="submit" className={styles.primaryButton} disabled={Boolean(busyItemId) || !knowledgeForm.title.trim() || !knowledgeForm.documentVersion.trim()}>{busyItemId ? <LoaderCircle className={styles.spinning} size={16} /> : knowledgeItem.knowledge?.status === "disabled" ? <BookOpen size={16} /> : <RefreshCw size={16} />}{knowledgeItem.knowledge?.status === "disabled" ? "Save settings" : knowledgeItem.knowledge ? "Save & reindex" : "Add & index"}</button></footer>
+              <footer><button type="button" className={styles.secondaryButton} disabled={Boolean(busyItemId)} onClick={closeModal}>Cancel</button><button type="submit" className={styles.primaryButton} disabled={Boolean(busyItemId) || !knowledgeForm.title.trim() || !knowledgeForm.documentVersion.trim()}>{busyItemId ? <LoaderCircle className={styles.spinning} size={16} /> : knowledgeItem.knowledge?.status === "disabled" ? <BookOpen size={16} /> : <RefreshCw size={16} />}{knowledgeItem.knowledge?.status === "disabled" ? "Save settings" : knowledgeItem.knowledge ? "Save & vectorize" : "Add & vectorize"}</button></footer>
             </form>
           </div>
         </div>
@@ -1153,7 +1242,7 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
           <div ref={modalRef} className={styles.previewDialog} role="dialog" aria-modal="true" aria-labelledby="file-preview-title">
             <header><div><span>FILE PREVIEW</span><h2 id="file-preview-title">{previewItem.name}</h2><small>{formatBytes(previewItem.size)} · Updated {formatDate(previewItem.updatedAt)}</small></div><div><a href={contentUrl(previewItem, "download")} className={styles.secondaryButton}><Download size={16} />Download</a><button type="button" aria-label="Close preview" onClick={closeModal}><X size={20} /></button></div></header>
             <div className={styles.previewBody}>
-              {previewFailed || !canPreview(previewItem) ? <div className={styles.previewFallback}><span><FileIcon size={32} /></span><h3>Preview unavailable</h3><a href={contentUrl(previewItem, "download")} className={styles.primaryButton}><Download size={16} />Download file</a></div> : previewItem.contentType === "application/pdf" ? <iframe src={contentUrl(previewItem, "preview")} title={`Preview of ${previewItem.name}`} onError={() => setPreviewFailed(true)} /> : <img src={contentUrl(previewItem, "preview")} alt={previewItem.name} onError={() => setPreviewFailed(true)} />}
+              {previewFailed || !canPreview(previewItem) ? <div className={styles.previewFallback}><span><FileIcon size={32} /></span><h3>Preview unavailable</h3><a href={contentUrl(previewItem, "download")} className={styles.primaryButton}><Download size={16} />Download file</a></div> : previewItem.contentType?.startsWith("image/") ? <img src={contentUrl(previewItem, "preview")} alt={previewItem.name} onError={() => setPreviewFailed(true)} /> : <iframe src={contentUrl(previewItem, "preview")} title={`Preview of ${previewItem.name}`} onError={() => setPreviewFailed(true)} />}
             </div>
           </div>
         </div>

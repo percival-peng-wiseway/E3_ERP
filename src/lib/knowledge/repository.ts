@@ -573,10 +573,35 @@ export async function listActiveKnowledgeChunksForDocument(documentId: string, t
   return (result.results || []).map((row)=>chunkFromRow(row as Record<string,unknown>));
 }
 
+/** Batch projection used by the Files knowledge resource inspector. */
+export async function listActiveKnowledgeChunkCounts(tenantId: KnowledgeTenantId = KNOWLEDGE_TENANT_ID) {
+  const database = await d1();
+  if (!database) {
+    const chunks = (await readLocalState()).chunks.filter((chunk) => chunk.tenantId === tenantId && chunk.active);
+    const counts = new Map<string, number>();
+    for (const chunk of chunks) counts.set(chunk.documentId, (counts.get(chunk.documentId) || 0) + 1);
+    return counts;
+  }
+  const result = await database.prepare(`SELECT document_id, COUNT(*) AS active_chunks
+    FROM erp_knowledge_chunks WHERE tenant_id=?1 AND active=1 GROUP BY document_id`)
+    .bind(tenantId).all<Record<string, unknown>>();
+  if (!result.success) throw new KnowledgeRepositoryError(result.error || "Knowledge vector counts are unavailable.", 503, "storage_unavailable");
+  const counts = new Map<string, number>();
+  for (const row of result.results || []) {
+    const documentId = row.document_id;
+    const count = Number(row.active_chunks);
+    if (typeof documentId !== "string" || !Number.isSafeInteger(count) || count < 0) {
+      throw new KnowledgeRepositoryError("Knowledge vector counts are invalid.", 503, "storage_unavailable");
+    }
+    counts.set(documentId, count);
+  }
+  return counts;
+}
+
 /**
  * Small readiness projection for health checks. It deliberately avoids loading
  * chunk text or issuing one query per document. The sample key lets the caller
- * verify that D1's active generation still exists in the bound AI Search instance.
+ * verify that D1's active generation still exists in the bound Vectorize index.
  */
 export async function getKnowledgeReadinessSnapshot(tenantId: KnowledgeTenantId = KNOWLEDGE_TENANT_ID) {
   const database = await d1();

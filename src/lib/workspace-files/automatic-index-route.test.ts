@@ -10,9 +10,9 @@ test("Files upload persists the file before registering supported knowledge", ()
   assert.match(route, /requestedBy: session\.user\.username/);
 });
 
-test("Files upload reports knowledge status and continues queued jobs with after", () => {
+test("Files upload reports knowledge status and starts queued jobs durably", () => {
   assert.match(route, /knowledgeIndex\.status === "queued"/);
-  assert.match(route, /continueKnowledgeIndex\(knowledgeIndex\.jobId\)/);
+  assert.match(route, /await continueKnowledgeIndex\(knowledgeIndex\.jobId\)/);
   assert.match(route, /data: \{ item, knowledgeIndex \}/);
   assert.match(route, /errorCode: "knowledge_registration_failed"/);
   assert.match(route, /status: 201/);

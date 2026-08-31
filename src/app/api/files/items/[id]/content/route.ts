@@ -22,6 +22,9 @@ const PREVIEW_TYPES = new Set([
   "image/jpeg",
   "image/png",
   "image/webp",
+  "text/plain",
+  "text/markdown",
+  "text/x-markdown",
 ]);
 
 async function itemId(context: { params: Promise<{ id: string }> }) {

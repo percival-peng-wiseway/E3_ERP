@@ -91,7 +91,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
       if (!document) return knowledgeError(404, "not_found", "The knowledge document was not found.");
       if (stateChange.action === "enable") {
         const job = await enqueueKnowledgeIndexJob({ documentId: document.id, tenantId: KNOWLEDGE_TENANT_ID, requestedBy: session.user.username, reason: "document_reenabled" });
-        continueKnowledgeIndex(job.id);
+        await continueKnowledgeIndex(job.id);
       }
       return knowledgeJson({ data: { document: knowledgeDocumentView(document) } }, { status: stateChange.action === "enable" ? 202 : 200 });
     }
@@ -127,7 +127,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
       return knowledgeJson({ data: { document: knowledgeDocumentView(document) } });
     }
     const job = await enqueueKnowledgeIndexJob({ documentId: document.id, tenantId: KNOWLEDGE_TENANT_ID, requestedBy: session.user.username, reason: "metadata_updated" });
-    continueKnowledgeIndex(job.id);
+    await continueKnowledgeIndex(job.id);
     return knowledgeJson({ data: { document: knowledgeDocumentView(document) } }, { status: 202 });
   } catch (error) {
     if (error instanceof WorkspaceFilesRequestBodyTooLarge) return knowledgeError(413, "request_too_large", "The knowledge settings are too large.");

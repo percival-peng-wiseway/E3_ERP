@@ -7,11 +7,12 @@ const [healthRoute, homeWorkspace] = await Promise.all([
   readFile(new URL("../../components/home-collaboration-workspace.tsx", import.meta.url), "utf8"),
 ]);
 
-test("agent health derives knowledge readiness from ERP-managed documents and active chunks", () => {
-  assert.match(healthRoute, /!bindings\?\.database \|\| !bindings\.files \|\| !bindings\.knowledgeSearch/);
+test("agent health derives knowledge readiness from ERP-managed chunks and Vectorize", () => {
+  assert.match(healthRoute, /!bindings\?\.database \|\| !bindings\.files \|\| !bindings\.workersAi \|\| !bindings\.knowledgeVectors/);
   assert.match(healthRoute, /getKnowledgeReadinessSnapshot/);
-  assert.match(healthRoute, /knowledgeSearch\.items\.list/);
-  assert.match(healthRoute, /item\.key === readiness\.sampleIndexItemKey && item\.status === "completed"/);
+  assert.match(healthRoute, /knowledgeVectors\.describe/);
+  assert.match(healthRoute, /knowledgeVectors\.getByIds/);
+  assert.match(healthRoute, /vector\.id === readiness\.sampleIndexItemKey/);
   assert.match(healthRoute, /readyDocuments:/);
   assert.match(healthRoute, /activeChunks:/);
   assert.match(healthRoute, /assess: assessKnowledgeReadiness/);

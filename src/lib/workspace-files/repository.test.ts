@@ -85,6 +85,11 @@ test("workspace files local repository", async (t) => {
     assert.deepEqual(inside.items.map(({ name }) => name), ["proposal.txt"]);
     assert.equal(inside.usage.ownerUsedBytes, file.size);
 
+    const knowledge = await listWorkspaceFiles({ actor: jerry, view: "knowledge" });
+    assert.deepEqual(knowledge.items.map(({ id }) => id), [file.id]);
+    assert.equal(knowledge.items[0].kind, "file");
+    assert.deepEqual(knowledge.breadcrumbs, []);
+
     const content = await getWorkspaceFileContent({ actor: wendy, id: file.id });
     assert.ok(content);
     assert.equal(new TextDecoder().decode(await content.read()), "solar proposal");

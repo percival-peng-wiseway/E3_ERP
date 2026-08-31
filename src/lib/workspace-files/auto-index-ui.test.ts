@@ -14,17 +14,17 @@ const styles = await readFile(
 test("Files upload UI distinguishes storage success from Agent indexing", () => {
   assert.match(component, /type UploadKnowledgeStatus = "queued" \| "ready" \| "duplicate" \| "not_supported" \| "failed"/);
   assert.match(component, /knowledgeIndex\?: UploadKnowledgeIndex/);
-  assert.match(component, /File saved · Indexing for Agent/);
+  assert.match(component, /File saved · Vectorizing for Agent/);
   assert.match(component, /File saved · Ready for Agent/);
   assert.match(component, /File saved · Same content already available to Agent/);
-  assert.match(component, /File saved · This file type is not indexed for Agent/);
-  assert.match(component, /File saved · Agent indexing failed/);
+  assert.match(component, /File saved · This file type cannot be vectorized for Agent/);
+  assert.match(component, /File saved · Vectorization failed/);
   assert.match(component, /knowledgeIndex: uploadKnowledgeIndex\(body\.data\?\.knowledgeIndex\)/);
 });
 
 test("ordinary employees see queued indexing as handed off instead of an endless spinner", () => {
   assert.match(component, /currentUser\.role === "admin"\s*\? uploadTasks\.filter/);
-  assert.match(component, /File saved · Sent for Agent indexing/);
+  assert.match(component, /File saved · Sent for Agent vectorization/);
   assert.match(component, /task\.knowledgeIndex\?\.status === "queued" && currentUser\.role === "admin" \? styles\.uploadIndexing/);
   assert.match(component, /task\.knowledgeIndex\?\.status === "queued" && currentUser\.role === "admin" \? <LoaderCircle/);
 });
@@ -43,7 +43,16 @@ test("manual knowledge controls supplement rather than duplicate auto indexing",
   assert.match(component, /item\.knowledge \? "Knowledge settings" : "Index for Agent"/);
   assert.doesNotMatch(component, /"Add to knowledge base"/);
   assert.match(component, /item\.knowledge\.status === "ready" \|\| item\.knowledge\.status === "failed"/);
-  assert.match(component, /item\.knowledge\.status === "failed" \? "Retry indexing" : "Reindex"/);
+  assert.match(component, /item\.knowledge\.status === "failed" \? "Retry vectorization" : "Vectorize again"/);
   assert.match(component, /Saved only/);
-  assert.match(component, /Not indexed for Agent/);
+  assert.match(component, /Not vectorized for Agent/);
+});
+
+test("Knowledge Resource exposes Vectorize details and source preview", () => {
+  assert.match(component, />Knowledge resource</);
+  assert.match(component, /selectedKnowledgeItem\.knowledge\.vectorProvider/);
+  assert.match(component, /selectedKnowledgeItem\.knowledge\.vectorDimensions/);
+  assert.match(component, /selectedKnowledgeItem\.knowledge\.activeChunks/);
+  assert.match(component, />Open preview</);
+  assert.match(styles, /\.knowledgeInspector/);
 });

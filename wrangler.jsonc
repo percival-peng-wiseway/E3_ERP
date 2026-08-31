@@ -1,7 +1,7 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "e3-erp",
-  "main": ".open-next/worker.js",
+  "main": "worker.ts",
   "compatibility_date": "2026-08-24",
   "compatibility_flags": [
     "nodejs_compat",
@@ -25,11 +25,20 @@
       "id": "b157693bb7ba480d97fd41894e26184a"
     }
   ],
-  "ai_search": [
+  "ai": {
+    "binding": "AI"
+  },
+  "vectorize": [
     {
-      "binding": "KNOWLEDGE_SEARCH",
-      "instance_name": "erp",
-      "remote": true
+      "binding": "KNOWLEDGE_VECTORS",
+      "index_name": "e3-knowledge"
+    }
+  ],
+  "workflows": [
+    {
+      "name": "e3-knowledge-indexer",
+      "binding": "KNOWLEDGE_INDEX_WORKFLOW",
+      "class_name": "KnowledgeIndexWorkflow"
     }
   ],
   "observability": {

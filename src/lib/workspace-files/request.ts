@@ -22,7 +22,7 @@ export type WorkspaceFileUploadContentType = (typeof WORKSPACE_FILE_UPLOAD_TYPES
 export type WorkspaceFilesListQuery = {
   parentId: string | null;
   query?: string;
-  view: "active" | "trash";
+  view: "active" | "knowledge" | "trash";
 };
 
 export type WorkspaceFileItemActionRequest =
@@ -178,10 +178,12 @@ export function parseWorkspaceFilesListQuery(parameters: URLSearchParams): Works
   const suppliedView = parameters.get("view");
   const view = suppliedView === null || suppliedView === "active"
     ? "active"
-    : suppliedView === "trash" ? "trash" : null;
+    : suppliedView === "knowledge" ? "knowledge"
+      : suppliedView === "trash" ? "trash" : null;
   if (!view
     || (query !== undefined && suppliedParentId !== null)
-    || (view === "trash" && (suppliedParentId !== null || query !== undefined))) return null;
+    || (view !== "active" && suppliedParentId !== null)
+    || (view === "trash" && query !== undefined)) return null;
   return { parentId, query, view };
 }
 

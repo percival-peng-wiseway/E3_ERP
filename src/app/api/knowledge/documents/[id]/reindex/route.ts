@@ -74,7 +74,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       })).document;
     }
     const job = await enqueueKnowledgeIndexJob({ documentId: document.id, tenantId: KNOWLEDGE_TENANT_ID, requestedBy: session.user.username, reason: "manual_reindex" });
-    continueKnowledgeIndex(job.id);
+    await continueKnowledgeIndex(job.id);
     return knowledgeJson({ data: { document: knowledgeDocumentView(document) } }, { status: 202 });
   } catch (error) {
     if (error instanceof WorkspaceFilesRequestBodyTooLarge) return knowledgeError(413, "request_too_large", "The reindex request is too large.");

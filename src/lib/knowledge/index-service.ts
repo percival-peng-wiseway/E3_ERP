@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 // @ts-expect-error -- focused Node ESM tests require the explicit extension.
 import { getWorkspaceFileIndexSource } from "../workspace-files/repository.ts";
 // @ts-expect-error -- focused Node ESM tests require the explicit extension.
-import { deleteKnowledgeIndexItems, knowledgeSearchBinding, KnowledgeSearchProviderError, uploadKnowledgeChunks } from "./ai-search.ts";
+import { deleteKnowledgeVectors, knowledgeVectorBinding, KnowledgeVectorProviderError, upsertKnowledgeChunks } from "./vectorize.ts";
 // @ts-expect-error -- focused Node ESM tests require the explicit extension.
 import { chunkParsedKnowledgeDocument } from "./chunker.ts";
 // @ts-expect-error -- focused Node ESM tests require the explicit extension.
@@ -16,14 +16,19 @@ import { KNOWLEDGE_INDEX_EXECUTION_CONFIG } from "./config.ts";
 
 type IndexServiceDependencies = {
   getSource?: typeof getWorkspaceFileIndexSource;
-  getProvider?: typeof knowledgeSearchBinding;
+  getProvider?: typeof knowledgeVectorBinding;
+  /** Stable across Workflow retries so an in-flight lease can be resumed. */
+  workerId?: string;
+  leaseSeconds?: number;
+  deadlineAt?: number;
+  providerTimeoutMs?: number;
 };
 
 function safeFailure(error: unknown) {
   if (error instanceof KnowledgeParseError) {
     return { code: error.code, message: error.message };
   }
-  if (error instanceof KnowledgeSearchProviderError) {
+  if (error instanceof KnowledgeVectorProviderError) {
     return { code: error.code, message: error.message };
   }
   if (error instanceof Error && error.message === "source_changed") {
@@ -56,20 +61,21 @@ export async function processKnowledgeIndexJob(
   jobId: string,
   dependencies: IndexServiceDependencies = {},
 ): Promise<void> {
-  const backgroundDeadlineAt = Date.now()
+  const deadlineAt = dependencies.deadlineAt ?? (Date.now()
     + KNOWLEDGE_INDEX_EXECUTION_CONFIG.backgroundBudgetMs
-    - KNOWLEDGE_INDEX_EXECUTION_CONFIG.backgroundCompletionReserveMs;
-  const workerId = `knowledge-indexer:${randomUUID()}`;
+    - KNOWLEDGE_INDEX_EXECUTION_CONFIG.backgroundCompletionReserveMs);
+  const workerId = dependencies.workerId || `knowledge-indexer:${randomUUID()}`;
   const job = await claimKnowledgeIndexJob({
     jobId,
     tenantId: KNOWLEDGE_TENANT_ID,
     workerId,
-    leaseSeconds: KNOWLEDGE_INDEX_EXECUTION_CONFIG.jobLeaseSeconds,
+    leaseSeconds: dependencies.leaseSeconds
+      ?? KNOWLEDGE_INDEX_EXECUTION_CONFIG.jobLeaseSeconds,
   });
   if (!job) return;
 
   let uploaded: KnowledgeIndexedChunkDraft[] = [];
-  let provider: Awaited<ReturnType<typeof knowledgeSearchBinding>> | null = null;
+  let provider: Awaited<ReturnType<typeof knowledgeVectorBinding>> | null = null;
   try {
     const document = await getKnowledgeDocument(job.documentId, KNOWLEDGE_TENANT_ID);
     if (!document || document.status === "disabled") throw new Error("stale_generation");
@@ -95,16 +101,17 @@ export async function processKnowledgeIndexJob(
     if (chunks.length > KNOWLEDGE_INDEX_EXECUTION_CONFIG.maximumChunksPerDocument) {
       throw new KnowledgeParseError(
         "document_too_large",
-        `The document produces more than ${KNOWLEDGE_INDEX_EXECUTION_CONFIG.maximumChunksPerDocument} chunks and requires the Queue/Workflow indexer.`,
+        `The document produces more than ${KNOWLEDGE_INDEX_EXECUTION_CONFIG.maximumChunksPerDocument} chunks.`,
       );
     }
 
-    provider = await (dependencies.getProvider || knowledgeSearchBinding)();
-    uploaded = await uploadKnowledgeChunks({
+    provider = await (dependencies.getProvider || knowledgeVectorBinding)();
+    uploaded = await upsertKnowledgeChunks({
       provider,
       document,
       chunks,
-      deadlineAt: backgroundDeadlineAt,
+      deadlineAt,
+      providerTimeoutMs: dependencies.providerTimeoutMs,
     });
 
     const latest = await getKnowledgeDocument(document.id, KNOWLEDGE_TENANT_ID);
@@ -115,10 +122,10 @@ export async function processKnowledgeIndexJob(
       jobId: job.id,
       workerId,
     });
-    await deleteKnowledgeIndexItems(provider, replacement.retiredChunks.map((chunk) => chunk.indexItemId));
+    await deleteKnowledgeVectors(provider, replacement.retiredChunks.map((chunk) => chunk.indexItemId));
   } catch (error) {
     if (provider && uploaded.length) {
-      await deleteKnowledgeIndexItems(provider, uploaded.map((chunk) => chunk.indexItemId));
+      await deleteKnowledgeVectors(provider, uploaded.map((chunk) => chunk.indexItemId));
     }
     const failure = safeFailure(error);
     await markCurrentGenerationFailed(job.documentId, job.indexGeneration, failure.code, failure.message);

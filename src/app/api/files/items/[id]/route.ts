@@ -143,7 +143,7 @@ export async function PATCH(
             requestedBy: session.user.username,
             reason: "file_restored",
           });
-          continueKnowledgeIndex(job.id);
+          await continueKnowledgeIndex(job.id);
         }
       }));
     }
@@ -196,7 +196,7 @@ export async function PATCH(
             requestedBy: session.user.username,
             reason: "file_metadata_updated",
           });
-          continueKnowledgeIndex(job.id);
+          await continueKnowledgeIndex(job.id);
         }
       }));
     }

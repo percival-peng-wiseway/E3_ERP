@@ -17,10 +17,10 @@ POST /api/agent/chat
   -> thin DeepSeek Chat Completions loop
   -> four strict, read-only tools
   -> same-Worker knowledge retrieval plus bounded ERP service adapters
-  -> existing Files/D1/AI Search and upstream business services
+  -> existing Files/D1/Workers AI/Vectorize and upstream business services
 ```
 
-The model never opens D1 or another database, cannot execute SQL, and has no write tool. Inventory delegates to the existing `ERPProvider`. Knowledge uses the same-Worker `searchKnowledgeBase` service, which maps Cloudflare AI Search candidates back to authorised D1 chunks and protected Files metadata before any excerpt enters model context. Project snapshot and order finance retain authenticated HTTP adapters. Every result is field-allow-listed and failures remain fail-closed.
+The model never opens D1 or another database, cannot execute SQL, and has no write tool. Inventory delegates to the existing `ERPProvider`. Knowledge uses the same-Worker `searchKnowledgeBase` service, which maps Vectorize candidates back to authorised D1 chunks and protected Files metadata before any excerpt enters model context. Project snapshot and order finance retain authenticated HTTP adapters. Every result is field-allow-listed and failures remain fail-closed.
 
 ## DeepSeek transport and compatibility spike
 
@@ -116,7 +116,7 @@ The response never includes chain of thought. Logs contain an opaque principal h
 
 ## Data sources
 
-Inventory is already available through `ERPProvider`. Knowledge is implemented inside this Worker and requires the private `KNOWLEDGE_SEARCH` binding plus D1 migration `0005_knowledge_base.sql`; it does not require a public URL or bearer-token self-call. `ERP_KNOWLEDGE_API_URL` remains only as a legacy/injected adapter fallback for isolated provider tests. The remaining optional external vertical slices are:
+Inventory is already available through `ERPProvider`. Knowledge is implemented inside this Worker and requires the private `AI` and `KNOWLEDGE_VECTORS` bindings plus D1 migration `0005_knowledge_base.sql`; it does not require a public URL or bearer-token self-call. `ERP_KNOWLEDGE_API_URL` remains only as a legacy/injected adapter fallback for isolated provider tests. The remaining optional external vertical slices are:
 
 | Setting | Required endpoint and fields |
 | --- | --- |
@@ -141,7 +141,7 @@ Known limitations:
 - the current Inventory service does not expose `incoming`, so it is returned as unknown (`null`), never inferred;
 - live DeepSeek compatibility remains a deployment gate because no API key was available here;
 - project and order external snapshot APIs remain optional/unimplemented in this repository; knowledge retrieval is local to the Worker;
-- the controlled background indexer accepts at most 24 application chunks per document, uploads four at a time, and requires Administrator Reindex after a terminal provider failure; larger manuals require the documented Queue/Workflow follow-up.
+- the durable Cloudflare Workflow indexer accepts at most 256 application chunks per document, embeds eight at a time, and requires Administrator **Vectorize again** after a terminal provider failure; larger manuals must be split before indexing.
 
 ## Verification
 

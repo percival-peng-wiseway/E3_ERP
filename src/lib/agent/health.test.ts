@@ -33,7 +33,7 @@ test("agent health fails closed without returning a source exception", async () 
 test("agent health distinguishes an empty knowledge base from unavailable bindings", async () => {
   const empty = await runAgentHealthChecks([{
     id: "knowledge_base",
-    source: "Cloudflare AI Search / Files",
+    source: "Workers AI / Vectorize / Files",
     check: async () => ({ readyDocuments: 0, activeChunks: 0 }),
     assess: assessKnowledgeReadiness,
   }]);
@@ -42,7 +42,7 @@ test("agent health distinguishes an empty knowledge base from unavailable bindin
     sources: {
       knowledge_base: {
         status: "empty",
-        source: "Cloudflare AI Search / Files",
+        source: "Workers AI / Vectorize / Files",
         details: { readyDocuments: 0, activeChunks: 0 },
       },
     },
@@ -50,14 +50,14 @@ test("agent health distinguishes an empty knowledge base from unavailable bindin
 
   const unavailable = await runAgentHealthChecks([{
     id: "knowledge_base",
-    source: "Cloudflare AI Search / Files",
+    source: "Workers AI / Vectorize / Files",
     check: async () => { throw new Error("binding missing"); },
     assess: assessKnowledgeReadiness,
   }]);
   assert.equal(unavailable.healthy, false);
   assert.deepEqual(unavailable.sources.knowledge_base, {
     status: "unavailable",
-    source: "Cloudflare AI Search / Files",
+    source: "Workers AI / Vectorize / Files",
   });
 });
 
@@ -69,7 +69,7 @@ test("knowledge readiness reports searchable counts and rejects invalid health d
 
   const invalid = await runAgentHealthChecks([{
     id: "knowledge_base",
-    source: "Cloudflare AI Search / Files",
+    source: "Workers AI / Vectorize / Files",
     check: async () => ({ readyDocuments: 1, activeChunks: -1 }),
     assess: assessKnowledgeReadiness,
   }]);

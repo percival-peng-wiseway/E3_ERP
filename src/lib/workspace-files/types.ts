@@ -3,7 +3,7 @@ import type { ErpRole } from "@/lib/auth/types";
 export const WORKSPACE_FILE_KINDS = ["file", "folder"] as const;
 export type WorkspaceFileKind = (typeof WORKSPACE_FILE_KINDS)[number];
 
-export const WORKSPACE_FILES_VIEWS = ["active", "trash"] as const;
+export const WORKSPACE_FILES_VIEWS = ["active", "knowledge", "trash"] as const;
 export type WorkspaceFilesView = (typeof WORKSPACE_FILES_VIEWS)[number];
 
 export type WorkspaceFileActor = {
@@ -53,6 +53,12 @@ export type WorkspaceKnowledgeSummary = {
   effectiveFrom: string | null;
   effectiveTo: string | null;
   status: WorkspaceKnowledgeStatus;
+  vectorProvider: "Cloudflare Vectorize";
+  embeddingModel: "@cf/qwen/qwen3-embedding-0.6b";
+  vectorDimensions: 1024;
+  vectorMetric: "cosine";
+  activeChunks: number;
+  indexGeneration: number;
   lastIndexedAt: string | null;
   updatedAt: string;
   errorMessage: string | null;

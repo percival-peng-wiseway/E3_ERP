@@ -77,24 +77,23 @@ export async function GET(request: Request) {
     check: checkFunctions[skill.id],
   })), {
     id: "knowledge_base",
-    source: "Cloudflare AI Search / Files",
+    source: "Workers AI / Vectorize / Files",
     check: async () => {
       const bindings = await erpCloudflareBindings();
-      if (!bindings?.database || !bindings.files || !bindings.knowledgeSearch) {
-        throw new Error("Knowledge search bindings are unavailable.");
+      if (!bindings?.database || !bindings.files || !bindings.workersAi || !bindings.knowledgeVectors
+        || !bindings.knowledgeIndexWorkflow) {
+        throw new Error("Knowledge vector bindings are unavailable.");
       }
       const readiness = await getKnowledgeReadinessSnapshot(KNOWLEDGE_TENANT_ID);
-      const providerItems = await bindings.knowledgeSearch.items.list({
-        page: 1,
-        per_page: 1,
-        ...(readiness.sampleIndexItemKey ? { key: readiness.sampleIndexItemKey } : {}),
-      });
-      if (!providerItems || !Array.isArray(providerItems.result)
-        || (readiness.sampleIndexItemKey
-          && !providerItems.result.some((item) => (
-            item.key === readiness.sampleIndexItemKey && item.status === "completed"
-          )))) {
-        throw new Error("Knowledge search metadata is unavailable or out of sync.");
+      const index = await bindings.knowledgeVectors.describe();
+      if (!index || index.dimensions !== 1_024 || !Number.isSafeInteger(index.vectorCount)) {
+        throw new Error("Knowledge vector index metadata is unavailable.");
+      }
+      if (readiness.sampleIndexItemKey) {
+        const sample = await bindings.knowledgeVectors.getByIds([readiness.sampleIndexItemKey]);
+        if (!sample.some((vector) => vector.id === readiness.sampleIndexItemKey)) {
+          throw new Error("Knowledge vectors are out of sync with active ERP chunks.");
+        }
       }
       return {
         readyDocuments: readiness.readyDocuments,

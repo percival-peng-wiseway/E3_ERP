@@ -88,7 +88,7 @@ export type KnowledgeChunkDraft = {
 };
 
 export type KnowledgeIndexedChunkDraft = KnowledgeChunkDraft & {
-  /** Provider item id returned by AI Search Items upload; required before atomic activation. */
+  /** Vector ID confirmed visible in Vectorize before atomic activation. */
   indexItemId: string;
 };
 

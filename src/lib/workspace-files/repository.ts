@@ -727,7 +727,7 @@ export async function listWorkspaceFiles(input: {
   const actor = assertActor(input.actor);
   const { items } = await readStore();
   const view = input.view ?? "active";
-  if (view !== "active" && view !== "trash") {
+  if (view !== "active" && view !== "knowledge" && view !== "trash") {
     throw new WorkspaceFilesRepositoryError("The Files view is invalid.", 400, "invalid_view");
   }
   const query = typeof input.query === "string" ? input.query.normalize("NFKC").trim() : "";
@@ -739,6 +739,9 @@ export async function listWorkspaceFiles(input: {
     if (input.parentId) throw new WorkspaceFilesRepositoryError("Trash does not accept a folder.", 400, "invalid_parent");
     selected = items.filter((item) => item.trashRootId === item.id
       && (actor.role === "admin" || item.ownerUsername === actor.username));
+  } else if (view === "knowledge") {
+    if (input.parentId) throw new WorkspaceFilesRepositoryError("Knowledge resources do not accept a folder.", 400, "invalid_parent");
+    selected = items.filter((item) => item.trashedAt === null && item.kind === "file");
   } else {
     currentFolder = findFolder(items, input.parentId ?? null);
     selected = query

@@ -4,8 +4,6 @@ import type {
   ToolEnvelope,
 } from "../business-agent/contracts.ts";
 // @ts-expect-error -- focused Node ESM tests require the explicit extension.
-import { erpCloudflareBindings, type ErpAiSearch } from "../server/cloudflare-storage.ts";
-// @ts-expect-error -- focused Node ESM tests require the explicit extension.
 import { getWorkspaceFileIndexSource, listWorkspaceFileIndexSources } from "../workspace-files/repository.ts";
 // @ts-expect-error -- focused Node ESM tests require the explicit extension.
 import { canAccessKnowledgeScope, KNOWLEDGE_RETRIEVAL_CONFIG } from "./config.ts";
@@ -15,6 +13,8 @@ import { listKnowledgeChunksByKeys, listKnowledgeDocuments } from "./repository.
 import { knowledgeCandidatesHaveCurrentConflict, normalizeKnowledgeQuery, selectGroundedKnowledgeResults } from "./retrieval-policy.ts";
 // @ts-expect-error -- focused Node ESM tests require the explicit extension.
 import { KNOWLEDGE_TENANT_ID, type KnowledgeAccessScope, type KnowledgeSearchCandidate } from "./types.ts";
+// @ts-expect-error -- focused Node ESM tests require the explicit extension.
+import { knowledgeVectorBinding, type KnowledgeVectorProvider } from "./vectorize.ts";
 
 export type KnowledgeSearchInput = {
   query: string;
@@ -25,7 +25,7 @@ export type KnowledgeSearchInput = {
 };
 
 type SearchDependencies = {
-  provider?: ErpAiSearch;
+  provider?: KnowledgeVectorProvider;
   now?: Date;
   getFileSource?: typeof getWorkspaceFileIndexSource;
   getFileSources?: typeof listWorkspaceFileIndexSources;
@@ -33,7 +33,7 @@ type SearchDependencies = {
 
 function result<T>(input: Partial<ToolEnvelope<T>> & Pick<ToolEnvelope<T>, "ok" | "data" | "error_code">): ToolEnvelope<T> {
   return {
-    source: "cloudflare_ai_search",
+    source: "cloudflare_vectorize",
     source_record_ids: [],
     updated_at: null,
     retryable: false,
@@ -77,8 +77,11 @@ function sameOptionalFilter(actual: string | null, requested: string | undefined
 }
 
 async function providerFromBindings() {
-  const bindings = await erpCloudflareBindings();
-  return bindings?.knowledgeSearch || null;
+  try {
+    return await knowledgeVectorBinding();
+  } catch {
+    return null;
+  }
 }
 
 export async function searchKnowledgeBase(
@@ -109,51 +112,33 @@ export async function searchKnowledgeBase(
   const filters: Record<string, unknown> = {
     access_scope: { $in: scopes },
   };
-  // AI Search only filters the first 64 UTF-8 bytes of strings. Longer values
-  // are deliberately filtered after retrieval in D1 rather than truncated.
-  if (product !== undefined && new TextEncoder().encode(product).byteLength <= 64) filters.product = { $eq: product };
-  if (region !== undefined && new TextEncoder().encode(region).byteLength <= 64) filters.region = { $eq: region };
-
-  let searchResponse: Awaited<ReturnType<ErpAiSearch["search"]>>;
+  let vectorMatches: Awaited<ReturnType<KnowledgeVectorProvider["query"]>>;
   try {
-    searchResponse = await provider.search({
-      query,
-      ai_search_options: {
-        retrieval: {
-          retrieval_type: "hybrid",
-          fusion_method: "rrf",
-          keyword_match_mode: "or",
-          match_threshold: 0.35,
-          max_num_results: 40,
-          filters,
-          return_on_failure: false,
-        },
-        reranking: {
-          enabled: true,
-          model: "@cf/baai/bge-reranker-base",
-          match_threshold: 0.35,
-        },
-      },
+    const queryVector = await provider.embedQuery(query);
+    vectorMatches = await provider.query(queryVector, {
+      topK: 40,
+      namespace: KNOWLEDGE_TENANT_ID,
+      filter: filters,
     });
   } catch {
     return result<AgentKnowledgeDocument[]>({ ok: false, data: null, error_code: "unavailable", retryable: true });
   }
 
-  const providerChunks = (searchResponse.chunks || [])
-    .filter((chunk) => chunk && typeof chunk.item?.key === "string" && Number.isFinite(chunk.score))
+  const providerChunks = vectorMatches
+    .filter((match) => typeof match.id === "string" && Number.isFinite(match.score))
     .slice(0, 100);
   if (!providerChunks.length) return result({ ok: true, data: [], error_code: null });
 
   try {
-    const chunks = await listKnowledgeChunksByKeys(providerChunks.map((chunk) => chunk.item.key), {
+    const chunks = await listKnowledgeChunksByKeys(providerChunks.map((chunk) => chunk.id), {
       tenantId: KNOWLEDGE_TENANT_ID,
     });
     const documents = await listKnowledgeDocuments({ tenantId: KNOWLEDGE_TENANT_ID, includeDisabled: true });
     const documentById = new Map(documents.map((document) => [document.id, document]));
     const providerByKey = new Map<string, (typeof providerChunks)[number]>();
     for (const providerChunk of providerChunks) {
-      const current = providerByKey.get(providerChunk.item.key);
-      if (!current || providerChunk.score > current.score) providerByKey.set(providerChunk.item.key, providerChunk);
+      const current = providerByKey.get(providerChunk.id);
+      if (!current || providerChunk.score > current.score) providerByKey.set(providerChunk.id, providerChunk);
     }
     const activeFiles = new Set<string>();
     const candidateDocuments = [...new Set(chunks.map((chunk) => chunk.documentId))]

@@ -19,20 +19,28 @@ export const KNOWLEDGE_RETRIEVAL_CONFIG = Object.freeze({
   maximumChunksPerDocument: 3,
 });
 
+export const KNOWLEDGE_VECTOR_CONFIG = Object.freeze({
+  provider: "Cloudflare Vectorize",
+  embeddingModel: "@cf/qwen/qwen3-embedding-0.6b" as const,
+  dimensions: 1_024,
+  metric: "cosine" as const,
+  namespace: "e3",
+  embeddingBatchSize: 8,
+});
+
 /**
- * Next `after()`/Workers `waitUntil()` has a roughly 30 second post-response
- * budget in this deployment. Up to 24 items are uploaded immediately, four at
- * a time, then the whole generation is checked with one list call per poll in
- * one 18-second provider window. This leaves time for parsing, D1 activation,
- * and cleanup. Documents above 24 chunks still require a Queue/Workflow path.
+ * Local development can still use Next `after()` while production runs the
+ * durable Workflow. Vectorize mutations normally settle within seconds, but
+ * the Workflow retains a wider window for large embedding batches.
  */
 export const KNOWLEDGE_INDEX_EXECUTION_CONFIG = Object.freeze({
   backgroundBudgetMs: 30_000,
   backgroundCompletionReserveMs: 3_000,
-  maximumChunksPerDocument: 24,
-  providerUploadConcurrency: 4,
-  providerBatchPollIntervalMs: 750,
-  providerBatchTimeoutMs: 18_000,
+  workflowProviderTimeoutMs: 2 * 60_000,
+  workflowLeaseSeconds: 15 * 60,
+  maximumChunksPerDocument: 256,
+  vectorMutationPollIntervalMs: 500,
+  vectorMutationTimeoutMs: 20_000,
   jobLeaseSeconds: 45,
 });
 

@@ -10,7 +10,7 @@ DEEPSEEK_API_KEY=replace-with-your-deepseek-api-key
 DEEPSEEK_BASE_URL=https://api.deepseek.com/beta
 DEEPSEEK_MODEL_FAST=deepseek-v4-flash
 DEEPSEEK_MODEL_COMPLEX=deepseek-v4-pro
-# Legacy external adapter only; normal knowledge retrieval uses KNOWLEDGE_SEARCH.
+# Legacy external adapter only; normal retrieval uses Workers AI + Vectorize bindings.
 ERP_KNOWLEDGE_API_URL=
 ERP_PROJECT_API_URL=
 ERP_ORDER_API_URL=
