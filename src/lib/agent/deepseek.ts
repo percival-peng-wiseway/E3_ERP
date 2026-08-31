@@ -230,12 +230,15 @@ async function createCompletion(options: {
   model: string;
   messages: DeepSeekMessage[];
   tools: readonly (typeof AGENT_TOOLS)[number][];
+  forceToolName?: string;
 }) {
   const body = JSON.stringify({
     model: options.model,
     messages: options.messages,
     tools: options.tools,
-    tool_choice: "auto",
+    tool_choice: options.forceToolName
+      ? { type: "function", function: { name: options.forceToolName } }
+      : "auto",
     stream: false,
     ...(options.model.startsWith("deepseek-v4-") ? {
       thinking: { type: "disabled" },
@@ -334,7 +337,14 @@ export async function answerWithOpenAICompatible(options: {
   let productActivityVerified = true;
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
-    const assistant = await createCompletion({ apiKey, baseUrl, model, messages, tools });
+    const assistant = await createCompletion({
+      apiKey,
+      baseUrl,
+      model,
+      messages,
+      tools,
+      ...(round === 0 && tools.length === 1 ? { forceToolName: tools[0].function.name } : {}),
+    });
     messages.push(assistant);
     const calls = assistant.tool_calls || [];
     if (!calls.length) {

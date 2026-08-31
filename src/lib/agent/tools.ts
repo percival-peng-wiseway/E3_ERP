@@ -787,6 +787,33 @@ function safeToolJson(value: unknown): string {
   return JSON.stringify({ error: { code: "result_too_large", message: "Narrow the search and try again." } });
 }
 
+function safeProductActivityJson(value: unknown) {
+  const result = JSON.parse(JSON.stringify(value)) as UnknownRecord;
+  const collections: unknown[][] = [];
+  for (const [sectionName, fieldName] of [
+    ["inventory", "items"],
+    ["quotations", "records"],
+    ["inventoryOrders", "records"],
+    ["projectTrack", "records"],
+  ] as const) {
+    const section = result[sectionName];
+    if (isRecord(section) && Array.isArray(section[fieldName])) collections.push(section[fieldName]);
+  }
+  let output = JSON.stringify(result);
+  while (Buffer.byteLength(output, "utf8") > TOOL_RESULT_LIMIT) {
+    const largest = collections.reduce<unknown[] | null>((candidate, items) => (
+      !candidate || items.length > candidate.length ? items : candidate
+    ), null);
+    if (!largest?.length) break;
+    largest.pop();
+    result.truncated = true;
+    output = JSON.stringify(result);
+  }
+  return Buffer.byteLength(output, "utf8") <= TOOL_RESULT_LIMIT
+    ? output
+    : safeToolJson({ error: { code: "result_too_large", message: "Narrow the product or date range and try again." } });
+}
+
 function safePaymentSearchJson(
   matched: PaymentTrackProject[],
   limit: number,
@@ -1166,7 +1193,7 @@ export async function runAgentTool(provider: ERPProvider, call: ToolCall, auth?:
         provider.listQuotations(),
         listPaymentTrackProjects(),
       ]);
-      return safeToolJson(buildProductActivitySnapshot({
+      return safeProductActivityJson(buildProductActivitySnapshot({
         operations: operationsResult.status === "fulfilled" ? operationsResult.value : null,
         erpInventory: erpInventoryResult.status === "fulfilled" ? erpInventoryResult.value : null,
         quotations: quotationsResult.status === "fulfilled" ? quotationsResult.value : null,
