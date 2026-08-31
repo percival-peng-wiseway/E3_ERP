@@ -137,9 +137,12 @@ async function loadPdfRuntime() {
     Object.defineProperty(globalThis, "DOMMatrix", { configurable: true, value: PdfDomMatrix, writable: true });
   }
   pdfRuntime ??= Promise.all([
-    import("pdfjs-dist/legacy/build/pdf.mjs"),
+    // The minified distributions expose the same runtime API while keeping the
+    // Cloudflare Worker below its compressed script-size limit.
+    // @ts-expect-error -- PDF.js does not ship a declaration for the minified module.
+    import("pdfjs-dist/legacy/build/pdf.min.mjs"),
     // @ts-expect-error -- PDF.js does not ship a declaration for its worker module.
-    import("pdfjs-dist/legacy/build/pdf.worker.mjs"),
+    import("pdfjs-dist/legacy/build/pdf.worker.min.mjs"),
   ]).then(([runtime, worker]) => {
     const target = globalThis as typeof globalThis & { pdfjsWorker?: { WorkerMessageHandler: unknown } };
     target.pdfjsWorker ??= { WorkerMessageHandler: worker.WorkerMessageHandler };

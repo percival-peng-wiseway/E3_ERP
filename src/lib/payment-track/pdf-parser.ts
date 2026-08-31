@@ -108,10 +108,13 @@ async function loadPdfRuntime() {
     });
   }
   pdfRuntime ??= Promise.all([
-    import("pdfjs-dist/legacy/build/pdf.mjs"),
+    // The minified distributions expose the same runtime API while keeping the
+    // Cloudflare Worker below its compressed script-size limit.
+    // @ts-expect-error -- PDF.js does not ship a declaration for the minified module.
+    import("pdfjs-dist/legacy/build/pdf.min.mjs"),
     // PDF.js does not publish declarations for its worker bundle.
-    // @ts-expect-error -- pdf.worker.mjs has no accompanying declaration file.
-    import("pdfjs-dist/legacy/build/pdf.worker.mjs"),
+    // @ts-expect-error -- pdf.worker.min.mjs has no accompanying declaration file.
+    import("pdfjs-dist/legacy/build/pdf.worker.min.mjs"),
   ]).then(([runtime, worker]) => {
     // Next/Turbopack relocates the server bundle, so PDF.js cannot resolve its
     // relative worker automatically. Register the bundled fake-worker handler.
