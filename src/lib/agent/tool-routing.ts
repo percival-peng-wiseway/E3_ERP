@@ -4,6 +4,7 @@ import { inventorySkuCandidates, isBareInventorySkuLookup, isInventoryStockInten
 export type FocusedAgentToolName =
   | "search_inventory"
   | "search_inventory_usage"
+  | "search_product_activity"
   | "search_knowledge_base"
   | "search_quotations"
   | "search_delivery_orders"
@@ -47,6 +48,8 @@ export function focusedAgentToolNames(message: string): FocusedAgentToolName[] |
     }
     return usageTools;
   }
+  const productActivity = /\b(?:sold|sell|sales\s+(?:volume|quantity|count)|units?\s+sold|product\s+activity)\b|卖了|销售(?:量|数量)?|销量|售出|出货量/iu.test(intent);
+  if (productActivity) return ["search_product_activity"];
   if (isInventoryStockIntent(intent) && hasInventoryIdentifier(intent)) return ["search_inventory"];
   const legacyProjectManagement = /\bproject\s+management\b|\bdeliveries?\s+(?:pending|waiting)\s+(?:for\s+)?pm\s+review\b|\bpending\s+pm\s+deliveries?\b|待\s*pm\s*审核.{0,8}送货/u.test(intent);
   const datedSchedule = /\b(?:weekly\s+schedule|today|tomorrow|this\s+week|next\s+week|last\s+week|schedul(?:e|ed|ing)|unscheduled|overdue)\b|周排程|周计划|今天|明天|本周|下周|上周|排期|逾期/u.test(intent);

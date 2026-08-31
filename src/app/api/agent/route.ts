@@ -1,4 +1,4 @@
-import { answerWithOpenAICompatible, knowledgeAbstention } from "@/lib/agent/deepseek";
+import { answerWithOpenAICompatible, informationNotFound } from "@/lib/agent/deepseek";
 import { shouldUseKnowledgeConversationIntent } from "@/lib/agent/tool-routing";
 import { resolveInventoryUsageMessage } from "@/lib/agent/inventory-usage";
 import {
@@ -13,7 +13,6 @@ import {
   preferredAgentModelSettings,
   type ResolvedAgentSettings,
 } from "@/lib/agent/settings";
-import { localWorkspaceAnswer } from "@/lib/agent/tools";
 import { AgentTrace } from "@/lib/agent/trace";
 import { deterministicWorkflowDependencies } from "@/lib/agent/workflow-dependencies";
 import { runDeterministicWorkflow } from "@/lib/agent/workflows";
@@ -157,20 +156,12 @@ async function processAgentRequest(request: Request) {
   } catch (primaryError) {
     // Errors can originate from a live deterministic source or from the model.
     // Their messages may contain upstream response bodies, so log only the class.
-    console.error("Agent primary answer path unavailable; using local fallback", safeErrorKind(primaryError));
+    console.error("Agent primary answer path unavailable; no fallback answer generated", safeErrorKind(primaryError));
     warnings.push(modelStatus === "unavailable"
-      ? "Model unavailable. Local read-only mode is active."
-      : "Live workspace query unavailable. Local read-only mode is active.");
-    trace.markOutcome("fallback");
-    try {
-      data = knowledgeRequest
-        ? knowledgeAbstention(input.message)
-        : await trace.step("local.fallback", "fallback", () => localWorkspaceAnswer(provider, workspaceMessage));
-    } catch (fallbackError) {
-      trace.markOutcome("error");
-      trace.emit();
-      throw fallbackError;
-    }
+      ? "The model request failed. No fallback answer was generated."
+      : "The required live workspace data could not be verified. No fallback answer was generated.");
+    trace.markOutcome("error");
+    data = informationNotFound(input.message);
   }
 
   const traceSnapshot = trace.snapshot();

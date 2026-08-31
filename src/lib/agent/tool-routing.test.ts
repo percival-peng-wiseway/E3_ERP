@@ -15,6 +15,17 @@ test("tool routing narrows explicit quotation, payment and inventory requests", 
   assert.deepEqual(focusedAgentToolNames("Look up stock SKU BAT-ONE"), ["search_inventory"]);
 });
 
+test("product sales questions route to the cross-source activity tool", () => {
+  for (const message of [
+    "这个月总共卖了多少电池？",
+    "本月电池销量是多少？",
+    "How many batteries were sold this month?",
+    "Show August KH10 units sold",
+  ]) {
+    assert.deepEqual(focusedAgentToolNames(message), ["search_product_activity"], message);
+  }
+});
+
 test("SKU usage questions route to lineage instead of the stock balance tool", () => {
   for (const message of [
     "哪些订单用KH10？",

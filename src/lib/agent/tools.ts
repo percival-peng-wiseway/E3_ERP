@@ -43,6 +43,7 @@ import {
   formatRebateReceiptAmountAnswer,
   isRebateReceiptAmountIntent,
 } from "./rebate-receipts";
+import { buildProductActivitySnapshot } from "./product-activity";
 import {
   aggregateWeeklySchedule,
   normalizedWeeklyScheduleArgs,
@@ -141,6 +142,26 @@ export const DEEPSEEK_TOOLS = [
           limit: { type: "integer", minimum: 1, maximum: 20 },
         },
         required: ["sku", "include_customer_names", "include_assignees", "include_cancelled", "limit"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "search_product_activity",
+      description: "Analyse one product, category, model or SKU across current Inventory stock, Quotations, Inventory orders and Project Track for an inclusive date range. Use for sold/sales/销量 questions and cross-system product verification. The result keeps accepted quotations, created orders, delivered orders, delivered projects and installed projects separate because they can represent the same job and must not be added together. If complete is false or found is false, no verified answer is available.",
+      strict: true,
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Product/category/model/SKU only, such as battery, 电池 or KH10; do not include date or sales wording." },
+          from: { type: "string", description: "Inclusive start date in YYYY-MM-DD format." },
+          to: { type: "string", description: "Inclusive end date in YYYY-MM-DD format; the range must not exceed 366 days." },
+          include_customer_names: { type: "boolean", description: "Set true only when the user explicitly asks for customer names." },
+          limit: { type: "integer", minimum: 1, maximum: 20 },
+        },
+        required: ["query", "from", "to", "include_customer_names", "limit"],
         additionalProperties: false,
       },
     },
@@ -743,6 +764,23 @@ function validProjectScheduleArgs(args: UnknownRecord) {
   return Number.isFinite(rangeDays) && rangeDays <= 366;
 }
 
+function normalizedProductActivityArgs(args: UnknownRecord) {
+  if (!exactKeys(args, ["query", "from", "to", "include_customer_names", "limit"])
+    || typeof args.query !== "string" || !args.query.trim() || args.query.length > 100
+    || !exactDate(args.from) || !exactDate(args.to) || args.from > args.to
+    || typeof args.include_customer_names !== "boolean"
+    || !Number.isInteger(args.limit) || (args.limit as number) < 1 || (args.limit as number) > 20) return null;
+  const rangeDays = (Date.parse(`${args.to}T00:00:00Z`) - Date.parse(`${args.from}T00:00:00Z`)) / DAY_MS;
+  if (!Number.isFinite(rangeDays) || rangeDays > 366) return null;
+  return {
+    query: args.query.trim(),
+    from: args.from,
+    to: args.to,
+    includeCustomerNames: args.include_customer_names,
+    limit: args.limit as number,
+  };
+}
+
 function safeToolJson(value: unknown): string {
   const output = JSON.stringify(value);
   if (Buffer.byteLength(output, "utf8") <= TOOL_RESULT_LIMIT) return output;
@@ -1117,6 +1155,23 @@ export async function runAgentTool(provider: ERPProvider, call: ToolCall, auth?:
         limit: args.limit as number,
       });
       return safeToolJson(usage);
+    }
+
+    if (call.name === "search_product_activity") {
+      const productArgs = normalizedProductActivityArgs(args);
+      if (!productArgs) return safeToolJson({ error: { code: "invalid_arguments", message: "Invalid product activity arguments." } });
+      const [operationsResult, erpInventoryResult, quotationsResult, projectsResult] = await Promise.allSettled([
+        inventoryOperationsState(),
+        provider.listInventory(),
+        provider.listQuotations(),
+        listPaymentTrackProjects(),
+      ]);
+      return safeToolJson(buildProductActivitySnapshot({
+        operations: operationsResult.status === "fulfilled" ? operationsResult.value : null,
+        erpInventory: erpInventoryResult.status === "fulfilled" ? erpInventoryResult.value : null,
+        quotations: quotationsResult.status === "fulfilled" ? quotationsResult.value : null,
+        projects: projectsResult.status === "fulfilled" ? projectsResult.value : null,
+      }, productArgs));
     }
 
     if (call.name === "search_quotations") {

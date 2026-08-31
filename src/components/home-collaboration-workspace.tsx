@@ -896,10 +896,12 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
     setAgentLoading(false);
   };
 
-  const agentUsingLocalMode = agentConfigured === false || agentModelStatus === "unavailable";
-  const agentStatusLabel = agentUsingLocalMode
-    ? "Local mode"
-    : agentModelStatus === "available"
+  const agentModelUnavailable = agentConfigured === false || agentModelStatus === "unavailable";
+  const agentStatusLabel = agentConfigured === false
+    ? "Model not configured"
+    : agentModelStatus === "unavailable"
+      ? "Model unavailable"
+      : agentModelStatus === "available"
       ? "Model ready"
       : agentConfigured === true
         ? "Model configured"
@@ -1134,7 +1136,7 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
               <h2>E3 Agent</h2>
             </div>
             <span
-              className={`${styles.statusBadge} ${agentUsingLocalMode ? styles.localBadge : ""}`}
+              className={`${styles.statusBadge} ${agentModelUnavailable ? styles.localBadge : ""}`}
               title="Language model status only"
             >
               <i />{agentStatusLabel}
