@@ -13,7 +13,8 @@
     "test": "node --experimental-strip-types --test 'src/lib/**/*.test.ts'",
     "eval:agent": "node scripts/run-agent-evals.mjs",
     "eval:business-agent": "node scripts/run-business-agent-evals.mjs",
-    "spike:deepseek": "node scripts/deepseek-compatibility-spike.mjs",
+    "eval:langfuse": "node --env-file-if-exists=.env scripts/run-langfuse-agent-evals.mjs",
+    "spike:kimi": "node scripts/kimi-compatibility-spike.mjs",
     "cf:build": "opennextjs-cloudflare build",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "cf:migrate": "wrangler d1 migrations apply e3-erp-prod --remote",
@@ -28,7 +29,11 @@
     "mcp:build": "npm --prefix mcp-server run build"
   },
   "dependencies": {
+    "@langfuse/client": "^5.11.0",
+    "@langfuse/otel": "^5.11.0",
+    "@langfuse/tracing": "^5.11.0",
     "@opennextjs/cloudflare": "^1.20.2",
+    "@opentelemetry/sdk-node": "^0.221.0",
     "lucide-react": "^0.468.0",
     "mammoth": "^1.12.1",
     "next": "^16.3.1",

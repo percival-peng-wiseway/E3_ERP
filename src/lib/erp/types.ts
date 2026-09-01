@@ -115,7 +115,7 @@ export interface AgentCitation {
 
 export interface AgentAnswer {
   answer: string;
-  mode: "local" | "openai" | "deepseek";
+  mode: "local" | "openai" | "kimi";
   suggestions: string[];
   citations?: AgentCitation[];
 }

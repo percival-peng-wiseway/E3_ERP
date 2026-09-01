@@ -1,24 +1,38 @@
-import { answerWithOpenAICompatible, informationNotFound } from "@/lib/agent/deepseek";
-import { shouldUseKnowledgeConversationIntent } from "@/lib/agent/tool-routing";
-import { resolveInventoryUsageMessage } from "@/lib/agent/inventory-usage";
+import { answerWithKimi, informationNotFound } from "@/lib/erp_agent/agent/kimi";
+import { shouldUseKnowledgeConversationIntent } from "@/lib/erp_agent/agent/tool-routing";
+import { resolveInventoryUsageMessage } from "@/lib/erp_agent/agent/inventory-usage";
 import {
   AgentRequestBodyTooLarge,
   readLimitedAgentJson,
   requestHasJsonContentType,
-} from "@/lib/agent/request";
+} from "@/lib/erp_agent/agent/request";
 import {
-  resolveAgentSettings,
-  resolveDeepSeekSettings,
-  resolveEnvironmentAgentSettings,
-  preferredAgentModelSettings,
-  type ResolvedAgentSettings,
-} from "@/lib/agent/settings";
-import { AgentTrace } from "@/lib/agent/trace";
-import { deterministicWorkflowDependencies } from "@/lib/agent/workflow-dependencies";
-import { runDeterministicWorkflow } from "@/lib/agent/workflows";
+  resolveKimiSettings,
+  resolveEnvironmentKimiSettings,
+  type ResolvedKimiSettings,
+} from "@/lib/erp_agent/agent/settings";
+import { AgentTrace } from "@/lib/erp_agent/agent/trace";
+import { deterministicWorkflowDependencies } from "@/lib/erp_agent/agent/workflow-dependencies";
+import { runDeterministicWorkflow } from "@/lib/erp_agent/agent/workflows";
 import { getERPProvider, type AgentHistoryMessage } from "@/lib/erp";
-import { agentAuthContext } from "@/lib/business-agent/auth";
+import { agentAuthContext } from "@/lib/erp_agent/business-agent/auth";
+import { getErpSession } from "@/lib/auth/session";
+import {
+  AgentAttachmentError,
+  cleanAgentAttachmentIds,
+  isKimiImageContentType,
+  resolveAgentAttachments,
+  resolveKimiImageParts,
+} from "@/lib/erp_agent/agent/attachments";
+import {
+  hashedSessionId,
+  observe,
+  scheduleLangfuseFlush,
+  summarizeText,
+  traceAgentRequest,
+} from "@/lib/erp_agent/langfuse";
 import { isAuthorizedMutationRequest } from "@/lib/server/proxy-security";
+import { after } from "next/server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -54,20 +68,31 @@ function cleanHistory(value: unknown): AgentHistoryMessage[] | null {
   return history.slice(-12);
 }
 
-function cleanRequest(value: unknown): { message: string; section?: string; history: AgentHistoryMessage[] } | null {
+function cleanRequest(value: unknown): {
+  message: string;
+  section?: string;
+  history: AgentHistoryMessage[];
+  conversation_id?: string;
+  attachment_ids: string[];
+} | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const body = value as Record<string, unknown>;
-  const allowed = new Set(["message", "section", "history"]);
+  const allowed = new Set(["message", "section", "history", "conversation_id", "attachments"]);
   if (Object.keys(body).some((key) => !allowed.has(key)) || typeof body.message !== "string") return null;
   const message = body.message.trim();
   if (!message || message.length > 2_000) return null;
   if (body.section !== undefined && (typeof body.section !== "string" || body.section.length > 80)) return null;
+  if (body.conversation_id !== undefined && (typeof body.conversation_id !== "string"
+    || !/^[a-zA-Z0-9_-]{1,128}$/.test(body.conversation_id))) return null;
   const history = cleanHistory(body.history);
-  if (!history) return null;
+  const attachmentIds = cleanAgentAttachmentIds(body.attachments);
+  if (!history || !attachmentIds) return null;
   return {
     message,
     ...(typeof body.section === "string" && body.section.trim() ? { section: body.section.trim() } : {}),
+    ...(typeof body.conversation_id === "string" ? { conversation_id: body.conversation_id } : {}),
     history,
+    attachment_ids: attachmentIds,
   };
 }
 
@@ -76,7 +101,8 @@ async function processAgentRequest(request: Request) {
     return error(403, "forbidden", "Agent requests must come from the same-origin application.");
   }
   const auth = agentAuthContext(request);
-  if (!auth) {
+  const session = getErpSession(request);
+  if (!auth || !session) {
     return error(401, "authentication_required", "Sign in to use E3 Agent.");
   }
   if (!requestHasJsonContentType(request)) {
@@ -99,22 +125,100 @@ async function processAgentRequest(request: Request) {
     return error(400, "invalid_request", "Enter a question of up to 2,000 characters with valid conversation history.");
   }
 
+  let attachments;
+  try {
+    attachments = await resolveAgentAttachments({ fileIds: input.attachment_ids, actor: session.user });
+  } catch (attachmentError) {
+    if (attachmentError instanceof AgentAttachmentError) {
+      return error(attachmentError.status, attachmentError.code, attachmentError.message);
+    }
+    return error(503, "attachment_unavailable", "The attached files are temporarily unavailable.");
+  }
+  const pendingAttachment = attachments.find((attachment) => attachment.status === "processing");
+  if (pendingAttachment) {
+    return error(409, "attachment_processing", `“${pendingAttachment.name}” is still being prepared for Agent search.`);
+  }
+  const failedAttachment = attachments.find((attachment) => attachment.status === "failed");
+  if (failedAttachment) {
+    return error(409, "attachment_failed", `“${failedAttachment.name}” could not be prepared for Agent search.`);
+  }
+  const attachmentDocuments = attachments.flatMap((attachment) => attachment.knowledgeDocumentId
+    ? [{ documentId: attachment.knowledgeDocumentId, name: attachment.name }]
+    : []);
+  let imageParts;
+  try {
+    imageParts = await resolveKimiImageParts({ attachments, actor: session.user });
+  } catch (attachmentError) {
+    if (attachmentError instanceof AgentAttachmentError) {
+      return error(attachmentError.status, attachmentError.code, attachmentError.message);
+    }
+    return error(503, "attachment_unavailable", "The attached images are temporarily unavailable.");
+  }
+
+  return traceAgentRequest({
+    name: "answer-erp-query",
+    userId: auth.principalHash,
+    ...(input.conversation_id ? {
+      sessionId: hashedSessionId(input.conversation_id, `${auth.tenantId}\0${auth.principalHash}`),
+    } : {}),
+    tags: ["erp-agent", "home-agent"],
+    traceMetadata: {
+      tenant: auth.tenantId,
+      role: auth.role,
+      endpoint: "/api/agent",
+    },
+    input: summarizeText(input.message),
+    metadata: {
+      historyMessages: input.history.length,
+      sectionPresent: Boolean(input.section),
+      attachmentCount: attachments.length,
+      searchableAttachmentCount: attachmentDocuments.length,
+      unsupportedAttachmentCount: attachments.filter((attachment) => attachment.status === "unsupported").length,
+      imageAttachmentCount: imageParts.length,
+    },
+  }, async (rootObservation) => {
+  scheduleLangfuseFlush(after);
   const provider = getERPProvider(request);
   const workspaceMessage = resolveInventoryUsageMessage(input.message, input.history);
-  const knowledgeRequest = shouldUseKnowledgeConversationIntent(
-    workspaceMessage,
-    input.history.slice(-2).map((item) => item.content),
-  );
+  const modelRequest = await observe({
+    name: "route-erp-query",
+    asType: "chain",
+    metadata: {
+      historyMessages: input.history.length,
+      workspaceMessageAdjusted: workspaceMessage !== input.message,
+      attachmentCount: attachments.length,
+      searchableAttachmentCount: attachmentDocuments.length,
+      imageAttachmentCount: imageParts.length,
+    },
+  }, async (observation) => {
+    const requiresKnowledge = attachmentDocuments.length > 0 || shouldUseKnowledgeConversationIntent(
+      workspaceMessage,
+      input.history.slice(-2).map((item) => item.content),
+      {
+        hasImages: imageParts.length > 0,
+        hasAttachedKnowledgeDocuments: attachmentDocuments.length > 0,
+      },
+    );
+    const requiresModel = imageParts.length > 0 || requiresKnowledge;
+    const route = imageParts.length > 0
+      ? "multimodal-model"
+      : requiresKnowledge ? "knowledge-model" : "deterministic-first";
+    observation.update({
+      output: { route },
+      metadata: { route, requiresKnowledge, requiresModel },
+      statusMessage: route,
+    });
+    return requiresModel;
+  });
   const trace = new AgentTrace();
   const warnings: string[] = [];
+  if (attachments.some((attachment) => attachment.status === "unsupported" && !isKimiImageContentType(attachment.contentType))) {
+    warnings.push("The attachment was uploaded, but this Agent cannot analyse that file type yet.");
+  }
   let modelStatus: "available" | "unavailable" | "not_checked" = "not_checked";
-  let settings: ResolvedAgentSettings;
+  let settings: ResolvedKimiSettings;
   try {
-    const [legacySettings, deepSeekSettings] = await Promise.all([
-      resolveAgentSettings(),
-      resolveDeepSeekSettings(),
-    ]);
-    settings = preferredAgentModelSettings(legacySettings, deepSeekSettings);
+    settings = await resolveKimiSettings();
   } catch (settingsError) {
     // Do not log the exception message: a corrupt JSON document or upstream
     // error can contain saved credentials or response content.
@@ -122,50 +226,80 @@ async function processAgentRequest(request: Request) {
       "Saved Agent settings unavailable; using environment/default configuration",
       safeErrorKind(settingsError),
     );
-    settings = resolveEnvironmentAgentSettings();
+    settings = resolveEnvironmentKimiSettings();
     warnings.push(
       "Saved Agent settings are temporarily unavailable. The environment or default model configuration is being used.",
     );
   }
   let data;
-  try {
-    const workflowAnswer = knowledgeRequest ? null : await trace.step(
-      "harness.route",
-      "workflow",
-      () => runDeterministicWorkflow(provider, workspaceMessage, trace, deterministicWorkflowDependencies),
-    );
-    if (workflowAnswer) {
-      data = workflowAnswer;
-    } else {
-      modelStatus = "unavailable";
-      data = await trace.step("model.openai_compatible", "model", async () => {
-        const answer = await answerWithOpenAICompatible({
-          provider,
-          auth,
-          message: input.message,
-          history: input.history,
-          section: input.section,
-          apiKey: settings.apiKey,
-          baseUrl: settings.baseUrl,
-          model: settings.model,
-        });
-        modelStatus = "available";
-        return answer;
-      });
-    }
-  } catch (primaryError) {
-    // Errors can originate from a live deterministic source or from the model.
-    // Their messages may contain upstream response bodies, so log only the class.
-    console.error("Agent primary answer path unavailable; no fallback answer generated", safeErrorKind(primaryError));
-    warnings.push(modelStatus === "unavailable"
-      ? "The model request failed. No fallback answer was generated."
-      : "The required live workspace data could not be verified. No fallback answer was generated.");
+  if (modelRequest && !settings.apiKey) {
+    modelStatus = "unavailable";
+    warnings.push("Kimi K2.6 must be configured before the Agent can answer this request.");
     trace.markOutcome("error");
     data = informationNotFound(input.message);
+  } else {
+    try {
+      const workflowAnswer = modelRequest ? null : await trace.step(
+        "harness.workflow",
+        "workflow",
+        () => runDeterministicWorkflow(provider, workspaceMessage, trace, deterministicWorkflowDependencies),
+      );
+      if (workflowAnswer) {
+        data = workflowAnswer;
+      } else if (!settings.apiKey) {
+        modelStatus = "unavailable";
+        warnings.push("Kimi K2.6 must be configured before the Agent can answer this request.");
+        trace.markOutcome("error");
+        data = informationNotFound(input.message);
+      } else {
+        modelStatus = "unavailable";
+        data = await trace.step("model.kimi", "model", async () => {
+          const answer = await answerWithKimi({
+            provider,
+            auth,
+            message: input.message,
+            history: input.history,
+            section: input.section,
+            conversationId: input.conversation_id,
+            apiKey: settings.apiKey,
+            baseUrl: settings.baseUrl,
+            model: settings.fastModel,
+            attachmentDocuments,
+            imageParts,
+          });
+          modelStatus = "available";
+          return answer;
+        });
+      }
+    } catch (primaryError) {
+      // Errors can originate from a live deterministic source or from the model.
+      // Their messages may contain upstream response bodies, so log only the class.
+      console.error("Agent primary answer path unavailable; no fallback answer generated", safeErrorKind(primaryError));
+      warnings.push(modelStatus === "unavailable"
+        ? "The model request failed. No fallback answer was generated."
+        : "The required live workspace data could not be verified. No fallback answer was generated.");
+      trace.markOutcome("error");
+      data = informationNotFound(input.message);
+    }
   }
 
   const traceSnapshot = trace.snapshot();
   trace.emit();
+
+  rootObservation.update({
+    output: summarizeText(data.answer),
+    metadata: {
+      outcome: traceSnapshot.outcome,
+      workflow: traceSnapshot.workflow || "model",
+      modelStatus,
+      source: provider.source,
+      warningCount: warnings.length,
+    },
+    ...(traceSnapshot.outcome === "error" ? {
+      level: "ERROR" as const,
+      statusMessage: "agent_answer_unavailable",
+    } : {}),
+  });
 
   return json({
     data,
@@ -174,10 +308,11 @@ async function processAgentRequest(request: Request) {
       generatedAt: new Date().toISOString(),
       configured: Boolean(settings.apiKey),
       modelStatus,
-      model: settings.model,
+      model: settings.fastModel,
       trace: traceSnapshot,
       ...(warnings.length ? { warning: warnings.join(" ") } : {}),
     },
+  });
   });
 }
 

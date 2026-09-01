@@ -620,6 +620,56 @@
   text-align: left;
 }
 
+.messageAttachments {
+  display: flex;
+  max-width: 420px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  margin-top: 6px;
+  gap: 6px;
+}
+
+.messageAttachment {
+  display: flex;
+  min-width: 160px;
+  max-width: 240px;
+  align-items: center;
+  padding: 7px;
+  gap: 8px;
+  color: #46535d;
+  background: #fff;
+  border: 1px solid #dce3e7;
+  border-radius: 8px;
+  text-align: left;
+  text-decoration: none;
+}
+
+.messageAttachment:hover { border-color: #b8c2ca; }
+
+.messageAttachment > img {
+  width: 64px;
+  height: 48px;
+  flex: 0 0 auto;
+  object-fit: cover;
+  background: #eef1f3;
+  border-radius: 5px;
+}
+
+.messageAttachment > span {
+  min-width: 0;
+}
+
+.messageAttachment strong,
+.messageAttachment small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.messageAttachment strong { font-size: 12px; }
+.messageAttachment small { margin-top: 2px; color: #7b8790; font-size: 11px; }
+
 .userMessage .messageAvatar {
   color: #fff;
   background: #7a8791;
@@ -686,9 +736,76 @@
 
 .suggestions button:disabled { cursor: not-allowed; opacity: .52; }
 
+.composerAttachments {
+  display: grid;
+  max-height: 150px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+  gap: 6px;
+}
+
+.composerAttachment {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 27px;
+  align-items: center;
+  padding: 6px 7px;
+  gap: 7px;
+  background: #f7f8fb;
+  border: 1px solid #dfe4e8;
+  border-radius: 7px;
+}
+
+.attachmentFailed {
+  background: #fff4f3;
+  border-color: #efc8c4;
+}
+
+.attachmentIcon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  color: #5968cb;
+  background: #eceeff;
+  border-radius: 6px;
+}
+
+.attachmentFailed .attachmentIcon { color: #aa4640; background: #fde3e0; }
+
+.attachmentDetails { min-width: 0; }
+
+.attachmentDetails strong,
+.attachmentDetails small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachmentDetails strong { color: #3c4851; font-size: 12px; }
+.attachmentDetails small { margin-top: 2px; color: #78858e; font-size: 11px; }
+
+.composerAttachment > button {
+  display: grid;
+  width: 27px;
+  height: 27px;
+  place-items: center;
+  padding: 0;
+  color: #7d8992;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.composerAttachment > button:hover:not(:disabled) { color: #a13f39; background: #f1e6e5; }
+.composerAttachment > button:disabled { cursor: not-allowed; opacity: .45; }
+
+.hiddenFileInput { display: none; }
+
 .composer {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 37px;
+  grid-template-columns: 37px minmax(0, 1fr) 37px;
   align-items: end;
   padding: 5px;
   gap: 5px;
@@ -734,6 +851,19 @@
 
 .composer > button:hover:not(:disabled) { filter: brightness(.94); }
 .composer > button:disabled { cursor: not-allowed; opacity: .42; }
+
+.composer > .attachButton {
+  color: #66737d;
+  background: transparent;
+  border: 1px solid transparent;
+}
+
+.composer > .attachButton:hover:not(:disabled) {
+  color: #5361c2;
+  background: #eceeff;
+  border-color: #d9ddfa;
+  filter: none;
+}
 
 .inlineError,
 .inlineNotice {

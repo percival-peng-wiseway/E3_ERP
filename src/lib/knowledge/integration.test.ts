@@ -4,7 +4,7 @@ import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
-import type { AgentAuthContext } from "../business-agent/contracts";
+import type { AgentAuthContext } from "../erp_agent/business-agent/contracts";
 import type { ErpVector } from "../server/cloudflare-storage";
 import type { KnowledgeVectorProvider } from "./vectorize";
 
@@ -155,6 +155,15 @@ test("upload, background vectorization, grounded retrieval, citations and atomic
   assert.equal(cloud.searches[0].topK, 40);
   assert.equal(cloud.searches[0].namespace, "e3");
   assert.deepEqual(cloud.searches[0].filter.access_scope, { $in: ["company", "sales"] });
+
+  const attachmentScoped = await searchKnowledgeBase(
+    { query: "summarise the attached document", limit: 5, document_ids: [created.document.id] },
+    auth("sales"),
+    { provider: cloud.provider, now: new Date("2026-08-28T00:00:00Z"), getFileSource: async () => source },
+  );
+  assert.equal(attachmentScoped.ok, true);
+  assert.ok(attachmentScoped.data?.every((item) => item.document_id === created.document.id));
+  assert.deepEqual(cloud.searches[1].filter.document_id, { $in: [created.document.id] });
 
   const beforeUpdate = (await repository.getKnowledgeDocument(created.document.id))!;
   const updated = await repository.updateKnowledgeDocumentMetadata(

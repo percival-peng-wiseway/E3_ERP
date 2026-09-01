@@ -6,16 +6,21 @@ import {
   Bot,
   Download,
   Eye,
+  FileImage,
   FileText,
   LoaderCircle,
   Megaphone,
+  Paperclip,
   RefreshCw,
   Send,
   Settings2,
   Sparkles,
   Trash2,
+  X,
 } from "lucide-react";
 import {
+  ClipboardEvent,
+  DragEvent as ReactDragEvent,
   KeyboardEvent,
   useCallback,
   useEffect,
@@ -29,7 +34,7 @@ import {
   knowledgeReadinessPresentation,
   readAgentKnowledgeReadiness,
   type AgentKnowledgeReadiness,
-} from "@/lib/agent/knowledge-readiness";
+} from "@/lib/erp_agent/agent/knowledge-readiness";
 import { readJsonResponse } from "@/lib/client/http";
 import type { AgentCitation } from "@/lib/erp/types";
 import styles from "./home-collaboration-workspace.module.css";
@@ -41,6 +46,22 @@ type AgentMessage = {
   role: AgentRole;
   content: string;
   citations?: AgentCitation[];
+  attachments?: AgentMessageAttachment[];
+};
+
+type AgentAttachmentStatus = "uploading" | "processing" | "ready" | "unsupported" | "failed";
+
+type AgentMessageAttachment = {
+  fileId: string;
+  name: string;
+  contentType: string;
+  size: number;
+};
+
+type AgentComposerAttachment = AgentMessageAttachment & {
+  localId: string;
+  status: AgentAttachmentStatus;
+  error?: string;
 };
 
 type NotificationRole = "all" | "sales" | "specialist" | "pm" | "admin";
@@ -84,6 +105,8 @@ const DEFAULT_SUGGESTIONS = [
 const LEGACY_AGENT_CONVERSATION_STORAGE_KEY = "e3-agent-conversation:v1";
 const AGENT_CONVERSATION_STORAGE_VERSION = 1;
 const MAX_MESSAGE_LENGTH = 2_000;
+const MAX_AGENT_ATTACHMENTS = 4;
+const MAX_AGENT_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 const MAX_AGENT_HISTORY_MESSAGES = 100;
 const MAX_AGENT_HISTORY_CHARACTERS = 200_000;
 const MAX_AGENT_HISTORY_MESSAGE_CHARACTERS = 50_000;
@@ -158,6 +181,33 @@ function readAgentCitations(value: unknown): AgentCitation[] {
   }).slice(0, MAX_AGENT_CITATIONS);
 }
 
+function readAgentMessageAttachment(value: unknown): AgentMessageAttachment | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const item = value as Record<string, unknown>;
+  if (typeof item.fileId !== "string" || !WORKSPACE_FILE_ID_PATTERN.test(item.fileId)
+    || typeof item.name !== "string" || !item.name.trim() || item.name.length > 180
+    || typeof item.contentType !== "string" || !item.contentType.trim() || item.contentType.length > 150
+    || typeof item.size !== "number" || !Number.isSafeInteger(item.size)
+    || item.size < 1 || item.size > MAX_AGENT_ATTACHMENT_BYTES) return null;
+  return {
+    fileId: item.fileId.toLocaleLowerCase("en-AU"),
+    name: item.name.trim(),
+    contentType: item.contentType,
+    size: item.size,
+  };
+}
+
+function readAgentMessageAttachments(value: unknown) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > MAX_AGENT_ATTACHMENTS) return [];
+  const seen = new Set<string>();
+  return value.map(readAgentMessageAttachment).filter((attachment): attachment is AgentMessageAttachment => {
+    if (!attachment || seen.has(attachment.fileId)) return false;
+    seen.add(attachment.fileId);
+    return true;
+  });
+}
+
 function readAgentMessage(value: unknown): AgentMessage | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const item = value as Record<string, unknown>;
@@ -173,9 +223,11 @@ function readAgentMessage(value: unknown): AgentMessage | null {
     return null;
   }
   const citations = item.role === "assistant" ? readAgentCitations(item.citations) : [];
+  const attachments = item.role === "user" ? readAgentMessageAttachments(item.attachments) : [];
   return {
     id: item.id, role: item.role, content: item.content,
     ...(citations.length ? { citations } : {}),
+    ...(attachments.length ? { attachments } : {}),
   };
 }
 
@@ -194,7 +246,9 @@ function limitAgentMessages(messages: readonly unknown[]) {
     const message = readAgentMessage(messages[index]);
     if (!message || ids.has(message.id)) continue;
     const citationCharacters = message.citations ? JSON.stringify(message.citations).length : 0;
-    const nextCharacterCount = characterCount + message.id.length + message.content.length + citationCharacters;
+    const attachmentCharacters = message.attachments ? JSON.stringify(message.attachments).length : 0;
+    const nextCharacterCount = characterCount + message.id.length + message.content.length
+      + citationCharacters + attachmentCharacters;
     if (limited.length >= MAX_AGENT_HISTORY_MESSAGES || nextCharacterCount > MAX_AGENT_HISTORY_CHARACTERS) break;
     limited.push(message);
     ids.add(message.id);
@@ -204,16 +258,21 @@ function limitAgentMessages(messages: readonly unknown[]) {
   return limited.reverse();
 }
 
-function readAgentConversation(rawValue: string | null) {
-  if (!rawValue) return [];
+function readAgentConversation(rawValue: string | null): { messages: AgentMessage[]; conversationId: string | null } {
+  if (!rawValue) return { messages: [], conversationId: null };
   try {
     const value: unknown = JSON.parse(rawValue);
-    if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+    if (!value || typeof value !== "object" || Array.isArray(value)) return { messages: [], conversationId: null };
     const record = value as Record<string, unknown>;
-    if (record.version !== AGENT_CONVERSATION_STORAGE_VERSION || !Array.isArray(record.messages)) return [];
-    return limitAgentMessages(record.messages);
+    if (record.version !== AGENT_CONVERSATION_STORAGE_VERSION || !Array.isArray(record.messages)) {
+      return { messages: [], conversationId: null };
+    }
+    const conversationId = typeof record.conversationId === "string"
+      && /^[a-zA-Z0-9_-]{1,128}$/.test(record.conversationId)
+      ? record.conversationId : null;
+    return { messages: limitAgentMessages(record.messages), conversationId };
   } catch {
-    return [];
+    return { messages: [], conversationId: null };
   }
 }
 
@@ -296,6 +355,23 @@ function formatCitationDate(value?: string) {
 
 function workspaceFileCitationHref(fileId: string, mode: "preview" | "download") {
   return `/api/files/items/${encodeURIComponent(fileId)}/content?mode=${mode}`;
+}
+
+function formatAgentAttachmentBytes(value: number) {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(value >= 10 * 1024 ? 0 : 1)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(value >= 10 * 1024 * 1024 ? 0 : 1)} MB`;
+}
+
+function agentAttachmentIsImage(contentType: string) {
+  return contentType === "image/jpeg" || contentType === "image/png" || contentType === "image/webp";
+}
+
+function agentAttachmentContentMode(contentType: string): "preview" | "download" {
+  return contentType === "application/pdf" || agentAttachmentIsImage(contentType)
+    || contentType === "text/plain" || contentType === "text/markdown" || contentType === "text/x-markdown"
+    ? "preview"
+    : "download";
 }
 
 function formatProjectCreatedAt(value?: string) {
@@ -453,6 +529,7 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
   const [agentHistoryHydrated, setAgentHistoryHydrated] = useState(false);
   const [agentHydratedStorageKey, setAgentHydratedStorageKey] = useState("");
   const [agentInput, setAgentInput] = useState("");
+  const [agentAttachments, setAgentAttachments] = useState<AgentComposerAttachment[]>([]);
   const [agentSuggestions, setAgentSuggestions] = useState(DEFAULT_SUGGESTIONS);
   const [agentLoading, setAgentLoading] = useState(false);
   const [agentError, setAgentError] = useState("");
@@ -467,8 +544,10 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
   const agentAbortRef = useRef<AbortController | null>(null);
   const agentHealthAbortRef = useRef<AbortController | null>(null);
   const agentConversationRevisionRef = useRef(0);
+  const agentConversationIdRef = useRef("");
   const agentStorageClearGuardRef = useRef(false);
   const agentFeedRef = useRef<HTMLDivElement>(null);
+  const agentFileInputRef = useRef<HTMLInputElement>(null);
 
   const [notifications, setNotifications] = useState<WorkspaceNotification[]>([]);
   const [notificationsLoading, setNotificationsLoading] = useState(true);
@@ -533,12 +612,17 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
     mountedRef.current = true;
     setAgentHistoryHydrated(false);
     setAgentMessages([]);
+    setAgentAttachments([]);
+    agentConversationIdRef.current = "";
     try {
-      setAgentMessages(readAgentConversation(window.localStorage.getItem(agentConversationStorageKey)));
+      const storedConversation = readAgentConversation(window.localStorage.getItem(agentConversationStorageKey));
+      setAgentMessages(storedConversation.messages);
+      agentConversationIdRef.current = storedConversation.conversationId || crypto.randomUUID();
       window.localStorage.removeItem(LEGACY_AGENT_CONVERSATION_STORAGE_KEY);
     } catch {
       // Agent chat still works for this session if storage is unavailable.
     }
+    if (!agentConversationIdRef.current) agentConversationIdRef.current = crypto.randomUUID();
     setAgentHydratedStorageKey(agentConversationStorageKey);
     setAgentHistoryHydrated(true);
 
@@ -550,6 +634,7 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
       if (event.key !== agentConversationStorageKey || event.newValue !== null) return;
       agentStorageClearGuardRef.current = true;
       agentConversationRevisionRef.current += 1;
+      agentConversationIdRef.current = crypto.randomUUID();
       agentAbortRef.current?.abort();
       agentAbortRef.current = null;
       try {
@@ -558,6 +643,7 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
         // The visible clear still succeeds if another tab cannot update browser storage.
       }
       setAgentMessages([]);
+      setAgentAttachments([]);
       setAgentSuggestions(DEFAULT_SUGGESTIONS);
       setAgentError("");
       setAgentNotice("");
@@ -588,6 +674,7 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
     try {
       window.localStorage.setItem(agentConversationStorageKey, JSON.stringify({
         version: AGENT_CONVERSATION_STORAGE_VERSION,
+        conversationId: agentConversationIdRef.current,
         messages: limitAgentMessages(agentMessages),
       }));
     } catch {
@@ -771,35 +858,222 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
     }
   }, [announcementDeletingId, announcementSubmitting, isAdmin]);
 
+  const uploadAgentFiles = useCallback(async (selectedFiles: File[]) => {
+    if (!selectedFiles.length || agentLoading
+      || agentAttachments.some((attachment) => attachment.status === "uploading")) return;
+    const availableSlots = Math.max(0, MAX_AGENT_ATTACHMENTS - agentAttachments.length);
+    const files = selectedFiles.slice(0, availableSlots);
+    if (!files.length) {
+      setAgentError(`Attach up to ${MAX_AGENT_ATTACHMENTS} files per message.`);
+      return;
+    }
+    const tasks: AgentComposerAttachment[] = files.map((file) => ({
+      localId: createId("agent-attachment"),
+      fileId: "",
+      name: file.name || "Unnamed file",
+      contentType: file.type || "application/octet-stream",
+      size: file.size,
+      status: file.size > MAX_AGENT_ATTACHMENT_BYTES ? "failed" : "uploading",
+      ...(file.size > MAX_AGENT_ATTACHMENT_BYTES ? { error: "File exceeds the 20 MB limit." } : {}),
+    }));
+    setAgentError("");
+    setAgentAttachments((current) => [...current, ...tasks]);
+    for (let index = 0; index < tasks.length; index += 1) {
+      const task = tasks[index];
+      const file = files[index];
+      if (task.status === "failed") continue;
+      try {
+        const form = new FormData();
+        form.set("file", file);
+        const response = await fetch("/api/files/upload", { method: "POST", body: form });
+        const body = await readJsonResponse<unknown>(response);
+        if (!response.ok || !body || typeof body !== "object" || Array.isArray(body)) {
+          throw new Error(readError(body, "Upload failed."));
+        }
+        const data = (body as { data?: unknown }).data;
+        const item = data && typeof data === "object" && !Array.isArray(data)
+          ? (data as { item?: unknown }).item : null;
+        const knowledgeIndex = data && typeof data === "object" && !Array.isArray(data)
+          ? (data as { knowledgeIndex?: unknown }).knowledgeIndex : null;
+        if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("Upload returned an invalid file.");
+        const uploaded = item as Record<string, unknown>;
+        const fileId = typeof uploaded.id === "string" && WORKSPACE_FILE_ID_PATTERN.test(uploaded.id)
+          ? uploaded.id.toLocaleLowerCase("en-AU") : "";
+        const name = typeof uploaded.name === "string" ? uploaded.name.trim() : "";
+        const contentType = typeof uploaded.contentType === "string" ? uploaded.contentType : "";
+        const size = typeof uploaded.size === "number" && Number.isSafeInteger(uploaded.size) ? uploaded.size : 0;
+        if (!fileId || !name || !contentType || size < 1 || size > MAX_AGENT_ATTACHMENT_BYTES) {
+          throw new Error("Upload returned invalid file metadata.");
+        }
+        const indexStatus = knowledgeIndex && typeof knowledgeIndex === "object" && !Array.isArray(knowledgeIndex)
+          ? (knowledgeIndex as { status?: unknown }).status : null;
+        const status: AgentAttachmentStatus = agentAttachmentIsImage(contentType)
+          ? "ready"
+          : indexStatus === "queued"
+          ? "processing"
+          : indexStatus === "failed"
+            ? "failed"
+            : indexStatus === "not_supported" || indexStatus === null
+              ? "unsupported"
+              : "ready";
+        setAgentAttachments((current) => current.map((attachment) => attachment.localId === task.localId
+          ? {
+            localId: task.localId,
+            fileId,
+            name,
+            contentType,
+            size,
+            status,
+            ...(status === "failed" ? { error: "The file was saved, but Agent preparation failed." } : {}),
+          }
+          : attachment));
+      } catch (uploadError) {
+        setAgentAttachments((current) => current.map((attachment) => attachment.localId === task.localId
+          ? { ...attachment, status: "failed", error: uploadError instanceof Error ? uploadError.message : "Upload failed." }
+          : attachment));
+      }
+    }
+    if (agentFileInputRef.current) agentFileInputRef.current.value = "";
+  }, [agentAttachments, agentLoading]);
+
+  const processingAttachmentKey = agentAttachments
+    .filter((attachment) => attachment.status === "processing" && attachment.fileId)
+    .map((attachment) => attachment.fileId)
+    .sort()
+    .join(":");
+
+  useEffect(() => {
+    if (!processingAttachmentKey) return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const fileIds = processingAttachmentKey.split(":");
+    const check = async () => {
+      try {
+        const response = await fetch("/api/agent/attachments/status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ attachments: fileIds.map((fileId) => ({ file_id: fileId })) }),
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        const body = await readJsonResponse<unknown>(response);
+        if (!response.ok || !body || typeof body !== "object" || Array.isArray(body)) {
+          throw new Error(readError(body, "Attachment preparation status is unavailable."));
+        }
+        const data = (body as { data?: unknown }).data;
+        const statuses = data && typeof data === "object" && !Array.isArray(data)
+          && Array.isArray((data as { attachments?: unknown }).attachments)
+          ? (data as { attachments: unknown[] }).attachments : [];
+        const byId = new Map<string, AgentAttachmentStatus>();
+        for (const raw of statuses) {
+          if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+          const item = raw as Record<string, unknown>;
+          if (typeof item.fileId === "string" && WORKSPACE_FILE_ID_PATTERN.test(item.fileId)
+            && ["ready", "processing", "unsupported", "failed"].includes(String(item.status))) {
+            byId.set(item.fileId.toLocaleLowerCase("en-AU"), item.status as AgentAttachmentStatus);
+          }
+        }
+        if (!controller.signal.aborted) {
+          setAgentAttachments((current) => current.map((attachment) => {
+            const status = byId.get(attachment.fileId);
+            return status && status !== attachment.status
+              ? { ...attachment, status, ...(status === "failed" ? { error: "Agent preparation failed." } : { error: undefined }) }
+              : attachment;
+          }));
+        }
+      } catch (statusError) {
+        if (controller.signal.aborted || (statusError instanceof DOMException && statusError.name === "AbortError")) return;
+      }
+      if (!controller.signal.aborted) timer = setTimeout(check, 2_000);
+    };
+    timer = setTimeout(check, 1_000);
+    return () => {
+      controller.abort();
+      if (timer) clearTimeout(timer);
+    };
+  }, [processingAttachmentKey]);
+
+  const removeAgentAttachment = (localId: string) => {
+    if (agentLoading) return;
+    setAgentAttachments((current) => current.filter((attachment) => attachment.localId !== localId));
+  };
+
+  const handleAgentAttachmentDrop = (event: ReactDragEvent<HTMLDivElement>) => {
+    if (!Array.from(event.dataTransfer.types).includes("Files")) return;
+    event.preventDefault();
+    void uploadAgentFiles(Array.from(event.dataTransfer.files));
+  };
+
+  const handleAgentAttachmentPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = Array.from(event.clipboardData.files);
+    if (!files.length) return;
+    event.preventDefault();
+    void uploadAgentFiles(files);
+  };
+
   const submitAgentMessage = useCallback(async (rawMessage?: string) => {
-    const message = (rawMessage ?? agentInput).trim();
+    const blockedAttachment = agentAttachments.find((attachment) =>
+      attachment.status === "uploading" || attachment.status === "processing" || attachment.status === "failed");
+    if (blockedAttachment) {
+      setAgentError(blockedAttachment.status === "failed"
+        ? blockedAttachment.error || "Remove the failed attachment before sending."
+        : "Wait for the attachment to finish preparing before sending.");
+      return;
+    }
+    const messageAttachments = agentAttachments.filter((attachment) =>
+      attachment.fileId && (attachment.status === "ready" || attachment.status === "unsupported"));
+    const message = (rawMessage ?? agentInput).trim()
+      || (messageAttachments.length ? "Please review the attached file." : "");
     if (!message || agentLoading || agentAbortRef.current || !agentHistoryHydrated) return;
 
     agentStorageClearGuardRef.current = false;
     const lastMessage = agentMessages.at(-1);
+    const lastAttachmentIds = lastMessage?.attachments?.map((attachment) => attachment.fileId).join(":") || "";
+    const currentAttachmentIds = messageAttachments.map((attachment) => attachment.fileId).join(":");
     const isRetry = Boolean(agentError)
       && lastMessage?.role === "user"
-      && lastMessage.content.trim() === message;
+      && lastMessage.content.trim() === message
+      && lastAttachmentIds === currentAttachmentIds;
     const history = (isRetry ? agentMessages.slice(0, -1) : agentMessages)
       .slice(-10)
       .map(({ role, content }) => ({ role, content: content.slice(0, MAX_MESSAGE_LENGTH) }));
-    const userMessage: AgentMessage = { id: createId("agent-user"), role: "user", content: message };
+    const persistedAttachments: AgentMessageAttachment[] = messageAttachments.map((attachment) => ({
+      fileId: attachment.fileId,
+      name: attachment.name,
+      contentType: attachment.contentType,
+      size: attachment.size,
+    }));
+    const userMessage: AgentMessage = {
+      id: createId("agent-user"),
+      role: "user",
+      content: message,
+      ...(persistedAttachments.length ? { attachments: persistedAttachments } : {}),
+    };
     if (!isRetry) {
       setAgentMessages((current) => limitAgentMessages([...current, userMessage]));
     }
     setAgentInput("");
+    setAgentAttachments([]);
     setAgentError("");
     setAgentNotice("");
     setAgentLoading(true);
     const controller = new AbortController();
     const conversationRevision = agentConversationRevisionRef.current;
+    const conversationId = agentConversationIdRef.current || crypto.randomUUID();
+    agentConversationIdRef.current = conversationId;
     agentAbortRef.current = controller;
 
     try {
       const response = await fetch("/api/agent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, section: "all", history }),
+        body: JSON.stringify({
+          message,
+          section: "all",
+          history,
+          conversation_id: conversationId,
+          attachments: persistedAttachments.map((attachment) => ({ file_id: attachment.fileId })),
+        }),
         signal: controller.signal,
       });
       const rawBody = await readJsonResponse<unknown>(response);
@@ -836,7 +1110,7 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
       const citations = readAgentCitations(body.data?.citations);
       if (typeof body.meta?.configured === "boolean") {
         setAgentConfigured(body.meta.configured);
-      } else if (mode === "openai" || mode === "deepseek") {
+      } else if (mode === "openai" || mode === "kimi") {
         setAgentConfigured(true);
       }
       if (
@@ -844,7 +1118,7 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
         || body.meta?.modelStatus === "unavailable"
       ) {
         setAgentModelStatus(body.meta.modelStatus);
-      } else if (mode === "openai" || mode === "deepseek") {
+      } else if (mode === "openai" || mode === "kimi") {
         setAgentModelStatus("available");
       }
       if (typeof body.meta?.warning === "string") setAgentNotice(body.meta.warning);
@@ -867,6 +1141,8 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
       }
       if (mountedRef.current) {
         setAgentError(error instanceof Error ? error.message : "E3 Agent could not answer right now.");
+        setAgentInput(message);
+        setAgentAttachments((current) => current.length ? current : messageAttachments);
       }
     } finally {
       if (agentAbortRef.current === controller) {
@@ -876,11 +1152,12 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
         }
       }
     }
-  }, [agentError, agentHistoryHydrated, agentInput, agentLoading, agentMessages]);
+  }, [agentAttachments, agentError, agentHistoryHydrated, agentInput, agentLoading, agentMessages]);
 
   const clearAgentConversation = () => {
     agentStorageClearGuardRef.current = true;
     agentConversationRevisionRef.current += 1;
+    agentConversationIdRef.current = crypto.randomUUID();
     agentAbortRef.current?.abort();
     agentAbortRef.current = null;
     try {
@@ -890,6 +1167,7 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
     }
     setAgentMessages([]);
     setAgentInput("");
+    setAgentAttachments([]);
     setAgentError("");
     setAgentNotice("");
     setAgentSuggestions(DEFAULT_SUGGESTIONS);
@@ -1229,7 +1507,34 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
                       )}
                     </>
                   ) : (
-                    <p className={styles.userBubble}>{message.content}</p>
+                    <>
+                      <p className={styles.userBubble}>{message.content}</p>
+                      {Boolean(message.attachments?.length) && (
+                        <div className={styles.messageAttachments} aria-label="Message attachments">
+                          {message.attachments?.map((attachment) => (
+                            <a
+                              key={attachment.fileId}
+                              className={styles.messageAttachment}
+                              href={workspaceFileCitationHref(
+                                attachment.fileId,
+                                agentAttachmentContentMode(attachment.contentType),
+                              )}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              {agentAttachmentIsImage(attachment.contentType) ? (
+                                <img
+                                  src={workspaceFileCitationHref(attachment.fileId, "preview")}
+                                  alt={attachment.name}
+                                  loading="lazy"
+                                />
+                              ) : <FileText size={18} aria-hidden="true" />}
+                              <span><strong>{attachment.name}</strong><small>{formatAgentAttachmentBytes(attachment.size)}</small></span>
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               </div>
@@ -1250,10 +1555,70 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
                 <button key={suggestion} type="button" onClick={() => void submitAgentMessage(suggestion)} disabled={agentLoading || !agentHistoryHydrated}>{suggestion}</button>
               ))}
             </div>
-            <div className={styles.composer}>
+            {Boolean(agentAttachments.length) && (
+              <div className={styles.composerAttachments} aria-label="Attachments waiting to send" aria-live="polite">
+                {agentAttachments.map((attachment) => (
+                  <div
+                    key={attachment.localId}
+                    className={`${styles.composerAttachment} ${attachment.status === "failed" ? styles.attachmentFailed : ""}`}
+                    title={attachment.error || attachment.name}
+                  >
+                    <span className={styles.attachmentIcon}>
+                      {attachment.status === "uploading" || attachment.status === "processing"
+                        ? <LoaderCircle className={styles.spinning} size={16} />
+                        : agentAttachmentIsImage(attachment.contentType)
+                          ? <FileImage size={16} />
+                          : <FileText size={16} />}
+                    </span>
+                    <span className={styles.attachmentDetails}>
+                      <strong>{attachment.name}</strong>
+                      <small>
+                        {attachment.error
+                          || (attachment.status === "uploading" ? "Uploading"
+                            : attachment.status === "processing" ? "Preparing for Agent"
+                              : attachment.status === "unsupported" ? "Uploaded · Preview only"
+                                : `${formatAgentAttachmentBytes(attachment.size)} · Ready`)}
+                      </small>
+                    </span>
+                    <button type="button" onClick={() => removeAgentAttachment(attachment.localId)} disabled={agentLoading} aria-label={`Remove ${attachment.name}`}>
+                      <X size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <input
+              ref={agentFileInputRef}
+              className={styles.hiddenFileInput}
+              type="file"
+              multiple
+              accept=".pdf,.docx,.txt,.md,.log,.csv,.xlsx,.pptx,.jpg,.jpeg,.png,.webp"
+              onChange={(event) => void uploadAgentFiles(Array.from(event.target.files || []))}
+              tabIndex={-1}
+              aria-hidden="true"
+            />
+            <div
+              className={styles.composer}
+              onDragOver={(event) => {
+                if (Array.from(event.dataTransfer.types).includes("Files")) event.preventDefault();
+              }}
+              onDrop={handleAgentAttachmentDrop}
+            >
+              <button
+                className={styles.attachButton}
+                type="button"
+                onClick={() => agentFileInputRef.current?.click()}
+                disabled={agentLoading || agentAttachments.length >= MAX_AGENT_ATTACHMENTS
+                  || agentAttachments.some((attachment) => attachment.status === "uploading")}
+                aria-label="Attach files or images"
+                title="Attach files or images"
+              >
+                <Paperclip size={17} />
+              </button>
               <textarea
                 value={agentInput}
                 onChange={(event) => setAgentInput(event.target.value)}
+                onPaste={handleAgentAttachmentPaste}
                 onKeyDown={(event: KeyboardEvent<HTMLTextAreaElement>) => {
                   if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
                     event.preventDefault();
@@ -1266,7 +1631,15 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
                 aria-label="Question for E3 Agent"
                 disabled={agentLoading || !agentHistoryHydrated}
               />
-              <button type="button" onClick={() => void submitAgentMessage()} disabled={!agentInput.trim() || agentLoading || !agentHistoryHydrated} aria-label="Send question">
+              <button
+                className={styles.sendButton}
+                type="button"
+                onClick={() => void submitAgentMessage()}
+                disabled={(!agentInput.trim() && !agentAttachments.length) || agentLoading || !agentHistoryHydrated
+                  || agentAttachments.some((attachment) => attachment.status === "uploading"
+                    || attachment.status === "processing" || attachment.status === "failed")}
+                aria-label="Send question"
+              >
                 {agentLoading ? <LoaderCircle className={styles.spinning} size={17} /> : <Send size={17} />}
               </button>
             </div>

@@ -1,11 +1,18 @@
-import { agentAuthContext } from "@/lib/business-agent/auth";
-import { LiveBusinessDataProvider } from "@/lib/business-agent/data-provider";
-import { chatWithBusinessAgent } from "@/lib/business-agent/service";
-import { resolveDeepSeekSettings } from "@/lib/agent/settings";
-import { AgentRequestBodyTooLarge, readLimitedAgentJson, requestHasJsonContentType } from "@/lib/agent/request";
+import { after } from "next/server";
+import { agentAuthContext } from "@/lib/erp_agent/business-agent/auth";
+import { LiveBusinessDataProvider } from "@/lib/erp_agent/business-agent/data-provider";
+import { chatWithBusinessAgent } from "@/lib/erp_agent/business-agent/service";
+import { resolveKimiSettings } from "@/lib/erp_agent/agent/settings";
+import { AgentRequestBodyTooLarge, readLimitedAgentJson, requestHasJsonContentType } from "@/lib/erp_agent/agent/request";
 import { getERPProvider } from "@/lib/erp";
 import { searchKnowledgeBase } from "@/lib/knowledge/search-service";
 import { isAuthorizedMutationRequest } from "@/lib/server/proxy-security";
+import {
+  hashedSessionId,
+  scheduleLangfuseFlush,
+  summarizeText,
+  traceAgentRequest,
+} from "@/lib/erp_agent/langfuse";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -38,21 +45,68 @@ export async function POST(request: Request) {
   }
   const input = cleanInput(raw);
   if (!input) return json({ error: { code: "invalid_request", message: "message and optional conversation_id are required." } }, 400);
-  try {
-    const deepSeek = await resolveDeepSeekSettings();
-    return json(await chatWithBusinessAgent({
-      input,
-      auth,
-      dataProvider: new LiveBusinessDataProvider(getERPProvider(request), searchKnowledgeBase),
-      deepSeekConfig: deepSeek.apiKey ? {
-        apiKey: deepSeek.apiKey,
-        baseUrl: deepSeek.baseUrl,
-        flashModel: deepSeek.fastModel,
-        complexModel: deepSeek.complexModel,
-      } : null,
-    }));
-  } catch (error) {
-    console.error("Business Agent unavailable", error instanceof Error ? error.name : "UnknownError");
-    return json({ error: { code: "agent_unavailable", message: "The Agent cannot process this request right now." } }, 502);
-  }
+  scheduleLangfuseFlush(after);
+  return traceAgentRequest({
+    name: "answer-business-question",
+    input: summarizeText(input.message),
+    userId: auth.principalHash,
+    ...(input.conversation_id ? {
+      sessionId: hashedSessionId(input.conversation_id, `${auth.tenantId}\0${auth.principalHash}`),
+    } : {}),
+    tags: ["business-agent", "route:api-agent-chat", `tenant:${auth.tenantId}`, `role:${auth.role}`],
+    traceMetadata: {
+      route: "/api/agent/chat",
+      tenantId: auth.tenantId,
+      role: auth.role,
+    },
+    metadata: {
+      route: "/api/agent/chat",
+      tenantId: auth.tenantId,
+      role: auth.role,
+      permissionCount: auth.permissions.size,
+      messageCharacterCount: input.message.length,
+      messageLanguage: /[\u3400-\u9fff]/u.test(input.message) ? "zh" : "other",
+      hasConversationId: Boolean(input.conversation_id),
+    },
+  }, async (observation) => {
+    try {
+      const kimi = await resolveKimiSettings();
+      const response = await chatWithBusinessAgent({
+        input,
+        auth,
+        dataProvider: new LiveBusinessDataProvider(getERPProvider(request), searchKnowledgeBase),
+        kimiConfig: kimi.apiKey ? {
+          apiKey: kimi.apiKey,
+          baseUrl: kimi.baseUrl,
+          flashModel: kimi.fastModel,
+          complexModel: kimi.complexModel,
+        } : null,
+      });
+      observation.update({
+        output: summarizeText(response.answer),
+        metadata: {
+          status: response.route === "unavailable" ? "unavailable" : response.route === "clarification" ? "clarification" : "completed",
+          route: response.route,
+          model: response.model_used,
+          answerCharacterCount: response.answer.length,
+          citationCount: response.citations.length,
+          toolCallCount: response.tool_calls_summary.length,
+          limitationCount: response.limitations.length,
+        },
+        level: response.route === "unavailable" ? "WARNING" : "DEFAULT",
+        statusMessage: response.route,
+      });
+      return json(response);
+    } catch (error) {
+      const errorName = error instanceof Error ? error.name : "UnknownError";
+      observation.update({
+        output: { status: "unavailable" },
+        metadata: { status: "unavailable", errorName },
+        level: "ERROR",
+        statusMessage: errorName,
+      });
+      console.error("Business Agent unavailable", errorName);
+      return json({ error: { code: "agent_unavailable", message: "The Agent cannot process this request right now." } }, 502);
+    }
+  });
 }

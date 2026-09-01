@@ -1,4 +1,4 @@
-import { AgentRequestBodyTooLarge, readLimitedAgentJson, requestHasJsonContentType } from "@/lib/agent/request";
+import { AgentRequestBodyTooLarge, readLimitedAgentJson, requestHasJsonContentType } from "@/lib/erp_agent/agent/request";
 import { getErpSession } from "@/lib/auth/session";
 import { createManagedErpUser, ErpUserRepositoryError, listManagedErpUsers } from "@/lib/auth/user-repository";
 import { isSameOriginRequest } from "@/lib/server/proxy-security";

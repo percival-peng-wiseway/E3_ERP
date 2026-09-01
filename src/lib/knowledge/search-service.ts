@@ -2,7 +2,7 @@ import type {
   AgentAuthContext,
   KnowledgeDocument as AgentKnowledgeDocument,
   ToolEnvelope,
-} from "../business-agent/contracts.ts";
+} from "../erp_agent/business-agent/contracts.ts";
 // @ts-expect-error -- focused Node ESM tests require the explicit extension.
 import { getWorkspaceFileIndexSource, listWorkspaceFileIndexSources } from "../workspace-files/repository.ts";
 // @ts-expect-error -- focused Node ESM tests require the explicit extension.
@@ -22,6 +22,8 @@ export type KnowledgeSearchInput = {
   region?: string;
   effective_date?: string;
   limit?: number;
+  /** Server-resolved document scope for the current Agent attachment turn. */
+  document_ids?: readonly string[];
 };
 
 type SearchDependencies = {
@@ -97,8 +99,16 @@ export async function searchKnowledgeBase(
   const region = cleanFilter(raw.region, 80);
   const limit = raw.limit ?? KNOWLEDGE_RETRIEVAL_CONFIG.maximumChunks;
   const at = effectiveDate(raw.effective_date, dependencies.now || new Date());
+  const documentIds = raw.document_ids === undefined ? null
+    : Array.isArray(raw.document_ids)
+      && raw.document_ids.length > 0
+      && raw.document_ids.length <= 4
+      && raw.document_ids.every((value) => typeof value === "string" && /^[0-9a-f-]{36}$/i.test(value))
+      ? [...new Set(raw.document_ids.map((value) => value.toLocaleLowerCase("en-AU")))]
+      : null;
   if (!query || query.length > 500 || product === null || region === null || at === null
-    || !Number.isSafeInteger(limit) || limit < 1 || limit > KNOWLEDGE_RETRIEVAL_CONFIG.maximumChunks) {
+    || !Number.isSafeInteger(limit) || limit < 1 || limit > KNOWLEDGE_RETRIEVAL_CONFIG.maximumChunks
+    || (raw.document_ids !== undefined && documentIds === null)) {
     return result<AgentKnowledgeDocument[]>({ ok: false, data: null, error_code: "invalid_input" });
   }
   const scopes = allowedScopes(auth.role);
@@ -112,6 +122,21 @@ export async function searchKnowledgeBase(
   const filters: Record<string, unknown> = {
     access_scope: { $in: scopes },
   };
+  let prefetchedDocuments: Awaited<ReturnType<typeof listKnowledgeDocuments>> | null = null;
+  let allowedDocumentIds: Set<string> | null = null;
+  if (documentIds) {
+    try {
+      prefetchedDocuments = await listKnowledgeDocuments({ tenantId: KNOWLEDGE_TENANT_ID, includeDisabled: true });
+    } catch {
+      return result<AgentKnowledgeDocument[]>({ ok: false, data: null, error_code: "unavailable", retryable: true });
+    }
+    allowedDocumentIds = new Set(prefetchedDocuments
+      .filter((document) => documentIds.includes(document.id.toLocaleLowerCase("en-AU"))
+        && document.status === "ready" && scopes.includes(document.accessScope))
+      .map((document) => document.id));
+    if (!allowedDocumentIds.size) return result({ ok: true, data: [], error_code: null });
+    filters.document_id = { $in: [...allowedDocumentIds] };
+  }
   let vectorMatches: Awaited<ReturnType<KnowledgeVectorProvider["query"]>>;
   try {
     const queryVector = await provider.embedQuery(query);
@@ -133,7 +158,8 @@ export async function searchKnowledgeBase(
     const chunks = await listKnowledgeChunksByKeys(providerChunks.map((chunk) => chunk.id), {
       tenantId: KNOWLEDGE_TENANT_ID,
     });
-    const documents = await listKnowledgeDocuments({ tenantId: KNOWLEDGE_TENANT_ID, includeDisabled: true });
+    const documents = prefetchedDocuments
+      || await listKnowledgeDocuments({ tenantId: KNOWLEDGE_TENANT_ID, includeDisabled: true });
     const documentById = new Map(documents.map((document) => [document.id, document]));
     const providerByKey = new Map<string, (typeof providerChunks)[number]>();
     for (const providerChunk of providerChunks) {
@@ -163,7 +189,8 @@ export async function searchKnowledgeBase(
     const candidates: KnowledgeSearchCandidate[] = chunks.flatMap((chunk) => {
       const document = documentById.get(chunk.documentId);
       const providerChunk = providerByKey.get(chunk.indexItemKey);
-      if (!document || !providerChunk || !sameOptionalFilter(document.product, product)
+      if (!document || !providerChunk || (allowedDocumentIds && !allowedDocumentIds.has(document.id))
+        || !sameOptionalFilter(document.product, product)
         || !sameOptionalFilter(document.region, region)) return [];
       return [{
         document,

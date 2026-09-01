@@ -28,14 +28,14 @@ Employee access is protected by a unified ERP sign-in. The server issues a signe
 - Sales reminders are limited to actionable Project Track collections; PM receives only delivery and installation scheduling reminders; Admin receives submitted payment confirmations and reimbursement actions
 - The E3 Agent Harness answers questions across eight bounded, read-only business Skills: Inventory, Quotations, Project Management, Project Track, Weekly Schedule, Site Visiting, Reimbursements and Reports
 - Weekly Schedule queries use the same Project Track, Inventory delivery, Site Visit, custom-job and source-override records that compose the calendar, including unscheduled and pre-scheduled work
-- Knowledge questions use the same-worker `search_knowledge_base` service, Workers AI embeddings, Cloudflare Vectorize retrieval and server-side Files/D1 permission checks; DeepSeek receives only authorised, current chunks and answers with validated Files citations
-- Common operational queries use deterministic workflows before any model call; open-ended questions use the configured OpenAI-compatible endpoint
-- Each request emits a privacy-safe trace containing only workflow/tool names, status and duration
-- `qwen3.5:9b` is the default model; the other models advertised by the endpoint can be selected from Settings
-- The current endpoint does not require an API key; an optional key remains supported for future compatible endpoints
-- If the endpoint is unavailable, deterministic workflows and basic local summaries remain available
+- Knowledge questions use the same-worker `search_knowledge_base` service, Workers AI embeddings, Cloudflare Vectorize retrieval and server-side Files/D1 permission checks; Kimi receives only authorised, current chunks and answers with validated Files citations
+- Common operational queries use deterministic workflows before any model call; open-ended questions and image understanding use Kimi K2.6 at Moonshot's fixed HTTPS endpoint
+- Users can attach up to four current-turn JPEG, PNG or WebP images for Kimi vision, or supported office/PDF/text files for authorised knowledge retrieval; image bytes are capped at 12 MiB per request
+- Each request emits a privacy-safe Langfuse trace containing bounded summaries, workflow/tool names, status and duration; raw ERP content and image/base64 payloads remain excluded unless explicitly enabled for a controlled non-production run
+- `kimi-k2.6` is the only supported answer model. Administrators may configure its Moonshot API key under Settings; deterministic workflows can still answer their bounded queries without a model key
+- If Kimi or a required live source is unavailable, the Agent fails closed instead of generating a local or alternate-model answer
 - Payment proof URLs, reimbursement invoice URLs, access tokens, cookies and API keys are never included in model tool results
-- A separately deployable read-only Business Agent endpoint at `POST /api/agent/chat` adds strict inventory, knowledge, project and order-finance tools with deterministic DeepSeek Flash/Pro routing; see [docs/BUSINESS_AGENT.md](./docs/BUSINESS_AGENT.md)
+- A separately deployable read-only Business Agent endpoint at `POST /api/agent/chat` adds strict inventory, knowledge, project and order-finance tools with deterministic complexity routing; both route classes use Kimi K2.6 and cache canonical tool results across the single escalation; see [docs/BUSINESS_AGENT.md](./docs/BUSINESS_AGENT.md)
 
 ### Inventory
 
@@ -162,16 +162,11 @@ INVENTORY_OPERATIONS_API_URL=https://inventory.e3energy.com.au/api/inventory
 QUOTEHELP_APP_URL=https://quote.e3energy.com.au
 ERP_INTERNAL_API_TOKEN=
 ERP_AUTH_SESSION_SECRET=
-AGENT_API_KEY=
-AGENT_BASE_URL=https://navigator-spongy-diagnosis.ngrok-free.dev/v1
-AGENT_MODEL=qwen3.5:9b
-AGENT_ALLOWED_API_HOSTS=
 AGENT_SETTINGS_DATA_DIR=
 GROUP_CHAT_DATA_DIR=
-DEEPSEEK_API_KEY=
-DEEPSEEK_BASE_URL=https://api.deepseek.com/beta
-DEEPSEEK_MODEL_FAST=deepseek-v4-flash
-DEEPSEEK_MODEL_COMPLEX=deepseek-v4-pro
+MOONSHOT_API_KEY=
+KIMI_BASE_URL=https://api.moonshot.ai/v1
+KIMI_MODEL_NAME=kimi-k2.6
 ```
 
 - `/api/inventory/operations` accepts only approved Inventory actions and uses a fixed upstream address.
@@ -180,9 +175,9 @@ DEEPSEEK_MODEL_COMPLEX=deepseek-v4-pro
 - Upstream cookies are placed in separate ERP namespaces with restricted paths. ERP, Clerk and other application cookies are never forwarded to external business services.
 - Browser writes require both a valid employee session and a verifiably same-origin request. Trusted server writes require the `ERP_INTERNAL_API_TOKEN` bearer token.
 - QuoteHelp Excel uploads are limited to 25 MiB; Inventory JSON operations are limited to 512 KiB.
-- Agent and Agent Settings writes are same-origin protected and body-size limited. Local development stores the optional API key in a private `0700` directory using an atomic `0600` file; Cloudflare production stores saved settings in server-side D1. The key is returned only as a masked configured state, and a Cloudflare Secret remains preferred for production credentials.
-- Administrators can add or replace the DeepSeek API key under **Settings → Agent Settings → DeepSeek Business Agent**. Leaving the key blank preserves the saved key; removing saved settings deletes it. The read-only Business Agent uses this saved configuration before environment fallback.
-- The model connection is restricted to approved HTTPS hosts. Model tools strictly validate their arguments and return bounded, sanitised, read-only records.
+- Agent and Agent Settings writes are same-origin protected and body-size limited. Local development stores an optional saved Moonshot key in a private `0700` directory using an atomic `0600` file; Cloudflare production stores saved settings in server-side D1. The key is returned only as a masked configured state, and the `MOONSHOT_API_KEY` Cloudflare Secret remains preferred for production.
+- Administrators can add or replace the Moonshot API key under **Settings → Agent Settings → Kimi K2.6 Agent**. The screen and its save API accept only the key; the browser cannot override the endpoint or model. Leaving the field blank preserves the saved key; removing saved settings deletes it and restores environment fallback. Saving the key replaces retired provider credentials rather than carrying them forward.
+- The model connection is pinned to `https://api.moonshot.ai/v1` and `kimi-k2.6`. Model tools use Kimi-compatible strict schemas, validate arguments and return bounded, sanitised, read-only records.
 
 The unified read-only APIs use the live Inventory Operations service and the authenticated QuoteHelp session. An explicit quotation API can optionally replace the QuoteHelp session source:
 
@@ -269,7 +264,7 @@ Project Track rejects repeated Proposal Numbers across both PDF imports and manu
 | `GET/DELETE /api/site-visits/:id/photos/:photoId` | View or remove a protected site photo |
 | `GET/POST /api/project-schedule` | List or create custom Weekly Schedule jobs |
 | `PATCH/DELETE /api/project-schedule/:id` | Update a custom job or permanently remove it as Administrator |
-| `POST /api/agent` | OpenAI-compatible model-backed read-only questions across ERP workspaces, with a local fallback |
+| `POST /api/agent` | Kimi K2.6 multimodal read-only questions across ERP workspaces, with fail-closed model handling |
 | `POST /api/agent/chat` | Strict read-only Business Agent for inventory, cited knowledge, project snapshots and order finance |
 | `GET /api/agent/health` | Verify all eight E3 Agent business data sources without returning business records |
 | `GET/PUT/DELETE /api/settings/agent` | Masked Agent configuration, secure save and environment fallback |
@@ -311,7 +306,7 @@ src/app/api/quotehelp/                             Controlled QuoteHelp proxy
 src/app/api/reimbursements/                        Claim, admin and invoice APIs
 src/app/api/payment-track/                         Payment workflow, import, proof and file APIs
 src/app/api/reports/                               Reports document API
-src/app/api/settings/agent/                        Secure Agent model configuration API
+src/app/api/settings/agent/                        Administrator-only, API-key-only Agent settings API
 src/lib/agent/                                     Model client, settings storage and bounded ERP tools
 src/lib/payment-track/                             Payment state machine, storage and PDF extraction
 src/lib/site-visits/                               Site visit records, checklist and photo storage

@@ -18,7 +18,7 @@ Supported upload in Files / Knowledge resource
   -> Workers AI query embedding + Vectorize similarity search
   -> D1 current-generation, ACL, effective-date and Trash validation
   -> at most eight authorised chunks
-  -> existing DeepSeek model produces a grounded answer
+  -> existing Kimi model produces a grounded answer
   -> validated citations open the protected Files preview route
 ```
 

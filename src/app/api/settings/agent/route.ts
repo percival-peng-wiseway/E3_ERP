@@ -1,14 +1,15 @@
 import {
   AgentSettingsError,
   clearAgentSettings,
+  parseAgentSettingsInput,
   publicAgentSettings,
   saveAgentSettings,
-} from "@/lib/agent/settings";
+} from "@/lib/erp_agent/agent/settings";
 import {
   AgentRequestBodyTooLarge,
   readLimitedAgentJson,
   requestHasJsonContentType,
-} from "@/lib/agent/request";
+} from "@/lib/erp_agent/agent/request";
 import { isAuthorizedActorRequest } from "@/lib/server/proxy-security";
 
 export const dynamic = "force-dynamic";
@@ -30,40 +31,10 @@ function safeErrorKind(value: unknown) {
   return value instanceof Error ? value.name : "UnknownError";
 }
 
-function settingsInput(value: unknown): {
-  apiKey?: string;
-  baseUrl: string;
-  model: string;
-  deepSeekApiKey?: string;
-  deepSeekBaseUrl?: string;
-  deepSeekFastModel?: string;
-  deepSeekComplexModel?: string;
-} | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const body = value as Record<string, unknown>;
-  const allowed = new Set([
-    "apiKey", "baseUrl", "model", "deepSeekApiKey", "deepSeekBaseUrl",
-    "deepSeekFastModel", "deepSeekComplexModel",
-  ]);
-  if (Object.keys(body).some((key) => !allowed.has(key))) return null;
-  if (typeof body.baseUrl !== "string" || typeof body.model !== "string") return null;
-  if (body.apiKey !== undefined && typeof body.apiKey !== "string") return null;
-  const deepSeekFields = ["deepSeekApiKey", "deepSeekBaseUrl", "deepSeekFastModel", "deepSeekComplexModel"] as const;
-  if (deepSeekFields.some((key) => body[key] !== undefined && typeof body[key] !== "string")) return null;
-  const hasDeepSeekConfiguration = deepSeekFields.slice(1).some((key) => body[key] !== undefined);
-  if (hasDeepSeekConfiguration && deepSeekFields.slice(1).some((key) => typeof body[key] !== "string")) return null;
-  return {
-    ...(typeof body.apiKey === "string" ? { apiKey: body.apiKey } : {}),
-    baseUrl: body.baseUrl,
-    model: body.model,
-    ...(typeof body.deepSeekApiKey === "string" ? { deepSeekApiKey: body.deepSeekApiKey } : {}),
-    ...(typeof body.deepSeekBaseUrl === "string" ? { deepSeekBaseUrl: body.deepSeekBaseUrl } : {}),
-    ...(typeof body.deepSeekFastModel === "string" ? { deepSeekFastModel: body.deepSeekFastModel } : {}),
-    ...(typeof body.deepSeekComplexModel === "string" ? { deepSeekComplexModel: body.deepSeekComplexModel } : {}),
-  };
-}
-
-export async function GET() {
+export async function GET(request: Request) {
+  if (!isAuthorizedActorRequest(request, "admin")) {
+    return error(403, "forbidden", "Administrator access is required to view Agent settings.");
+  }
   try {
     return json({ data: await publicAgentSettings() });
   } catch (settingsError) {
@@ -81,8 +52,8 @@ export async function PUT(request: Request) {
   }
 
   try {
-    const input = settingsInput(await readLimitedAgentJson(request, MAX_SETTINGS_BODY));
-    if (!input) return error(400, "invalid_settings", "Complete the API settings with valid fields.");
+    const input = parseAgentSettingsInput(await readLimitedAgentJson(request, MAX_SETTINGS_BODY));
+    if (!input) return error(400, "invalid_settings", "Enter a valid Moonshot API key.");
     return json({ data: await saveAgentSettings(input) });
   } catch (settingsError) {
     if (settingsError instanceof AgentRequestBodyTooLarge) {
