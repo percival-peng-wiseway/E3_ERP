@@ -1,11 +1,28 @@
 import { writeFile } from "node:fs/promises";
 
 const apiKey = (process.env.MOONSHOT_API_KEY || process.env.KIMI_API_KEY)?.trim();
-const baseUrl = (process.env.KIMI_BASE_URL?.trim() || "https://api.moonshot.ai/v1").replace(/\/+$/, "");
+const officialBaseUrls = {
+  china: "https://api.moonshot.cn/v1",
+  international: "https://api.moonshot.ai/v1",
+};
+const configuredBaseUrl = process.env.KIMI_BASE_URL?.trim().replace(/\/+$/, "");
+const inferredRegion = configuredBaseUrl === officialBaseUrls.international
+  ? "international"
+  : configuredBaseUrl === officialBaseUrls.china ? "china" : undefined;
+const region = process.env.KIMI_REGION?.trim() || inferredRegion || "china";
+const regionValid = Object.hasOwn(officialBaseUrls, region);
+const defaultBaseUrl = regionValid ? officialBaseUrls[region] : officialBaseUrls.china;
+const baseUrl = configuredBaseUrl || defaultBaseUrl;
 const models = [process.env.KIMI_MODEL_NAME?.trim() || "kimi-k2.6"];
 const outputArg = process.argv.find((value) => value.startsWith("--output="));
 
-if (!apiKey) {
+if (!regionValid) {
+  console.error("KIMI_REGION must be either china or international. No request was sent.");
+  process.exitCode = 2;
+} else if (configuredBaseUrl && configuredBaseUrl !== defaultBaseUrl) {
+  console.error("KIMI_BASE_URL must match the official endpoint selected by KIMI_REGION. No request was sent.");
+  process.exitCode = 2;
+} else if (!apiKey) {
   console.error("MOONSHOT_API_KEY is required. No live compatibility claims were recorded.");
   process.exitCode = 2;
 } else {

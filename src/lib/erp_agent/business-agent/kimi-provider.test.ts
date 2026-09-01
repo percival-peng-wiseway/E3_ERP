@@ -236,3 +236,34 @@ test("citation validation rejects chunks not named by the authorised envelope", 
   });
   assert.deepEqual(citations, []);
 });
+
+test("business Kimi transport safely classifies quota errors", async () => {
+  const upstreamMarker = "raw-upstream-secret api-key-should-not-leak";
+  globalThis.fetch = (async () => new Response(JSON.stringify({
+    error: { message: upstreamMarker },
+  }), { status: 429, headers: { "content-type": "application/json" } })) as typeof fetch;
+  const provider = {
+    async getInventory() { throw new Error("unused"); },
+    async searchKnowledge() { throw new Error("unused"); },
+    async getProject() { throw new Error("unused"); },
+    async getOrderFinance() { throw new Error("unused"); },
+  } satisfies BusinessDataProvider;
+  const executor = new BusinessToolExecutor(provider, {
+    principalHash: "x", tenantId: "e3", role: "admin", permissions: permissionsForRole("admin"),
+  });
+  await assert.rejects(
+    runKimiAgent({
+      config: { apiKey: "api-key-should-not-leak", baseUrl: "https://api.moonshot.cn/v1", flashModel: "kimi-k2.6", complexModel: "kimi-k2.6" },
+      model: "kimi-k2.6",
+      message: "test",
+      executor,
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal(error.name, "KimiRequestError");
+      assert.equal((error as Error & { kind?: string }).kind, "quota_or_rate_limit");
+      assert.equal(String(error).includes(upstreamMarker), false);
+      return true;
+    },
+  );
+});

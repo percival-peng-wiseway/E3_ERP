@@ -6,12 +6,7 @@ import { KIMI_TOOLS as AGENT_TOOLS, runAgentTool } from "./tools";
 import type { KimiImagePart } from "./attachments";
 import { focusedAgentToolNames, shouldUseKnowledgeConversationIntent } from "./tool-routing";
 import { parseKnowledgeCitationSelection } from "./knowledge-citation-selection";
-import {
-  observe,
-  summarizeText,
-  summarizeToolInput,
-  summarizeToolOutput,
-} from "@/lib/erp_agent/langfuse";
+import { KimiRequestError, kimiHttpError, kimiNetworkError } from "./kimi-error";
 
 const RESPONSE_LIMIT = 2 * 1024 * 1024;
 const MAX_TOOL_ROUNDS = 4;
@@ -178,35 +173,7 @@ type KimiPayload = {
     finish_reason?: "stop" | "tool_calls" | "length" | "content_filter" | string | null;
   }>;
   error?: { message?: string };
-  usage?: {
-    prompt_tokens?: unknown;
-    completion_tokens?: unknown;
-    total_tokens?: unknown;
-    cached_tokens?: unknown;
-  };
 };
-
-function tokenCount(value: unknown) {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
-}
-
-function langfuseUsage(usage: KimiPayload["usage"]) {
-  const promptTokens = tokenCount(usage?.prompt_tokens);
-  const completionTokens = tokenCount(usage?.completion_tokens);
-  const reportedCachedTokens = tokenCount(usage?.cached_tokens);
-  const cachedTokens = promptTokens !== undefined && reportedCachedTokens !== undefined
-    && reportedCachedTokens <= promptTokens ? reportedCachedTokens : undefined;
-  const uncachedInputTokens = promptTokens !== undefined
-    ? promptTokens - (cachedTokens || 0) : undefined;
-  const totalTokens = tokenCount(usage?.total_tokens)
-    ?? (promptTokens !== undefined && completionTokens !== undefined ? promptTokens + completionTokens : undefined);
-  return {
-    ...(uncachedInputTokens !== undefined ? { input: uncachedInputTokens } : {}),
-    ...(cachedTokens !== undefined ? { cache_read_input_tokens: cachedTokens } : {}),
-    ...(completionTokens !== undefined ? { output: completionTokens } : {}),
-    ...(totalTokens !== undefined ? { total: totalTokens } : {}),
-  };
-}
 
 function isToolCall(value: unknown): value is KimiToolCall {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
@@ -251,18 +218,6 @@ async function limitedPayload(response: Response): Promise<KimiPayload> {
   return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as KimiPayload : {};
 }
 
-async function modelErrorDetail(response: Response) {
-  const bytes = await limitedResponseBytes(response);
-  const text = new TextDecoder().decode(bytes).trim();
-  if (!text) return "";
-  try {
-    const parsed = JSON.parse(text) as { error?: { message?: unknown } };
-    return typeof parsed.error?.message === "string" ? parsed.error.message.slice(0, 300) : "";
-  } catch {
-    return text.replace(/\s+/gu, " ").slice(0, 300);
-  }
-}
-
 function chatCompletionsUrl(baseUrl: string): string {
   return `${baseUrl.replace(/\/+$/, "")}/chat/completions`;
 }
@@ -276,29 +231,6 @@ async function createCompletion(options: {
   forceToolName?: string;
   conversationId?: string;
 }) {
-  const latestUserContent = [...options.messages].reverse()
-    .find((message) => message.role === "user")?.content;
-  const latestUserMessage = typeof latestUserContent === "string"
-    ? latestUserContent
-    : latestUserContent?.find((part): part is KimiTextPart => part.type === "text")?.text || "";
-  return observe({
-    name: "generate-agent-response",
-    asType: "generation",
-    input: summarizeText(latestUserMessage),
-    model: options.model,
-    modelParameters: {
-      maxTokens: 800,
-      thinking: "disabled",
-    },
-    metadata: {
-      messageCount: options.messages.length,
-      offeredToolCount: options.tools.length,
-      forcedTool: options.forceToolName || "none",
-      imagePartCount: Array.isArray(latestUserContent)
-        ? latestUserContent.filter((part) => part.type === "image_url").length : 0,
-      promptCacheEnabled: Boolean(options.conversationId),
-    },
-  }, async (generation) => {
   const body = JSON.stringify({
     model: options.model,
     messages: options.messages,
@@ -321,25 +253,36 @@ async function createCompletion(options: {
     Accept: "application/json",
   });
   if (options.apiKey) headers.set("Authorization", `Bearer ${options.apiKey}`);
-  const response = await fetch(chatCompletionsUrl(options.baseUrl), {
-    method: "POST",
-    headers,
-    body,
-    cache: "no-store",
-    // Cloudflare Workers supports follow/manual but rejects redirect="error"
-    // before the request is sent. Manual mode preserves the same SSRF safety
-    // property when redirects are explicitly rejected below.
-    redirect: "manual",
-    signal: AbortSignal.timeout(35_000),
-  });
+  let response: Response;
+  try {
+    response = await fetch(chatCompletionsUrl(options.baseUrl), {
+      method: "POST",
+      headers,
+      body,
+      cache: "no-store",
+      // Cloudflare Workers supports follow/manual but rejects redirect="error"
+      // before the request is sent. Manual mode preserves the same SSRF safety
+      // property when redirects are explicitly rejected below.
+      redirect: "manual",
+      signal: AbortSignal.timeout(35_000),
+    });
+  } catch {
+    throw kimiNetworkError();
+  }
   if (response.status >= 300 && response.status < 400) {
-    throw new Error("The model API attempted an unexpected redirect.");
+    throw kimiNetworkError();
   }
   if (!response.ok) {
-    const detail = await modelErrorDetail(response);
-    throw new Error(detail || `The model API returned HTTP ${response.status}.`);
+    // Never parse an upstream error body: it is untrusted and may contain echoed
+    // request content or credentials. Status alone is sufficient for diagnosis.
+    throw kimiHttpError(response.status);
   }
-  const payload = await limitedPayload(response);
+  let payload: KimiPayload;
+  try {
+    payload = await limitedPayload(response);
+  } catch {
+    throw new KimiRequestError("invalid_response");
+  }
   const choice = payload.choices?.[0];
   const message = choice?.message;
   if (!message || message.role !== "assistant") throw new Error("The model API did not return an assistant message.");
@@ -362,17 +305,7 @@ async function createCompletion(options: {
       ? { reasoning_content: message.reasoning_content.slice(0, 50_000) } : {}),
     ...(calls.length ? { tool_calls: calls } : {}),
   } satisfies KimiAssistantMessage;
-  generation.update({
-    output: summarizeText(assistant.content || ""),
-    usageDetails: langfuseUsage(payload.usage),
-    metadata: {
-      toolCallCount: calls.length,
-      hasDisplayText: Boolean(assistant.content?.trim()),
-      httpStatus: response.status,
-    },
-  });
   return assistant;
-  });
 }
 
 export async function answerWithKimi(options: {
@@ -463,63 +396,25 @@ export async function answerWithKimi(options: {
       const answer = assistant.content?.trim();
       if (!answer) throw new Error("The model API did not return displayable text.");
       if (knowledgeRequired) {
-        return observe({
-          name: "validate-grounded-answer",
-          asType: "guardrail",
-          metadata: {
-            knowledgeSearchAttempted,
-            authorisedCitationCount: groundedCitationsByChunk.size,
-          },
-        }, async (guardrail) => {
-          const selected = parseKnowledgeCitationSelection(answer);
-          const citations = selected
-            ? selected.chunkIds.map((chunkId) => groundedCitationsByChunk.get(chunkId))
-            : [];
-          const passed = knowledgeSearchAttempted && Boolean(selected)
-            && citations.length > 0 && citations.every(Boolean);
-          guardrail.update({
-            ...(passed ? {} : { level: "WARNING", statusMessage: "grounding_failed" }),
-            metadata: {
-              passed,
-              selectedCitationCount: selected?.chunkIds.length || 0,
-              authorisedCitationCount: groundedCitationsByChunk.size,
-            },
-          });
-          if (!passed || !selected) return informationNotFound(message);
-          return {
-            mode: "kimi",
-            answer: selected.answer,
-            suggestions: SUGGESTIONS,
-            citations: citations.filter((citation): citation is AgentCitation => Boolean(citation)),
-          };
-        });
+        const selected = parseKnowledgeCitationSelection(answer);
+        const citations = selected
+          ? selected.chunkIds.map((chunkId) => groundedCitationsByChunk.get(chunkId))
+          : [];
+        const passed = knowledgeSearchAttempted && Boolean(selected)
+          && citations.length > 0 && citations.every(Boolean);
+        if (!passed || !selected) return informationNotFound(message);
+        return {
+          mode: "kimi",
+          answer: selected.answer,
+          suggestions: SUGGESTIONS,
+          citations: citations.filter((citation): citation is AgentCitation => Boolean(citation)),
+        };
       }
       return { mode: "kimi", answer, suggestions: SUGGESTIONS };
     }
     const outputs = await Promise.all(calls.map(async (call) => {
-      let parsedArguments: unknown;
-      try { parsedArguments = JSON.parse(call.function.arguments); } catch { parsedArguments = { invalidJson: true }; }
-      const content = await observe({
-        name: call.function.name === "search_knowledge_base"
-          ? "search-knowledge-base"
-          : "execute-erp-tool",
-        asType: call.function.name === "search_knowledge_base" ? "retriever" : "tool",
-        input: summarizeToolInput(parsedArguments, { captureContent: false }),
-        metadata: { toolName: call.function.name },
-      }, async (toolObservation) => {
-        const toolContent = await runAgentTool(provider, call.function, auth, {
-          knowledgeDocumentIds: attachmentDocuments.map((item) => item.documentId),
-        });
-        let parsedOutput: unknown;
-        try { parsedOutput = JSON.parse(toolContent); } catch { parsedOutput = toolContent; }
-        toolObservation.update({
-          output: summarizeToolOutput(parsedOutput, { captureContent: false }),
-          metadata: {
-            toolName: call.function.name,
-            verification: toolOutputVerification(toolContent),
-          },
-        });
-        return toolContent;
+      const content = await runAgentTool(provider, call.function, auth, {
+        knowledgeDocumentIds: attachmentDocuments.map((item) => item.documentId),
       });
       if (call.function.name === "search_product_activity") {
         productActivityAttempted = true;

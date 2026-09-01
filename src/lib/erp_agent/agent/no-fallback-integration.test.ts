@@ -32,17 +32,21 @@ test("Kimi builds multimodal content arrays with thinking disabled", () => {
   assert.match(modelOrchestrator, /\[...imageParts, \{ type: "text", text: message \}\]/u);
   assert.match(modelOrchestrator, /prompt_cache_key/u);
   assert.match(modelOrchestrator, /mode: "kimi"/u);
-  assert.match(route, /const requiresModel = imageParts\.length > 0 \|\| requiresKnowledge/u);
+  assert.match(route, /const modelRequest = imageParts\.length > 0 \|\| requiresKnowledge/u);
   assert.match(route, /if \(modelRequest && !settings\.apiKey\)/u);
+  assert.match(route, /kimiRequestWarning\(primaryError, settings\.region\)/u);
+  assert.doesNotMatch(modelOrchestrator, /modelErrorDetail|error\?\.message/u);
   assert.doesNotMatch(modelOrchestrator, /reasoning_effort/u);
 });
 
-test("Agent settings accept only an API key while the server owns endpoint and model", () => {
+test("Agent settings accept only an API key and trusted region while the server owns endpoint and model", () => {
   assert.match(settingsRoute, /parseAgentSettingsInput/u);
   assert.match(settingsRoute, /export async function GET\(request: Request\)/u);
   assert.match(settingsRoute, /Administrator access is required to view Agent settings/u);
-  assert.match(settingsModule, /export function saveAgentSettings\(input: AgentSettingsInput\)/u);
-  assert.match(settingsDialog, /Endpoint and model are managed by the server/u);
+  assert.match(settingsModule, /export function saveAgentSettings\(/u);
+  assert.match(settingsDialog, /Region choices map only to official Moonshot endpoints/u);
+  assert.match(settingsDialog, /value="china"/u);
+  assert.match(settingsDialog, /value="international"/u);
   assert.match(settingsDialog, /required=\{settings\.source !== "saved"\}/u);
-  assert.doesNotMatch(settingsDialog, /setBaseUrl|setModel/u);
+  assert.doesNotMatch(settingsDialog, /setBaseUrl|setModel|name="baseUrl"/u);
 });

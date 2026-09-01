@@ -48,7 +48,8 @@
   "vars": {
     "INVENTORY_OPERATIONS_API_URL": "https://inventory.e3energy.com.au/api/inventory",
     "QUOTEHELP_APP_URL": "https://quote.e3energy.com.au",
-    "KIMI_BASE_URL": "https://api.moonshot.ai/v1",
+    "KIMI_REGION": "china",
+    "KIMI_BASE_URL": "https://api.moonshot.cn/v1",
     "KIMI_MODEL_NAME": "kimi-k2.6"
   }
 }

@@ -4,18 +4,9 @@ NEXTJS_ENV=development
 ERP_AUTH_SESSION_SECRET=replace-with-at-least-32-random-characters
 ERP_INTERNAL_API_TOKEN=replace-with-a-long-random-value
 MOONSHOT_API_KEY=replace-with-your-moonshot-api-key
-KIMI_BASE_URL=https://api.moonshot.ai/v1
+KIMI_REGION=china
+KIMI_BASE_URL=https://api.moonshot.cn/v1
 KIMI_MODEL_NAME=kimi-k2.6
-# Langfuse is opt-in for Cloudflare preview. Add real keys to .dev.vars or
-# Wrangler secrets, never to this committed example.
-LANGFUSE_TRACING_ENABLED=0
-LANGFUSE_PUBLIC_KEY=
-LANGFUSE_SECRET_KEY=
-LANGFUSE_BASE_URL=https://cloud.langfuse.com
-LANGFUSE_TRACING_ENVIRONMENT=preview
-LANGFUSE_RELEASE=
-LANGFUSE_CAPTURE_CONTENT=0
-LANGFUSE_SESSION_HASH_SALT=
 # Legacy external adapter only; normal retrieval uses Workers AI + Vectorize bindings.
 ERP_KNOWLEDGE_API_URL=
 ERP_PROJECT_API_URL=

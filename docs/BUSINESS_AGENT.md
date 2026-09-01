@@ -26,7 +26,7 @@ Decision: use a small application-owned Chat Completions loop. Do not use Respon
 
 Kimi's official documentation, checked on 2026-09-01, says:
 
-- `kimi-k2.6` uses the OpenAI-compatible Chat Completions endpoint at `https://api.moonshot.ai/v1`;
+- `kimi-k2.6` uses Moonshot's OpenAI-compatible Chat Completions endpoint: `https://api.moonshot.cn/v1` for China keys or `https://api.moonshot.ai/v1` for International keys;
 - it supports text, image and video input, tool calls, JSON Mode, and thinking/non-thinking modes;
 - image input must be a real multimodal `content` array containing base64 `image_url` parts; ordinary remote image URLs are not supported;
 - this application disables thinking for the initial rollout, avoiding reasoning-state coupling in multi-step tool calls.
@@ -43,7 +43,7 @@ MOONSHOT_API_KEY=... npm run spike:kimi -- --output=/tmp/kimi-spike.json
 
 The script checks ordinary chat, JSON Mode, a forced strict-schema call, a multimodal image/tool call, multi-round tool result completion, SSE, usage, client timeout, and structured API errors for Kimi K2.6. Promote the service only after every live check passes against the intended Moonshot account and region.
 
-Administrators may configure the key without editing environment files under **Settings → Agent Settings → Kimi K2.6 Agent**. The screen and `PUT /api/settings/agent` accept only the Moonshot API key. The key is stored only in the existing protected server settings document (private `0600` local file or Cloudflare D1), is returned to the browser only as a last-four-character mask, and takes precedence over `MOONSHOT_API_KEY`. The runtime alone resolves the endpoint and model, both of which are pinned to `https://api.moonshot.ai/v1` and `kimi-k2.6`. Leaving the field blank retains the existing key.
+Administrators may configure the key without editing environment files under **Settings → Agent Settings → Kimi K2.6 Agent**. The screen and `PUT /api/settings/agent` accept only the Moonshot API key plus a `china` or `international` region. The key is verified against that region before it is saved in the existing protected server settings document (private `0600` local file or Cloudflare D1), is returned to the browser only as a last-four-character mask, and takes precedence over `MOONSHOT_API_KEY`. The runtime maps the trusted region to the matching official `.cn` or `.ai` endpoint and keeps the model pinned to `kimi-k2.6`; arbitrary URLs remain rejected. Leaving the key field blank retains the existing key.
 
 ## Routing
 

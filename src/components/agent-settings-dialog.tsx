@@ -18,6 +18,7 @@ type AgentSettings = {
   configured: boolean;
   source: "saved" | "environment" | "default";
   maskedApiKey: string | null;
+  region: "china" | "international";
   baseUrl: string;
   model: string;
 };
@@ -31,7 +32,8 @@ const EMPTY_SETTINGS: AgentSettings = {
   configured: false,
   source: "default",
   maskedApiKey: null,
-  baseUrl: "https://api.moonshot.ai/v1",
+  region: "china",
+  baseUrl: "https://api.moonshot.cn/v1",
   model: "kimi-k2.6",
 };
 
@@ -52,6 +54,7 @@ export function AgentSettingsDialog({
 }) {
   const [settings, setSettings] = useState(EMPTY_SETTINGS);
   const [apiKey, setApiKey] = useState("");
+  const [region, setRegion] = useState<AgentSettings["region"]>("china");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -80,6 +83,7 @@ export function AgentSettingsDialog({
         if (!response.ok || !body.data) throw new Error(responseError(body, "Unable to load Agent settings."));
         if (!active) return;
         setSettings(body.data);
+        setRegion(body.data.region);
       })
       .catch((loadError) => {
         if (active) setError(loadError instanceof Error ? loadError.message : "Unable to load Agent settings.");
@@ -143,14 +147,16 @@ export function AgentSettingsDialog({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
+          region,
         }),
       });
       const body = await readJsonResponse<AgentSettingsResponse>(response);
       if (!response.ok || !body.data) throw new Error(responseError(body, "Unable to save Agent settings."));
       setSettings(body.data);
+      setRegion(body.data.region);
       setApiKey("");
       setNotice(body.data.configured
-        ? "Moonshot API key saved. Kimi K2.6 is ready."
+        ? `Moonshot API key verified for the ${body.data.region === "china" ? "China" : "International"} platform. Kimi K2.6 is ready.`
         : "Add a Moonshot API key to enable Kimi K2.6.");
       window.dispatchEvent(new CustomEvent("erp:agent-settings-updated"));
     } catch (saveError) {
@@ -169,6 +175,7 @@ export function AgentSettingsDialog({
       const body = await readJsonResponse<AgentSettingsResponse>(response);
       if (!response.ok || !body.data) throw new Error(responseError(body, "Unable to clear saved Agent settings."));
       setSettings(body.data);
+      setRegion(body.data.region);
       setApiKey("");
       setNotice(body.data.source === "environment"
         ? "Saved settings removed. The environment Kimi configuration is now active."
@@ -206,7 +213,7 @@ export function AgentSettingsDialog({
                 <strong>{settings.configured ? "Model endpoint configured" : "Model endpoint unavailable"}</strong>
                 <small>
                   {settings.configured
-                    ? `${settings.model} · ${settings.source === "saved" ? "saved settings" : "environment settings"}${settings.maskedApiKey ? ` · ${settings.maskedApiKey}` : ""}`
+                    ? `${settings.model} · ${settings.region === "china" ? "China" : "International"} · ${settings.source === "saved" ? "saved settings" : "environment settings"}${settings.maskedApiKey ? ` · ${settings.maskedApiKey}` : ""}`
                     : "Add a Moonshot API key to enable Kimi K2.6 answers and image understanding."}
                 </small>
               </div>
@@ -226,25 +233,40 @@ export function AgentSettingsDialog({
                 </span>
               </div>
 
-              <label>
-                Moonshot API key
-                <span className={styles.secretField}>
-                  <KeyRound size={15} />
-                  <input
-                    type="password"
-                    autoComplete="new-password"
-                    required={settings.source !== "saved"}
-                    value={apiKey}
-                    onChange={(event) => setApiKey(event.target.value)}
-                    placeholder={settings.maskedApiKey
-                      ? `Leave blank to keep ${settings.maskedApiKey}`
-                      : "Enter your Moonshot API key"}
-                  />
-                </span>
-              </label>
+              <div className={styles.fieldGrid}>
+                <label>
+                  API region
+                  <select
+                    value={region}
+                    onChange={(event) => setRegion(event.target.value as AgentSettings["region"])}
+                  >
+                    <option value="china">China · platform.kimi.com</option>
+                    <option value="international">International · platform.kimi.ai</option>
+                  </select>
+                </label>
+
+                <label>
+                  Moonshot API key
+                  <span className={styles.secretField}>
+                    <KeyRound size={15} />
+                    <input
+                      type="password"
+                      autoComplete="new-password"
+                      required={settings.source !== "saved"}
+                      value={apiKey}
+                      onChange={(event) => setApiKey(event.target.value)}
+                      placeholder={settings.source === "saved" && settings.maskedApiKey
+                        ? `Leave blank to keep ${settings.maskedApiKey}`
+                        : settings.source === "environment"
+                          ? "Enter the key to create an ERP-saved override"
+                          : "Enter your Moonshot API key"}
+                    />
+                  </span>
+                </label>
+              </div>
 
               <small className={styles.providerSource}>
-                Endpoint and model are managed by the server: {settings.baseUrl} · {settings.model}
+                Select the platform where the key was created. The server maps it to the fixed official endpoint: {region === settings.region ? settings.baseUrl : region === "china" ? "https://api.moonshot.cn/v1" : "https://api.moonshot.ai/v1"} · {settings.model}
                 <br />
                 Active key source: {settings.source === "saved" ? "saved in ERP" : settings.source === "environment" ? "environment" : "not configured"}
               </small>
@@ -252,7 +274,7 @@ export function AgentSettingsDialog({
 
             <div className={styles.securityNote}>
               <ShieldCheck size={17} />
-              <p><strong>Server-side only.</strong> The raw key is never returned after saving. The Moonshot endpoint and Kimi model cannot be changed from the browser.</p>
+              <p><strong>Server-side only.</strong> The raw key is never returned after saving. Region choices map only to official Moonshot endpoints; arbitrary URLs and model changes are rejected.</p>
             </div>
 
             <footer>
@@ -265,7 +287,7 @@ export function AgentSettingsDialog({
                 <button className={styles.secondaryButton} type="button" disabled={saving} onClick={onClose}>Cancel</button>
                 <button className={styles.primaryButton} type="submit" disabled={saving}>
                   {saving ? <LoaderCircle className={styles.spinning} size={16} /> : <Save size={16} />}
-                  Save API Key
+                  Save Agent Settings
                 </button>
               </div>
             </footer>

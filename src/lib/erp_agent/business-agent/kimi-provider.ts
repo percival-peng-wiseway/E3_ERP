@@ -1,9 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Citation, ToolEnvelope } from "./contracts";
 // @ts-expect-error -- focused Node ESM tests require the explicit extension.
-import { observe } from "../langfuse/tracing.ts";
-// @ts-expect-error -- focused Node ESM tests require the explicit extension.
-import { summarizeText, summarizeToolInput, summarizeToolOutput } from "../langfuse/privacy.ts";
+import { KimiRequestError, kimiHttpError, kimiNetworkError } from "../agent/kimi-error.ts";
 // @ts-expect-error -- focused Node ESM tests require the explicit extension.
 import { BUSINESS_AGENT_TOOLS, BusinessToolExecutor, canonicalToolCall } from "./tools.ts";
 
@@ -40,31 +38,6 @@ function completedUsage(usage: Usage | null): Usage | null {
   return { ...usage, total_tokens: (usage.prompt_tokens || 0) + (usage.completion_tokens || 0) };
 }
 
-function usageDetails(usage: Usage | null): Record<string, number> | null {
-  const completed = completedUsage(usage);
-  if (!completed) return null;
-  const details: Record<string, number> = {};
-  const cachedTokens = completed.prompt_tokens !== undefined && completed.cached_tokens !== undefined
-    && completed.cached_tokens <= completed.prompt_tokens ? completed.cached_tokens : undefined;
-  if (completed.prompt_tokens !== undefined) details.input = completed.prompt_tokens - (cachedTokens || 0);
-  if (cachedTokens !== undefined) details.cache_read_input_tokens = cachedTokens;
-  if (completed.completion_tokens !== undefined) details.output = completed.completion_tokens;
-  if (completed.total_tokens !== undefined) details.total = completed.total_tokens;
-  return Object.keys(details).length ? details : null;
-}
-
-function safeToolOutputShape(result: ToolEnvelope<unknown>) {
-  return {
-    ok: result.ok,
-    errorCode: result.error_code,
-    recordCount: Array.isArray(result.data) ? result.data.length : result.data === null ? 0 : 1,
-    sourceRecordCount: result.source_record_ids.length,
-    hasUpdatedAt: Boolean(result.updated_at),
-    incompleteData: Boolean(result.incomplete_data),
-    policyConflict: Boolean(result.policy_conflict),
-  };
-}
-
 export type ProviderResult = {
   valid: boolean;
   answer: string;
@@ -85,9 +58,16 @@ export type KimiConfig = { apiKey: string; baseUrl: string; flashModel: string; 
 export function resolveKimiConfig(): KimiConfig | null {
   const apiKey = (process.env.MOONSHOT_API_KEY || process.env.KIMI_API_KEY)?.trim();
   if (!apiKey) return null;
+  const region = process.env.KIMI_REGION?.trim() || "china";
+  if (region !== "china" && region !== "international") return null;
+  const officialBaseUrl = region === "china"
+    ? "https://api.moonshot.cn/v1"
+    : "https://api.moonshot.ai/v1";
+  const configuredBaseUrl = process.env.KIMI_BASE_URL?.trim().replace(/\/+$/u, "");
+  if (configuredBaseUrl && configuredBaseUrl !== officialBaseUrl) return null;
   return {
     apiKey,
-    baseUrl: process.env.KIMI_BASE_URL?.trim() || "https://api.moonshot.ai/v1",
+    baseUrl: officialBaseUrl,
     flashModel: process.env.KIMI_MODEL_NAME?.trim() || process.env.KIMI_MODEL_FAST?.trim() || "kimi-k2.6",
     complexModel: process.env.KIMI_MODEL_NAME?.trim() || process.env.KIMI_MODEL_COMPLEX?.trim() || "kimi-k2.6",
   };
@@ -254,48 +234,35 @@ export async function runKimiAgent(options: {
     const modelStarted = Date.now();
     let modelRound: { assistant: AssistantMessage; calls: ToolCall[]; roundUsage: Usage | null };
     try {
-      modelRound = await observe({
-        name: "generate-business-agent-response",
-        asType: "generation",
-        input: summarizeText(options.message),
-        model: options.model,
-        modelParameters: {
-          maxTokens: 1200,
-          toolChoice: "auto",
-          responseFormat: "json_object",
-          thinking: "disabled",
-        },
-        metadata: {
-          round: round + 1,
-          knowledgeRequired: Boolean(options.knowledgeRequired),
-          messageCharacterCount: options.message.length,
-          contextMessageCount: messages.length,
-          availableToolCount: BUSINESS_AGENT_TOOLS.length,
-        },
-      }, async (observation) => {
-        const response = await fetch(completionUrl(options.config.baseUrl), {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Accept: "application/json", Authorization: `Bearer ${options.config.apiKey}` },
-          body: JSON.stringify({
-            model: options.model, messages, tools: BUSINESS_AGENT_TOOLS, tool_choice: "auto",
-            response_format: { type: "json_object" }, max_completion_tokens: 1200, stream: false,
-            thinking: { type: "disabled" },
-            ...(options.conversationId ? { prompt_cache_key: `conv_${createHash("sha256").update(options.conversationId).digest("hex").slice(0, 32)}` } : {}),
-          }),
-          cache: "no-store", redirect: "manual", signal: options.signal
-            ? AbortSignal.any([options.signal, AbortSignal.timeout(35_000)])
-            : AbortSignal.timeout(35_000),
-        });
-        if (!response.ok) {
-          observation.update({
-            output: { status: "http_error", httpStatus: response.status },
-            metadata: { round: round + 1, status: "http_error", httpStatus: response.status },
-            level: "ERROR",
-            statusMessage: `model_http_${response.status}`,
+        let response: Response;
+        try {
+          response = await fetch(completionUrl(options.config.baseUrl), {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "application/json", Authorization: `Bearer ${options.config.apiKey}` },
+            body: JSON.stringify({
+              model: options.model, messages, tools: BUSINESS_AGENT_TOOLS, tool_choice: "auto",
+              response_format: { type: "json_object" }, max_completion_tokens: 1200, stream: false,
+              thinking: { type: "disabled" },
+              ...(options.conversationId ? { prompt_cache_key: `conv_${createHash("sha256").update(options.conversationId).digest("hex").slice(0, 32)}` } : {}),
+            }),
+            cache: "no-store", redirect: "manual", signal: options.signal
+              ? AbortSignal.any([options.signal, AbortSignal.timeout(35_000)])
+              : AbortSignal.timeout(35_000),
           });
-          throw new Error(`model_http_${response.status}`);
+        } catch {
+          throw kimiNetworkError();
         }
-        const body = await payload(response);
+        if (response.status >= 300 && response.status < 400) throw kimiNetworkError();
+        if (!response.ok) {
+          // Do not read or retain the upstream error body.
+          throw kimiHttpError(response.status);
+        }
+        let body: Record<string, unknown>;
+        try {
+          body = await payload(response);
+        } catch {
+          throw new KimiRequestError("invalid_response");
+        }
         const roundUsage = completedUsage(accumulateUsage(null, body.usage));
         const choices = Array.isArray(body.choices) ? body.choices : [];
         const choice = choices[0] && typeof choices[0] === "object" ? choices[0] as Record<string, unknown> : null;
@@ -315,22 +282,7 @@ export async function runKimiAgent(options: {
           ...(typeof raw.reasoning_content === "string" ? { reasoning_content: raw.reasoning_content.slice(0, 50_000) } : {}),
           ...(calls.length ? { tool_calls: calls } : {}),
         };
-        const details = usageDetails(roundUsage);
-        observation.update({
-          output: summarizeText(assistant.content),
-          metadata: {
-            round: round + 1,
-            status: "ok",
-            httpStatus: response.status,
-            responseCharacterCount: assistant.content?.length || 0,
-            toolCallCount: calls.length,
-            hasReasoning: typeof raw.reasoning_content === "string",
-          },
-          ...(details ? { usageDetails: details } : {}),
-          statusMessage: calls.length ? "tool_calls" : "final_response",
-        });
-        return { assistant, calls, roundUsage };
-      });
+        modelRound = { assistant, calls, roundUsage };
     } finally {
       modelLatencyMs += Date.now() - modelStarted;
     }
@@ -344,36 +296,7 @@ export async function runKimiAgent(options: {
       const grounded = !options.knowledgeRequired || (knowledgeSearchAttempted
         && final.citationChunkIds.length > 0
         && citations.length === final.citationChunkIds.length);
-      const accepted = await observe({
-        name: "validate-grounded-business-answer",
-        asType: "guardrail",
-        input: {
-          knowledgeRequired: Boolean(options.knowledgeRequired),
-          knowledgeSearchAttempted,
-          structuredOutputValid: final.valid,
-          requestedCitationCount: final.citationChunkIds.length,
-          authorisedCitationCount: citations.length,
-        },
-        metadata: { round: round + 1 },
-      }, async (observation) => {
-        const passed = final.valid && grounded;
-        observation.update({
-          output: { passed, grounded },
-          metadata: {
-            round: round + 1,
-            passed,
-            grounded,
-            knowledgeRequired: Boolean(options.knowledgeRequired),
-            knowledgeSearchAttempted,
-            structuredOutputValid: final.valid,
-            requestedCitationCount: final.citationChunkIds.length,
-            authorisedCitationCount: citations.length,
-          },
-          level: passed ? "DEFAULT" : "WARNING",
-          statusMessage: passed ? "passed" : "rejected",
-        });
-        return passed;
-      });
+      const accepted = final.valid && grounded;
       return {
         ...final,
         valid: accepted,
@@ -385,42 +308,18 @@ export async function runKimiAgent(options: {
     for (const call of calls) {
       const canonical = canonicalToolCall(call.function.name, call.function.arguments);
       const cachedResult = canonical ? cache.get(canonical.cacheKey) : undefined;
-      const requestedToolName = BUSINESS_AGENT_TOOLS.find((tool) => tool.function.name === call.function.name)?.function.name || "invalid";
-      const isRetriever = requestedToolName === "search_knowledge_base";
       const toolStarted = Date.now();
-      let tracedExecution: { name: (typeof BUSINESS_AGENT_TOOLS)[number]["function"]["name"]; cacheKey: string; result: ToolEnvelope<unknown> };
+      let toolExecution: { name: (typeof BUSINESS_AGENT_TOOLS)[number]["function"]["name"]; cacheKey: string; result: ToolEnvelope<unknown> };
       try {
-        tracedExecution = await observe({
-          name: isRetriever ? "retrieve-business-knowledge" : "execute-business-tool",
-          asType: isRetriever ? "retriever" : "tool",
-          input: summarizeToolInput({
-            toolName: requestedToolName,
-            argumentBytes: Buffer.byteLength(call.function.arguments, "utf8"),
-            cached: Boolean(cachedResult),
-          }, { captureContent: false }),
-          metadata: {
-            toolName: requestedToolName,
-            cached: Boolean(cachedResult),
-            argumentBytes: Buffer.byteLength(call.function.arguments, "utf8"),
-          },
-        }, async (observation) => {
-          const execution = cachedResult ? null : await options.executor.execute(call.function.name, call.function.arguments);
-          const name = canonical?.name || execution!.name;
-          const cacheKey = canonical?.cacheKey || execution!.cacheKey;
-          const result = cachedResult || execution!.result;
-          const outputShape = safeToolOutputShape(result);
-          observation.update({
-            output: summarizeToolOutput(outputShape, { captureContent: false }),
-            metadata: { toolName: name, cached: Boolean(cachedResult), ...outputShape },
-            level: result.ok ? "DEFAULT" : result.error_code === "timeout" || result.error_code === "unavailable" ? "ERROR" : "WARNING",
-            statusMessage: result.ok ? "ok" : result.error_code || "error",
-          });
-          return { name, cacheKey, result };
-        });
+        const execution = cachedResult ? null : await options.executor.execute(call.function.name, call.function.arguments);
+        const name = canonical?.name || execution!.name;
+        const cacheKey = canonical?.cacheKey || execution!.cacheKey;
+        const result = cachedResult || execution!.result;
+        toolExecution = { name, cacheKey, result };
       } finally {
         toolLatencyMs += Date.now() - toolStarted;
       }
-      const { name, cacheKey, result } = tracedExecution;
+      const { name, cacheKey, result } = toolExecution;
       cache.set(cacheKey, result);
       if (name === "search_knowledge_base") {
         knowledgeSearchAttempted = true;
@@ -437,29 +336,5 @@ export async function runKimiAgent(options: {
       messages.push({ role: "tool", tool_call_id: call.id, content: boundedResult.content });
     }
   }
-  await observe({
-    name: "validate-grounded-business-answer",
-    asType: "guardrail",
-    input: {
-      knowledgeRequired: Boolean(options.knowledgeRequired),
-      knowledgeSearchAttempted,
-      structuredOutputValid: false,
-      requestedCitationCount: 0,
-      authorisedCitationCount: 0,
-    },
-    metadata: {
-      passed: false,
-      grounded: false,
-      reason: "tool_round_limit",
-      knowledgeRequired: Boolean(options.knowledgeRequired),
-      knowledgeSearchAttempted,
-    },
-  }, async (observation) => {
-    observation.update({
-      output: { passed: false, grounded: false, reason: "tool_round_limit" },
-      level: "WARNING",
-      statusMessage: "tool_round_limit",
-    });
-  });
   return { valid: false, answer: "", citations: [], limitations: ["已达到工具调用轮次上限。"], toolCalls, updatedAt, usage: completedUsage(usage), incompleteData, policyConflict, exhausted: true, modelLatencyMs, toolLatencyMs };
 }

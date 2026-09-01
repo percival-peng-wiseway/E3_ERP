@@ -127,3 +127,28 @@ test("Kimi rejects responses without an explicit complete finish reason", async 
     /incomplete response/u,
   );
 });
+
+test("Kimi classifies an authentication failure without reading or exposing its response body", async () => {
+  const upstreamMarker = "raw-upstream-secret moonshot-test-key";
+  globalThis.fetch = (async () => new Response(JSON.stringify({
+    error: { message: upstreamMarker },
+  }), { status: 401, headers: { "content-type": "application/json" } })) as typeof fetch;
+
+  await assert.rejects(
+    answerWithKimi({
+      provider,
+      auth,
+      message: "Hello",
+      apiKey: "moonshot-test-key",
+      baseUrl: "https://api.moonshot.cn/v1",
+      model: "kimi-k2.6",
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal(error.name, "KimiRequestError");
+      assert.equal((error as Error & { kind?: string }).kind, "authentication");
+      assert.equal(String(error).includes(upstreamMarker), false);
+      return true;
+    },
+  );
+});

@@ -11,6 +11,7 @@ const originalInfo = console.info;
 const keys = [
   "MOONSHOT_API_KEY",
   "KIMI_API_KEY",
+  "KIMI_REGION",
   "KIMI_BASE_URL",
   "KIMI_MODEL_NAME",
   "KIMI_MODEL_FAST",
@@ -26,7 +27,8 @@ afterEach(() => {
 
 test("Flash escalates once on incomplete data and Pro reuses the cached tool result", async () => {
   mutableProcessEnv.KIMI_API_KEY = "test-key";
-  mutableProcessEnv.KIMI_BASE_URL = "https://api.moonshot.test/v1";
+  mutableProcessEnv.KIMI_REGION = "china";
+  mutableProcessEnv.KIMI_BASE_URL = "https://api.moonshot.cn/v1";
   mutableProcessEnv.KIMI_MODEL_FAST = "flash";
   mutableProcessEnv.KIMI_MODEL_COMPLEX = "pro";
   const bodies: Array<Record<string, unknown>> = [];

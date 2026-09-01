@@ -14,6 +14,7 @@ import {
 
 type StoredAgentSettings = {
   apiKey?: string;
+  region: KimiRegion;
   updatedAt: string;
 };
 
@@ -24,11 +25,19 @@ type LegacyStoredKimiSettings = {
   complexModel: string;
 };
 
-export const DEFAULT_KIMI_BASE_URL = "https://api.moonshot.ai/v1";
+export const KIMI_REGIONS = ["china", "international"] as const;
+export type KimiRegion = (typeof KIMI_REGIONS)[number];
+export const DEFAULT_KIMI_REGION: KimiRegion = "china";
+export const KIMI_BASE_URLS: Readonly<Record<KimiRegion, string>> = {
+  china: "https://api.moonshot.cn/v1",
+  international: "https://api.moonshot.ai/v1",
+};
+export const DEFAULT_KIMI_BASE_URL = KIMI_BASE_URLS[DEFAULT_KIMI_REGION];
 export const DEFAULT_KIMI_MODEL = "kimi-k2.6";
 
 export type ResolvedKimiSettings = {
   apiKey: string | null;
+  region: KimiRegion;
   baseUrl: string;
   fastModel: string;
   complexModel: string;
@@ -38,6 +47,7 @@ export type ResolvedKimiSettings = {
 export type PublicAgentSettings = {
   configured: boolean;
   maskedApiKey: string | null;
+  region: KimiRegion;
   baseUrl: string;
   model: string;
   source: "saved" | "environment" | "default";
@@ -45,6 +55,11 @@ export type PublicAgentSettings = {
 
 export type AgentSettingsInput = {
   apiKey?: string;
+  region?: KimiRegion;
+};
+
+type AgentSettingsDependencies = {
+  fetchImpl?: typeof fetch;
 };
 
 export class AgentSettingsError extends Error {
@@ -104,21 +119,36 @@ function normalizedApiKey(value: string): string {
 export function parseAgentSettingsInput(value: unknown): AgentSettingsInput | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const body = value as Record<string, unknown>;
-  if (Object.keys(body).some((key) => key !== "apiKey")) return null;
+  if (Object.keys(body).some((key) => !["apiKey", "region"].includes(key))) return null;
   if (body.apiKey !== undefined && typeof body.apiKey !== "string") return null;
-  return typeof body.apiKey === "string" ? { apiKey: body.apiKey } : {};
+  if (body.region !== undefined && !KIMI_REGIONS.includes(body.region as KimiRegion)) return null;
+  return {
+    ...(typeof body.apiKey === "string" ? { apiKey: body.apiKey } : {}),
+    ...(body.region !== undefined ? { region: body.region as KimiRegion } : {}),
+  };
 }
 
-function normalizedKimiBaseUrl(value: string): string {
+function normalizedKimiRegion(value: unknown): KimiRegion {
+  if (KIMI_REGIONS.includes(value as KimiRegion)) return value as KimiRegion;
+  throw new AgentSettingsError("Choose either the China or International Kimi API region.");
+}
+
+function kimiRegionForBaseUrl(value: string): KimiRegion {
   const text = value.trim();
   let url: URL;
   try { url = new URL(text); } catch { throw new AgentSettingsError("Enter a valid Kimi API base URL."); }
-  if (url.protocol !== "https:" || url.hostname.toLowerCase() !== "api.moonshot.ai"
-    || url.port || url.username || url.password || url.search || url.hash
+  if (url.protocol !== "https:" || url.port || url.username || url.password || url.search || url.hash
     || !["", "/", "/v1", "/v1/"].includes(url.pathname)) {
-    throw new AgentSettingsError("Kimi must use https://api.moonshot.ai/v1.");
+    throw new AgentSettingsError("Kimi must use an official Moonshot API endpoint.");
   }
-  return DEFAULT_KIMI_BASE_URL;
+  const hostname = url.hostname.toLowerCase();
+  if (hostname === "api.moonshot.cn") return "china";
+  if (hostname === "api.moonshot.ai") return "international";
+  throw new AgentSettingsError("Kimi must use an official Moonshot API endpoint.");
+}
+
+export function kimiBaseUrlForRegion(region: KimiRegion): string {
+  return KIMI_BASE_URLS[normalizedKimiRegion(region)];
 }
 
 function normalizedKimiModel(value: string): string {
@@ -135,11 +165,14 @@ function normalizeLegacyStoredKimi(value: unknown): StoredAgentSettings | null {
   if (Object.keys(candidate).some((key) => !allowed.has(key))) return null;
   if (candidate.apiKey !== undefined && typeof candidate.apiKey !== "string") return null;
   try {
-    normalizedKimiBaseUrl(String(candidate.baseUrl || DEFAULT_KIMI_BASE_URL));
+    const region = candidate.baseUrl
+      ? kimiRegionForBaseUrl(String(candidate.baseUrl))
+      : DEFAULT_KIMI_REGION;
     normalizedKimiModel(String(candidate.fastModel || DEFAULT_KIMI_MODEL));
     normalizedKimiModel(String(candidate.complexModel || DEFAULT_KIMI_MODEL));
     return {
       ...(typeof candidate.apiKey === "string" && candidate.apiKey.trim() ? { apiKey: normalizedApiKey(candidate.apiKey) } : {}),
+      region,
       updatedAt: new Date(0).toISOString(),
     };
   } catch { return null; }
@@ -151,6 +184,7 @@ function normalizeStoredSettings(value: unknown): StoredAgentSettings | null {
     kimi?: unknown;
     baseUrl?: unknown;
     model?: unknown;
+    region?: unknown;
   };
   if (candidate.apiKey !== undefined && typeof candidate.apiKey !== "string") return null;
   try {
@@ -166,18 +200,24 @@ function normalizeStoredSettings(value: unknown): StoredAgentSettings | null {
     }
     const legacyEndpointFieldsPresent = candidate.baseUrl !== undefined || candidate.model !== undefined;
     const allowed = legacyEndpointFieldsPresent
-      ? new Set(["apiKey", "baseUrl", "model", "updatedAt"])
-      : new Set(["apiKey", "updatedAt"]);
+      ? new Set(["apiKey", "baseUrl", "model", "region", "updatedAt"])
+      : new Set(["apiKey", "region", "updatedAt"]);
     if (Object.keys(candidate).some((key) => !allowed.has(key))) return null;
+    let region = candidate.region === undefined
+      ? DEFAULT_KIMI_REGION
+      : normalizedKimiRegion(candidate.region);
     if (legacyEndpointFieldsPresent) {
       if (typeof candidate.baseUrl !== "string" || typeof candidate.model !== "string") return null;
-      normalizedKimiBaseUrl(candidate.baseUrl);
+      const endpointRegion = kimiRegionForBaseUrl(candidate.baseUrl);
+      if (candidate.region !== undefined && endpointRegion !== region) return null;
+      region = endpointRegion;
       normalizedKimiModel(candidate.model);
     }
     return {
       ...(typeof candidate.apiKey === "string" && candidate.apiKey.trim()
         ? { apiKey: normalizedApiKey(candidate.apiKey) }
         : {}),
+      region,
       updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : new Date(0).toISOString(),
     };
   } catch {
@@ -310,22 +350,37 @@ async function clearStoredSettings() {
 
 export function resolveEnvironmentKimiSettings(): ResolvedKimiSettings {
   let apiKey: string | null = null;
-  let baseUrl = DEFAULT_KIMI_BASE_URL;
+  let region = DEFAULT_KIMI_REGION;
   let model = DEFAULT_KIMI_MODEL;
   try {
     const configuredKey = process.env.MOONSHOT_API_KEY || process.env.KIMI_API_KEY;
     const configuredModel = process.env.KIMI_MODEL_NAME || process.env.KIMI_MODEL_FAST || process.env.KIMI_MODEL_COMPLEX;
     if (configuredKey?.trim()) apiKey = normalizedApiKey(configuredKey);
-    if (process.env.KIMI_BASE_URL?.trim()) baseUrl = normalizedKimiBaseUrl(process.env.KIMI_BASE_URL);
+    const configuredRegion = process.env.KIMI_REGION?.trim()
+      ? normalizedKimiRegion(process.env.KIMI_REGION.trim())
+      : null;
+    const endpointRegion = process.env.KIMI_BASE_URL?.trim()
+      ? kimiRegionForBaseUrl(process.env.KIMI_BASE_URL)
+      : null;
+    if (configuredRegion && endpointRegion && configuredRegion !== endpointRegion) {
+      throw new AgentSettingsError("KIMI_REGION and KIMI_BASE_URL select different Moonshot regions.");
+    }
+    region = configuredRegion || endpointRegion || DEFAULT_KIMI_REGION;
     if (configuredModel?.trim()) {
       model = normalizedKimiModel(configuredModel);
     }
   } catch (error) {
-    console.error("Invalid Kimi environment configuration", error instanceof Error ? error.message : error);
+    // Fail closed as unconfigured. A typo must never pair a valid key with a
+    // different default region or model than the operator selected.
+    apiKey = null;
+    region = DEFAULT_KIMI_REGION;
+    model = DEFAULT_KIMI_MODEL;
+    console.error("Invalid Kimi environment configuration", error instanceof Error ? error.name : "UnknownError");
   }
   return {
     apiKey,
-    baseUrl,
+    region,
+    baseUrl: kimiBaseUrlForRegion(region),
     fastModel: model,
     complexModel: model,
     source: apiKey ? "environment" : "default",
@@ -345,9 +400,12 @@ export async function resolveKimiSettings(): Promise<ResolvedKimiSettings> {
     Promise.resolve(resolveEnvironmentKimiSettings()),
   ]);
   const saved = document.settings;
+  const useSaved = Boolean(saved?.apiKey);
+  const region = useSaved ? saved?.region || DEFAULT_KIMI_REGION : environment.region;
   return {
     apiKey: saved?.apiKey || environment.apiKey,
-    baseUrl: environment.baseUrl,
+    region,
+    baseUrl: kimiBaseUrlForRegion(region),
     fastModel: environment.fastModel,
     complexModel: environment.complexModel,
     source: saved?.apiKey ? "saved" : environment.source,
@@ -365,21 +423,126 @@ export async function publicAgentSettings(): Promise<PublicAgentSettings> {
   return {
     configured: Boolean(kimi.apiKey),
     maskedApiKey: maskedApiKey(kimi.apiKey),
+    region: kimi.region,
     baseUrl: kimi.baseUrl,
     model: kimi.fastModel,
     source: kimi.source,
   };
 }
 
-export function saveAgentSettings(input: AgentSettingsInput): Promise<PublicAgentSettings> {
+async function limitedModelList(response: Response): Promise<unknown> {
+  const maximum = 512 * 1024;
+  const declared = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > maximum) throw new Error("oversized_response");
+  if (!response.body) throw new Error("empty_response");
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maximum) {
+      await reader.cancel();
+      throw new Error("oversized_response");
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+
+function regionLabel(region: KimiRegion) {
+  return region === "china" ? "China" : "International";
+}
+
+async function validateKimiConnection(
+  apiKey: string,
+  region: KimiRegion,
+  fetchImpl: typeof fetch,
+) {
+  let response: Response;
+  try {
+    response = await fetchImpl(`${kimiBaseUrlForRegion(region)}/models`, {
+      method: "GET",
+      headers: { Accept: "application/json", Authorization: `Bearer ${apiKey}` },
+      cache: "no-store",
+      redirect: "manual",
+      signal: AbortSignal.timeout(12_000),
+    });
+  } catch {
+    throw new AgentSettingsError(
+      `The ${regionLabel(region)} Kimi API could not be reached. Try again.`,
+      502,
+      "kimi_connection_failed",
+    );
+  }
+  if (response.status >= 300 && response.status < 400) {
+    throw new AgentSettingsError("The Kimi API returned an unexpected redirect.", 502, "kimi_connection_failed");
+  }
+  if (!response.ok) {
+    if (response.status === 400) {
+      throw new AgentSettingsError("The Kimi API rejected the validation request.", 400, "kimi_request_rejected");
+    }
+    if (response.status === 401) {
+      throw new AgentSettingsError(
+        `The API key is not valid for the ${regionLabel(region)} Kimi platform. Check the key and selected region.`,
+        401,
+        "kimi_authentication_failed",
+      );
+    }
+    if (response.status === 403) {
+      throw new AgentSettingsError("The Kimi account or IP allowlist does not permit this request.", 403, "kimi_permission_denied");
+    }
+    if (response.status === 404) {
+      throw new AgentSettingsError("Kimi K2.6 is not available to this account or region.", 400, "kimi_model_unavailable");
+    }
+    if (response.status === 429) {
+      throw new AgentSettingsError("The Kimi account has insufficient quota or is currently rate limited.", 429, "kimi_quota_or_rate_limited");
+    }
+    if (response.status >= 500) {
+      throw new AgentSettingsError("The Kimi service is temporarily unavailable.", 503, "kimi_service_unavailable");
+    }
+    throw new AgentSettingsError("The Kimi connection could not be verified.", 502, "kimi_connection_failed");
+  }
+  let body: unknown;
+  try {
+    body = await limitedModelList(response);
+  } catch {
+    throw new AgentSettingsError("The Kimi API returned an invalid model list.", 502, "kimi_invalid_response");
+  }
+  const data = body && typeof body === "object" && !Array.isArray(body)
+    ? (body as { data?: unknown }).data
+    : null;
+  const modelAvailable = Array.isArray(data) && data.some((item) => (
+    item && typeof item === "object" && !Array.isArray(item)
+      && (item as { id?: unknown }).id === DEFAULT_KIMI_MODEL
+  ));
+  if (!modelAvailable) {
+    throw new AgentSettingsError("Kimi K2.6 is not available to this account or region.", 400, "kimi_model_unavailable");
+  }
+}
+
+export function saveAgentSettings(
+  input: AgentSettingsInput,
+  dependencies: AgentSettingsDependencies = {},
+): Promise<PublicAgentSettings> {
   return withMutation(async () => {
     const document = await readStoredSettingsDocument();
     const current = document.settings;
     const suppliedKey = input.apiKey?.trim();
     const apiKey = suppliedKey ? normalizedApiKey(suppliedKey) : current?.apiKey;
     if (!apiKey) throw new AgentSettingsError("Enter a valid Moonshot API key.");
+    const region = normalizedKimiRegion(input.region || current?.region || DEFAULT_KIMI_REGION);
+    await validateKimiConnection(apiKey, region, dependencies.fetchImpl || fetch);
     await writeStoredSettings({
       apiKey,
+      region,
       updatedAt: new Date().toISOString(),
     }, document.version);
     const environment = resolveEnvironmentKimiSettings();
@@ -387,7 +550,8 @@ export function saveAgentSettings(input: AgentSettingsInput): Promise<PublicAgen
     return {
       configured: Boolean(resolvedKey),
       maskedApiKey: maskedApiKey(resolvedKey),
-      baseUrl: environment.baseUrl,
+      region,
+      baseUrl: kimiBaseUrlForRegion(region),
       model: environment.fastModel,
       source: "saved",
     };
@@ -401,6 +565,7 @@ export function clearAgentSettings(): Promise<PublicAgentSettings> {
     return {
       configured: Boolean(kimi.apiKey),
       maskedApiKey: maskedApiKey(kimi.apiKey),
+      region: kimi.region,
       baseUrl: kimi.baseUrl,
       model: kimi.fastModel,
       source: kimi.source,

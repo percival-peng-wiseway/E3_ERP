@@ -53,7 +53,7 @@ export async function PUT(request: Request) {
 
   try {
     const input = parseAgentSettingsInput(await readLimitedAgentJson(request, MAX_SETTINGS_BODY));
-    if (!input) return error(400, "invalid_settings", "Enter a valid Moonshot API key.");
+    if (!input) return error(400, "invalid_settings", "Enter a valid Moonshot API key and region.");
     return json({ data: await saveAgentSettings(input) });
   } catch (settingsError) {
     if (settingsError instanceof AgentRequestBodyTooLarge) {
