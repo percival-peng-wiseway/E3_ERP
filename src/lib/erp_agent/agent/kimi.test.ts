@@ -128,6 +128,27 @@ test("Kimi rejects responses without an explicit complete finish reason", async 
   );
 });
 
+test("a disabled knowledge Skill fails closed without calling the model", async () => {
+  let fetchCalls = 0;
+  globalThis.fetch = (async () => {
+    fetchCalls += 1;
+    return Response.json({ choices: [] });
+  }) as typeof fetch;
+
+  const answer = await answerWithKimi({
+    provider,
+    auth,
+    message: "What does the warranty policy say?",
+    apiKey: "moonshot-test-key",
+    baseUrl: "https://api.moonshot.ai/v1",
+    model: "kimi-k2.6",
+    enabledSkills: new Set(["inventory"]),
+  });
+
+  assert.equal(answer.answer, "No matching information was found. Please try again.");
+  assert.equal(fetchCalls, 0);
+});
+
 test("Kimi classifies an authentication failure without reading or exposing its response body", async () => {
   const upstreamMarker = "raw-upstream-secret moonshot-test-key";
   globalThis.fetch = (async () => new Response(JSON.stringify({

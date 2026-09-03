@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "name": "E3 Agent release evaluation",
+  "datasets": [
+    {
+      "id": "main-agent-business",
+      "path": "evals/agent-business.json",
+      "endpoint": "/api/agent",
+      "purpose": "Deterministic ERP workflow, Skill and Toolset routing"
+    },
+    {
+      "id": "business-agent-regression",
+      "path": "evals/business-agent.json",
+      "endpoint": "/api/agent/chat",
+      "purpose": "Business tools, permissions and cross-module regression"
+    },
+    {
+      "id": "knowledge-rag",
+      "path": "evals/knowledge-rag.json",
+      "endpoint": "/api/agent/chat",
+      "purpose": "Knowledge retrieval, citation, freshness and abstention regression"
+    }
+  ],
+  "releaseGates": {
+    "deterministicWorkflowAccuracy": 1,
+    "skillToolsetRoutingAccuracy": 0.98,
+    "toolSelectionAccuracy": 0.95,
+    "knowledgeRecallAt5": 0.9,
+    "citationCorrectness": 0.98,
+    "groundedFactAccuracy": 0.95,
+    "correctAbstentionRate": 0.95,
+    "permissionLeakRate": 0,
+    "writeOperationCount": 0
+  },
+  "privacy": {
+    "storeRawPrompts": false,
+    "storeRawAnswers": false,
+    "storeToolArguments": false,
+    "storeToolResults": false,
+    "storeSecrets": false
+  }
+}

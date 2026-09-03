@@ -48,6 +48,10 @@ const AgentSettingsDialog = dynamic(
   () => import("./agent-settings-dialog").then((module) => module.AgentSettingsDialog),
   { ssr: false, loading: WorkspaceLoading },
 );
+const AgentTraceWorkspace = dynamic(
+  () => import("./agent-trace-workspace").then((module) => module.AgentTraceWorkspace),
+  { ssr: false, loading: WorkspaceLoading },
+);
 const FilesWorkspace = dynamic(
   () => import("./files-workspace").then((module) => module.FilesWorkspace),
   { ssr: false, loading: WorkspaceLoading },
@@ -89,7 +93,7 @@ const UserManagementDialog = dynamic(
   { ssr: false, loading: WorkspaceLoading },
 );
 
-type ModuleId = "home" | "files" | "inventory" | "quotations" | "projects" | "site-visits" | "payments" | "reimbursements" | "reports" | "finance";
+type ModuleId = "home" | "files" | "inventory" | "quotations" | "projects" | "site-visits" | "payments" | "reimbursements" | "reports" | "agent-traces" | "finance";
 type EntityNavigationTarget = { module: ModuleId; entityId: string; requestId: number };
 
 const NAVIGATION: Array<{
@@ -127,6 +131,7 @@ const MODULE_LABELS: Record<ModuleId, string> = {
   payments: "Project Track",
   reimbursements: "Reimbursements",
   reports: "Reports",
+  "agent-traces": "Agent Trace",
   finance: "Finance & Accounting",
 };
 
@@ -452,6 +457,7 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
           {currentUser.role === "admin" ? (
             <>
               <button onClick={() => setAgentSettingsOpen(true)}><Settings size={16} /><span>Agent Settings</span></button>
+              <button className={activeModule === "agent-traces" ? "active" : ""} onClick={() => navigate("agent-traces")}><Activity size={16} /><span>Agent Trace</span></button>
               <button onClick={() => setUserManagementOpen(true)}><Users size={16} /><span>User Management</span></button>
             </>
           ) : null}
@@ -466,7 +472,7 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
           <div className="page-breadcrumb"><span>E3 Energy</span><ChevronRight size={12} /><strong>{MODULE_LABELS[activeModule]}</strong></div>
           <div className="page-bar-actions"><button><Activity size={15} />Activity</button><button><PanelLeftClose size={15} />Sidebar</button></div>
         </div>
-        <main className={`desk-main ${activeModule === "home" || activeModule === "files" || activeModule === "projects" || activeModule === "site-visits" || activeModule === "payments" || activeModule === "reimbursements" ? "wide-workspace" : ""}`}>
+        <main className={`desk-main ${activeModule === "home" || activeModule === "files" || activeModule === "projects" || activeModule === "site-visits" || activeModule === "payments" || activeModule === "reimbursements" || activeModule === "agent-traces" ? "wide-workspace" : ""}`}>
           <div className="persistent-home-workspace" hidden={activeModule !== "home"}>
             <HomeCollaborationWorkspace
               currentUser={currentUser}
@@ -488,6 +494,7 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
           {activeModule === "payments" && <PaymentTrackWorkspace authenticatedRole={currentUser.role} openEntityTarget={entityNavigationTarget?.module === "payments" ? entityNavigationTarget : undefined} />}
           {activeModule === "reimbursements" && <ReimbursementWorkspace authenticatedRole={currentUser.role} openEntityTarget={entityNavigationTarget?.module === "reimbursements" ? entityNavigationTarget : undefined} />}
           {activeModule === "reports" && <ReportsWorkspace />}
+          {activeModule === "agent-traces" && currentUser.role === "admin" && <AgentTraceWorkspace />}
           {activeModule === "finance" && <ComingSoon />}
         </main>
       </div>

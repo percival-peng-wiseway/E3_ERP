@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { answerWithKimi, informationNotFound } from "@/lib/erp_agent/agent/kimi";
 import { kimiRequestWarning, safeKimiErrorKind } from "@/lib/erp_agent/agent/kimi-error";
 import { shouldUseKnowledgeConversationIntent } from "@/lib/erp_agent/agent/tool-routing";
@@ -13,6 +14,14 @@ import {
   type ResolvedKimiSettings,
 } from "@/lib/erp_agent/agent/settings";
 import { AgentTrace } from "@/lib/erp_agent/agent/trace";
+import { recordAgentTrace } from "@/lib/erp_agent/agent/trace-store";
+import type {
+  AgentTraceContext,
+  AgentTraceIssueCode,
+  AgentTraceRequestLanguage,
+} from "@/lib/erp_agent/agent/trace-record";
+import { controlledMemoryFromConversation } from "@/lib/erp_agent/agent/memory";
+import { resolveAgentSkillPolicy, skillForWorkflow } from "@/lib/erp_agent/agent/skills";
 import { deterministicWorkflowDependencies } from "@/lib/erp_agent/agent/workflow-dependencies";
 import { runDeterministicWorkflow } from "@/lib/erp_agent/agent/workflows";
 import { getERPProvider, type AgentHistoryMessage } from "@/lib/erp";
@@ -44,6 +53,32 @@ function error(status: number, code: string, message: string) {
 
 function safeErrorKind(value: unknown) {
   return safeKimiErrorKind(value) || (value instanceof Error ? value.name : "UnknownError");
+}
+
+function requestLanguage(value: string): AgentTraceRequestLanguage {
+  const chinese = /[\u3400-\u9fff]/u.test(value);
+  const english = /[a-z]/iu.test(value);
+  if (chinese && english) return "mixed";
+  if (chinese) return "chinese";
+  if (english) return "english";
+  return "other";
+}
+
+function conversationKey(username: string, conversationId?: string) {
+  if (!conversationId) return null;
+  return createHash("sha256").update(`${username}:${conversationId}`).digest("hex").slice(0, 24);
+}
+
+async function persistTrace(trace: AgentTrace, context: AgentTraceContext) {
+  const snapshot = trace.snapshot();
+  trace.emit();
+  try {
+    await recordAgentTrace(snapshot, context);
+  } catch (traceError) {
+    // Trace persistence must never prevent the Agent from returning an answer.
+    console.error("Agent Trace persistence failed", safeErrorKind(traceError));
+  }
+  return snapshot;
 }
 
 function cleanHistory(value: unknown): AgentHistoryMessage[] | null {
@@ -118,21 +153,54 @@ async function processAgentRequest(request: Request) {
     return error(400, "invalid_request", "Enter a question of up to 2,000 characters with valid conversation history.");
   }
 
+  const trace = new AgentTrace();
+  const issueCodes = new Set<AgentTraceIssueCode>();
+  let modelStatus: AgentTraceContext["modelStatus"] = "not_checked";
+  let traceDataSource = "unresolved";
+  const traceContext = (): AgentTraceContext => ({
+    actorUsername: session.user.username,
+    actorRole: session.user.role,
+    conversationKey: conversationKey(session.user.username, input.conversation_id),
+    messageLength: input.message.length,
+    historyMessageCount: input.history.length,
+    attachmentCount: input.attachment_ids.length,
+    requestLanguage: requestLanguage(input.message),
+    dataSource: traceDataSource,
+    modelStatus,
+    issueCodes: [...issueCodes],
+  });
+
   let attachments;
   try {
     attachments = await resolveAgentAttachments({ fileIds: input.attachment_ids, actor: session.user });
   } catch (attachmentError) {
     if (attachmentError instanceof AgentAttachmentError) {
+      trace.markOutcome("error");
+      trace.markAbstained();
+      issueCodes.add("attachment_failed");
+      await persistTrace(trace, traceContext());
       return error(attachmentError.status, attachmentError.code, attachmentError.message);
     }
+    trace.markOutcome("error");
+    trace.markAbstained();
+    issueCodes.add("attachment_failed");
+    await persistTrace(trace, traceContext());
     return error(503, "attachment_unavailable", "The attached files are temporarily unavailable.");
   }
   const pendingAttachment = attachments.find((attachment) => attachment.status === "processing");
   if (pendingAttachment) {
+    trace.markOutcome("error");
+    trace.markAbstained();
+    issueCodes.add("attachment_processing");
+    await persistTrace(trace, traceContext());
     return error(409, "attachment_processing", `“${pendingAttachment.name}” is still being prepared for Agent search.`);
   }
   const failedAttachment = attachments.find((attachment) => attachment.status === "failed");
   if (failedAttachment) {
+    trace.markOutcome("error");
+    trace.markAbstained();
+    issueCodes.add("attachment_failed");
+    await persistTrace(trace, traceContext());
     return error(409, "attachment_failed", `“${failedAttachment.name}” could not be prepared for Agent search.`);
   }
   const attachmentDocuments = attachments.flatMap((attachment) => attachment.knowledgeDocumentId
@@ -143,13 +211,24 @@ async function processAgentRequest(request: Request) {
     imageParts = await resolveKimiImageParts({ attachments, actor: session.user });
   } catch (attachmentError) {
     if (attachmentError instanceof AgentAttachmentError) {
+      trace.markOutcome("error");
+      trace.markAbstained();
+      issueCodes.add("attachment_failed");
+      await persistTrace(trace, traceContext());
       return error(attachmentError.status, attachmentError.code, attachmentError.message);
     }
+    trace.markOutcome("error");
+    trace.markAbstained();
+    issueCodes.add("attachment_failed");
+    await persistTrace(trace, traceContext());
     return error(503, "attachment_unavailable", "The attached images are temporarily unavailable.");
   }
 
   const provider = getERPProvider(request);
+  traceDataSource = provider.source;
   const workspaceMessage = resolveInventoryUsageMessage(input.message, input.history);
+  const skillPolicy = resolveAgentSkillPolicy();
+  const memory = controlledMemoryFromConversation(input.message, input.history);
   const requiresKnowledge = attachmentDocuments.length > 0 || shouldUseKnowledgeConversationIntent(
     workspaceMessage,
     input.history.slice(-2).map((item) => item.content),
@@ -159,12 +238,16 @@ async function processAgentRequest(request: Request) {
     },
   );
   const modelRequest = imageParts.length > 0 || requiresKnowledge;
-  const trace = new AgentTrace();
   const warnings: string[] = [];
+  if (skillPolicy.rejected.length) {
+    // Configuration values are deliberately not emitted: only the count is safe
+    // and sufficient to diagnose an invalid Skill allow-list.
+    console.warn("E3 Agent ignored unrecognised configured Skills", skillPolicy.rejected.length);
+  }
   if (attachments.some((attachment) => attachment.status === "unsupported" && !isKimiImageContentType(attachment.contentType))) {
     warnings.push("The attachment was uploaded, but this Agent cannot analyse that file type yet.");
+    issueCodes.add("unsupported_attachment");
   }
-  let modelStatus: "available" | "unavailable" | "not_checked" = "not_checked";
   let settings: ResolvedKimiSettings;
   try {
     settings = await resolveKimiSettings();
@@ -179,26 +262,51 @@ async function processAgentRequest(request: Request) {
     warnings.push(
       "Saved Agent settings are temporarily unavailable. The environment or default model configuration is being used.",
     );
+    issueCodes.add("settings_unavailable");
   }
   let data;
-  if (modelRequest && !settings.apiKey) {
+  if (requiresKnowledge && !skillPolicy.enabled.has("knowledge")) {
+    modelStatus = "not_checked";
+    warnings.push("The knowledge capability is not enabled for this Agent environment.");
+    issueCodes.add("knowledge_disabled");
+    trace.selectRoute({ skills: [], toolsets: [], memoryKeys: memory.keys });
+    trace.markAbstained();
+    data = informationNotFound(input.message);
+  } else if (modelRequest && !settings.apiKey) {
     modelStatus = "unavailable";
     warnings.push("Kimi K2.6 must be configured before the Agent can answer this request.");
+    issueCodes.add("model_unavailable");
     trace.markOutcome("error");
+    trace.markAbstained();
     data = informationNotFound(input.message);
   } else {
     try {
       const workflowAnswer = modelRequest ? null : await trace.step(
         "harness.workflow",
         "workflow",
-        () => runDeterministicWorkflow(provider, workspaceMessage, trace, deterministicWorkflowDependencies),
+        () => runDeterministicWorkflow(
+          provider,
+          workspaceMessage,
+          trace,
+          deterministicWorkflowDependencies,
+          { enabledSkills: skillPolicy.enabled },
+        ),
       );
       if (workflowAnswer) {
+        const workflow = trace.snapshot().workflow;
+        const workflowSkill = workflow ? skillForWorkflow(workflow) : null;
+        trace.selectRoute({
+          skills: workflowSkill ? [workflowSkill] : [],
+          toolsets: workflowSkill ? [workflowSkill] : [],
+          memoryKeys: memory.keys,
+        });
         data = workflowAnswer;
       } else if (!settings.apiKey) {
         modelStatus = "unavailable";
         warnings.push("Kimi K2.6 must be configured before the Agent can answer this request.");
+        issueCodes.add("model_unavailable");
         trace.markOutcome("error");
+        trace.markAbstained();
         data = informationNotFound(input.message);
       } else {
         modelStatus = "unavailable";
@@ -215,6 +323,9 @@ async function processAgentRequest(request: Request) {
             model: settings.fastModel,
             attachmentDocuments,
             imageParts,
+            enabledSkills: skillPolicy.enabled,
+            memory,
+            trace,
           });
           modelStatus = "available";
           return answer;
@@ -233,12 +344,13 @@ async function processAgentRequest(request: Request) {
           ? "The model request failed. No fallback answer was generated."
           : "The required live workspace data could not be verified. No fallback answer was generated.");
       trace.markOutcome("error");
+      trace.markAbstained();
+      issueCodes.add(modelStatus === "unavailable" ? "model_error" : "agent_error");
       data = informationNotFound(input.message);
     }
   }
 
-  const traceSnapshot = trace.snapshot();
-  trace.emit();
+  const traceSnapshot = await persistTrace(trace, traceContext());
 
   return json({
     data,
@@ -248,6 +360,8 @@ async function processAgentRequest(request: Request) {
       configured: Boolean(settings.apiKey),
       modelStatus,
       model: settings.fastModel,
+      skillPolicy: skillPolicy.source,
+      enabledSkillCount: skillPolicy.enabled.size,
       trace: traceSnapshot,
       ...(warnings.length ? { warning: warnings.join(" ") } : {}),
     },

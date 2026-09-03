@@ -60,8 +60,16 @@ test("unrecognised or cross-module requests retain the complete tool set", () =>
   assert.deepEqual(focusedAgentToolNames("Show deliveries pending PM review"), ["search_delivery_orders"]);
   assert.deepEqual(focusedAgentToolNames("Give me a Project Management overview"), ["search_delivery_orders"]);
   assert.deepEqual(focusedAgentToolNames("What is scheduled tomorrow?"), ["search_weekly_schedule"]);
-  assert.equal(focusedAgentToolNames("Give me the workspace overview"), null);
+  assert.deepEqual(focusedAgentToolNames("Give me the workspace overview"), ["get_workspace_overview"]);
   assert.equal(focusedAgentToolNames("Compare low inventory with pending deliveries"), null);
+});
+
+test("ERP support domains receive a narrow Toolset", () => {
+  assert.deepEqual(focusedAgentToolNames("Show reimbursement expenses"), ["search_reimbursements"]);
+  assert.deepEqual(focusedAgentToolNames("Read the Reports needs document"), ["read_reports_notes"]);
+  assert.deepEqual(focusedAgentToolNames("Show current announcements"), ["search_announcements"]);
+  assert.deepEqual(focusedAgentToolNames("Search the legacy group discussion"), ["search_group_messages"]);
+  assert.equal(shouldUseKnowledgeConversationIntent("Read the Reports needs document"), false);
 });
 
 test("knowledge questions select only the authorised knowledge search tool", () => {

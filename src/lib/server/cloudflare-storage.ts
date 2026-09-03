@@ -110,12 +110,14 @@ export class CloudflareDocumentConflictError extends Error {
 const MAXIMUM_DOCUMENT_BYTES = 1_900_000;
 
 /**
- * Returns null when running under ordinary Node (tests/local Next.js). Inside a
- * Worker it returns the request-scoped bindings, including null for a missing
- * binding so production never silently falls back to the ephemeral filesystem.
+ * Returns null under ordinary Node unless local remote-data mode is explicitly
+ * enabled. Inside a Worker (and in guarded remote-data development) it returns
+ * the request-scoped bindings, including null for a missing binding so the app
+ * never silently falls back to ephemeral storage.
  */
 export async function erpCloudflareBindings(): Promise<ErpCloudflareBindings | null> {
-  if (process.env.NODE_ENV !== "production") return null;
+  const remoteDataDevelopment = process.env.ERP_REMOTE_DATA_READ_ONLY === "true";
+  if (process.env.NODE_ENV !== "production" && !remoteDataDevelopment) return null;
   const context = await getCloudflareContext({ async: true });
   const env = context.env as unknown as {
     ERP_DB?: ErpD1Database;

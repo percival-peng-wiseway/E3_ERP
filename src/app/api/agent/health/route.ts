@@ -1,9 +1,12 @@
 import { getReportContent } from "@/lib/reports/repository";
+import { listAnnouncements } from "@/lib/announcements/repository";
+import { listGroupChatMessages } from "@/lib/group-chat/repository";
 import { listReimbursements } from "@/lib/reimbursements/repository";
 import { listSiteVisits } from "@/lib/site-visits/repository";
 import { listPaymentTrackProjects } from "@/lib/payment-track/repository";
 import { runAgentTool } from "@/lib/erp_agent/agent/tools";
 import { E3_BUSINESS_SKILLS } from "@/lib/erp_agent/agent/skills";
+import type { BusinessSkillId } from "@/lib/erp_agent/agent/skills";
 import { assessKnowledgeReadiness, runAgentHealthChecks } from "@/lib/erp_agent/agent/health";
 import { getERPProvider } from "@/lib/erp";
 import { getKnowledgeReadinessSnapshot } from "@/lib/knowledge/repository";
@@ -61,7 +64,59 @@ export async function GET(request: Request) {
       throw new Error("Weekly Schedule source is unavailable or incomplete.");
     }
   };
+  let knowledgeSnapshot: Promise<{ readyDocuments: number; activeChunks: number }> | null = null;
+  const checkKnowledge = () => {
+    knowledgeSnapshot ||= (async () => {
+      let stage = "bindings";
+      let missingBindings: string[] = [];
+      try {
+        const bindings = await erpCloudflareBindings();
+        const indexingWorkflowRequired = process.env.ERP_REMOTE_DATA_READ_ONLY !== "true";
+        const knowledgeVectors = bindings?.knowledgeVectors;
+        missingBindings = [
+          ...(!bindings?.database ? ["ERP_DB"] : []),
+          ...(!bindings?.files ? ["ERP_FILES"] : []),
+          ...(!bindings?.workersAi ? ["AI"] : []),
+          ...(!knowledgeVectors ? ["KNOWLEDGE_VECTORS"] : []),
+          ...(indexingWorkflowRequired && !bindings?.knowledgeIndexWorkflow ? ["KNOWLEDGE_INDEX_WORKFLOW"] : []),
+        ];
+        if (missingBindings.length || !knowledgeVectors) {
+          throw new Error("Knowledge vector bindings are unavailable.");
+        }
+        stage = "metadata";
+        const readiness = await getKnowledgeReadinessSnapshot(KNOWLEDGE_TENANT_ID);
+        stage = "vector_index";
+        const index = await knowledgeVectors.describe();
+        if (!index || index.dimensions !== 1_024 || !Number.isSafeInteger(index.vectorCount)) {
+          throw new Error("Knowledge vector index metadata is unavailable.");
+        }
+        if (readiness.sampleIndexItemKey) {
+          stage = "vector_sync";
+          const sample = await knowledgeVectors.getByIds([readiness.sampleIndexItemKey]);
+          if (!sample.some((vector) => vector.id === readiness.sampleIndexItemKey)) {
+            throw new Error("Knowledge vectors are out of sync with active ERP chunks.");
+          }
+        }
+        return {
+          readyDocuments: readiness.readyDocuments,
+          activeChunks: readiness.activeChunks,
+        };
+      } catch (error) {
+        console.warn(JSON.stringify({
+          event: "agent_health_check_failed",
+          sourceId: "knowledge",
+          stage,
+          errorType: error instanceof Error ? error.name : "UnknownError",
+          ...(stage === "bindings" ? { missingBindings } : {}),
+        }));
+        throw error;
+      }
+    })();
+    return knowledgeSnapshot;
+  };
   const checkFunctions = {
+    workspace: () => Promise.all([provider.listInventory({ limit: 1 }), provider.listQuotations({ limit: 1 })]),
+    knowledge: checkKnowledge,
     inventory: () => provider.listInventory({ limit: 1 }),
     quotations: () => provider.listQuotations({ limit: 1 }),
     project_management: checkDeliveries,
@@ -70,7 +125,8 @@ export async function GET(request: Request) {
     site_visits: () => listSiteVisits(),
     reimbursements: () => listReimbursements({ includeAll: true }),
     reports: () => getReportContent(),
-  } as const;
+    communications: () => Promise.all([listAnnouncements(), listGroupChatMessages()]),
+  } as const satisfies Record<BusinessSkillId, () => Promise<unknown>>;
   const health = await runAgentHealthChecks([...E3_BUSINESS_SKILLS.map((skill) => ({
     id: skill.id,
     source: skill.dataSource,
@@ -78,28 +134,7 @@ export async function GET(request: Request) {
   })), {
     id: "knowledge_base",
     source: "Workers AI / Vectorize / Files",
-    check: async () => {
-      const bindings = await erpCloudflareBindings();
-      if (!bindings?.database || !bindings.files || !bindings.workersAi || !bindings.knowledgeVectors
-        || !bindings.knowledgeIndexWorkflow) {
-        throw new Error("Knowledge vector bindings are unavailable.");
-      }
-      const readiness = await getKnowledgeReadinessSnapshot(KNOWLEDGE_TENANT_ID);
-      const index = await bindings.knowledgeVectors.describe();
-      if (!index || index.dimensions !== 1_024 || !Number.isSafeInteger(index.vectorCount)) {
-        throw new Error("Knowledge vector index metadata is unavailable.");
-      }
-      if (readiness.sampleIndexItemKey) {
-        const sample = await bindings.knowledgeVectors.getByIds([readiness.sampleIndexItemKey]);
-        if (!sample.some((vector) => vector.id === readiness.sampleIndexItemKey)) {
-          throw new Error("Knowledge vectors are out of sync with active ERP chunks.");
-        }
-      }
-      return {
-        readyDocuments: readiness.readyDocuments,
-        activeChunks: readiness.activeChunks,
-      };
-    },
+    check: checkKnowledge,
     assess: assessKnowledgeReadiness,
   }]);
   return Response.json({

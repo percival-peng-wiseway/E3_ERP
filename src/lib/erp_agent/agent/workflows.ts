@@ -4,6 +4,7 @@ import { hasInventoryUsageReference, inventorySkuCandidates, isBareInventorySkuL
 // @ts-expect-error -- focused Node ESM tests require the explicit extension.
 import { isRebateReceiptAmountIntent } from "./rebate-receipts.ts";
 import type { AgentTrace } from "./trace";
+import type { BusinessSkillId } from "./skills";
 
 export type DeterministicWorkflowName =
   | "greeting"
@@ -40,6 +41,20 @@ export type DeterministicWorkflowDependencies = {
     updatedAt?: string | null;
   }>;
 };
+
+const DEFAULT_ENABLED_SKILLS: ReadonlySet<BusinessSkillId> = new Set([
+  "workspace",
+  "knowledge",
+  "inventory",
+  "quotations",
+  "project_management",
+  "project_track",
+  "weekly_schedule",
+  "site_visits",
+  "reimbursements",
+  "reports",
+  "communications",
+]);
 
 const suggestions = [
   "Which stock items need attention?",
@@ -121,8 +136,11 @@ export async function runDeterministicWorkflow(
   rawMessage: string,
   trace: AgentTrace,
   dependencies: DeterministicWorkflowDependencies,
+  options: { enabledSkills?: ReadonlySet<BusinessSkillId> } = {},
 ): Promise<DeterministicWorkflowResult | null> {
   const message = rawMessage.trim().toLocaleLowerCase("en-AU");
+  const enabledSkills = options.enabledSkills || DEFAULT_ENABLED_SKILLS;
+  const enabled = (skill: BusinessSkillId) => enabledSkills.has(skill);
 
   const greeting = greetingAnswer(rawMessage);
   if (greeting) {
@@ -130,7 +148,7 @@ export async function runDeterministicWorkflow(
     return greeting;
   }
 
-  if (hasWorkspaceOverviewIntent(rawMessage)) {
+  if (enabled("workspace") && hasWorkspaceOverviewIntent(rawMessage)) {
     trace.selectWorkflow("workspace_overview");
     const workspaceOverview = await trace.step("workspace.overview", "tool", () => (
       dependencies.fastWorkspaceOverviewAnswer(provider, rawMessage)
@@ -139,6 +157,7 @@ export async function runDeterministicWorkflow(
   }
 
   const runInventoryWorkflow = async (stepName = "inventory.live_query"): Promise<DeterministicWorkflowResult | null> => {
+    if (!enabled("inventory")) return null;
     trace.selectWorkflow("inventory_query");
     const result = await trace.step(stepName, "tool", () => dependencies.fastInventoryAnswer(rawMessage));
     return result ? { ...result, workflow: "inventory_query" } : null;
@@ -148,13 +167,13 @@ export async function runDeterministicWorkflow(
     return runInventoryWorkflow();
   }
 
-  if (/outstanding|unpaid|amount\s+due|balance\s+due|receivable|尾款|未收(?:款)?|欠款|应收(?:款)?/u.test(message)) {
+  if (enabled("project_track") && /outstanding|unpaid|amount\s+due|balance\s+due|receivable|尾款|未收(?:款)?|欠款|应收(?:款)?/u.test(message)) {
     trace.selectWorkflow("outstanding_payments");
     const result = await trace.step("project_track.outstanding", "tool", () => dependencies.fastPaymentTrackAnswer(rawMessage));
     return result ? { ...result, workflow: "outstanding_payments" } : null;
   }
 
-  if (/(?:quotation|quote|报价).*(?:count|summary|list|show|draft|done|多少|概况|列出|显示|草稿|完成)|(?:count|summary|list|show|多少|概况|列出|显示).*(?:quotation|quote|报价)/u.test(message)) {
+  if (enabled("quotations") && /(?:quotation|quote|报价).*(?:count|summary|list|show|draft|done|多少|概况|列出|显示|草稿|完成)|(?:count|summary|list|show|多少|概况|列出|显示).*(?:quotation|quote|报价)/u.test(message)) {
     trace.selectWorkflow("quotation_summary");
     const status = quotationStatus(message);
     const items = await trace.step("quotations.live_query", "tool", () => provider.listQuotations({ status }));
@@ -175,7 +194,7 @@ export async function runDeterministicWorkflow(
     return runInventoryWorkflow();
   }
 
-  if (hasWeeklyScheduleIntent(message)) {
+  if (enabled("weekly_schedule") && hasWeeklyScheduleIntent(message)) {
     trace.selectWorkflow("weekly_schedule_query");
     const result = await trace.step("weekly_schedule.live_query", "tool", () => (
       dependencies.fastWeeklyScheduleAnswer(provider, rawMessage)
@@ -183,7 +202,7 @@ export async function runDeterministicWorkflow(
     return result ? { ...result, workflow: "weekly_schedule_query" } : null;
   }
 
-  if (/(?:deliver|delivery|pm).*(?:pending|review|待审核|待处理)|(?:pending|待审核|待处理).*(?:deliver|delivery|送货)/u.test(message)) {
+  if (enabled("project_management") && /(?:deliver|delivery|pm).*(?:pending|review|待审核|待处理)|(?:pending|待审核|待处理).*(?:deliver|delivery|送货)/u.test(message)) {
     trace.selectWorkflow("pending_deliveries");
     const payload = await trace.step("deliveries.pending", "tool", async () => {
       const raw = await dependencies.runAgentTool(provider, {
@@ -202,7 +221,7 @@ export async function runDeterministicWorkflow(
     return answer("pending_deliveries", `${payload.count || 0} deliveries are pending PM review.${lines ? `\n\n${lines}` : ""}`);
   }
 
-  if (/(?:site\s*visit|现场勘察|上门勘察).*(?:summary|pending|scheduled|today|概况|待处理|已排期|今天)/u.test(message)) {
+  if (enabled("site_visits") && /(?:site\s*visit|现场勘察|上门勘察).*(?:summary|pending|scheduled|today|概况|待处理|已排期|今天)/u.test(message)) {
     trace.selectWorkflow("site_visit_summary");
     const visits = await trace.step("site_visits.list", "tool", () => dependencies.listSiteVisits());
     const pending = visits.filter((item) => item.status === "pending_approval").length;
@@ -213,7 +232,7 @@ export async function runDeterministicWorkflow(
     return answer("site_visit_summary", text);
   }
 
-  if (/(?:reimburse|expense|报销).*(?:summary|pending|payment|概况|待处理|付款)/u.test(message)) {
+  if (enabled("reimbursements") && /(?:reimburse|expense|报销).*(?:summary|pending|payment|概况|待处理|付款)/u.test(message)) {
     trace.selectWorkflow("reimbursement_summary");
     const claims = await trace.step("reimbursements.list", "tool", () => dependencies.listReimbursements({ includeAll: true }));
     const submitted = claims.filter((item) => item.status === "submitted").length;
@@ -222,7 +241,7 @@ export async function runDeterministicWorkflow(
     return answer("reimbursement_summary", `${claims.length} reimbursement claims: ${submitted} awaiting review and ${pending.length} awaiting payment (${money(pendingTotal)}).`);
   }
 
-  if (/(?:report|needs document|需求文档).*(?:status|summary|updated|状态|概况|更新)/u.test(message)) {
+  if (enabled("reports") && /(?:report|needs document|需求文档).*(?:status|summary|updated|状态|概况|更新)/u.test(message)) {
     trace.selectWorkflow("reports_status");
     const report = await trace.step("reports.read_metadata", "tool", () => dependencies.getReportContent());
     return answer("reports_status", report.content.trim()
@@ -230,7 +249,7 @@ export async function runDeterministicWorkflow(
       : "The Reports needs document is empty.");
   }
 
-  if (hasProjectTrackIntent(message)) {
+  if (enabled("project_track") && hasProjectTrackIntent(message)) {
     trace.selectWorkflow("project_track_query");
     const result = await trace.step("project_track.live_query", "tool", () => dependencies.fastPaymentTrackAnswer(rawMessage));
     return result ? { ...result, workflow: "project_track_query" } : null;

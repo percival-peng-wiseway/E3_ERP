@@ -65,8 +65,11 @@ const nextConfig: NextConfig = {
 
 export default nextConfig;
 
-// Makes Cloudflare bindings available while using the regular Next.js dev
-// server. Production builds are adapted by @opennextjs/cloudflare.
-void import("@opennextjs/cloudflare").then(({ initOpenNextCloudflareForDev }) => {
-  initOpenNextCloudflareForDev();
-});
+// Makes Cloudflare bindings available only while using the regular Next.js
+// development server. Production builds are adapted after Next has compiled
+// and must not start an interactive remote Wrangler session.
+if (process.env.NODE_ENV === "development") {
+  void import("@opennextjs/cloudflare").then(({ initOpenNextCloudflareForDev }) => {
+    initOpenNextCloudflareForDev();
+  });
+}

@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test 'src/lib/**/*.test.ts'",
     "eval:agent": "node scripts/run-agent-evals.mjs",
+    "eval:e3-agent": "node agent-evaluation/run.mjs",
     "eval:business-agent": "node scripts/run-business-agent-evals.mjs",
     "spike:kimi": "node scripts/kimi-compatibility-spike.mjs",
     "cf:build": "opennextjs-cloudflare build",

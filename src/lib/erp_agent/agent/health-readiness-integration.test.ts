@@ -8,7 +8,9 @@ const [healthRoute, homeWorkspace] = await Promise.all([
 ]);
 
 test("agent health derives knowledge readiness from ERP-managed chunks and Vectorize", () => {
-  assert.match(healthRoute, /!bindings\?\.database \|\| !bindings\.files \|\| !bindings\.workersAi \|\| !bindings\.knowledgeVectors/);
+  for (const binding of ["ERP_DB", "ERP_FILES", "AI", "KNOWLEDGE_VECTORS"]) {
+    assert.match(healthRoute, new RegExp(`\\["${binding}"\\]`));
+  }
   assert.match(healthRoute, /getKnowledgeReadinessSnapshot/);
   assert.match(healthRoute, /knowledgeVectors\.describe/);
   assert.match(healthRoute, /knowledgeVectors\.getByIds/);

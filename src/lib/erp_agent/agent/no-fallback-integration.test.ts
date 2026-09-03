@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const [route, modelOrchestrator, homeWorkspace, settingsRoute, settingsDialog, settingsModule] = await Promise.all([
+const [route, modelOrchestrator, promptBuilder, homeWorkspace, settingsRoute, settingsDialog, settingsModule] = await Promise.all([
   readFile(new URL("../../../app/api/agent/route.ts", import.meta.url), "utf8"),
   readFile(new URL("./kimi.ts", import.meta.url), "utf8"),
+  readFile(new URL("./prompt-builder.ts", import.meta.url), "utf8"),
   readFile(new URL("../../../components/home-collaboration-workspace.tsx", import.meta.url), "utf8"),
   readFile(new URL("../../../app/api/settings/agent/route.ts", import.meta.url), "utf8"),
   readFile(new URL("../../../components/agent-settings-dialog.tsx", import.meta.url), "utf8"),
@@ -21,9 +22,9 @@ test("Agent failures return the fixed no-information response without local down
 });
 
 test("product activity is a controlled cross-source model tool", () => {
-  assert.match(modelOrchestrator, /search_product_activity/u);
-  assert.match(modelOrchestrator, /cannot create or execute new tool code/u);
-  assert.match(modelOrchestrator, /Never add its accepted quotation/u);
+  assert.match(promptBuilder, /search_product_activity/u);
+  assert.match(promptBuilder, /cannot create tools, execute arbitrary code/u);
+  assert.match(promptBuilder, /Never add its accepted quotation/u);
 });
 
 test("Kimi builds multimodal content arrays with thinking disabled", () => {

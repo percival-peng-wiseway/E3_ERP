@@ -111,9 +111,29 @@ test("the built-in workspace overview suggestion uses a deterministic read-only 
   assert.equal(trace.snapshot().steps[0]?.name, "workspace.overview");
 });
 
-test("registers exactly eight read-only E3 business skills", () => {
-  assert.equal(E3_BUSINESS_SKILLS.length, 8);
+test("registers the versioned, source-controlled E3 business skills", () => {
+  assert.equal(E3_BUSINESS_SKILLS.length, 11);
   assert.ok(E3_BUSINESS_SKILLS.every((skill) => skill.readOnly));
+  assert.ok(E3_BUSINESS_SKILLS.every((skill) => skill.version === 1));
+  assert.ok(E3_BUSINESS_SKILLS.every((skill) => skill.approval === "source_controlled"));
+});
+
+test("a disabled Skill cannot run its deterministic workflow", async () => {
+  let inventoryCalls = 0;
+  const result = await runDeterministicWorkflow(
+    provider(),
+    "Which stock items need attention?",
+    new AgentTrace(),
+    dependencies({
+      fastInventoryAnswer: async () => {
+        inventoryCalls += 1;
+        return { mode: "local", answer: "Should not run", suggestions: [] };
+      },
+    }),
+    { enabledSkills: new Set(["reports"]) },
+  );
+  assert.equal(result, null);
+  assert.equal(inventoryCalls, 0);
 });
 
 test("registers the quotation summary as a deterministic workflow", () => {
@@ -131,7 +151,7 @@ test("the Skill registry uses the workflow names emitted by the harness", () => 
   assert.deepEqual(getBusinessSkill("reports").deterministicWorkflows, ["reports_status"]);
   assert.equal(
     new Set(E3_BUSINESS_SKILLS.flatMap((skill) => skill.deterministicWorkflows)).size,
-    9,
+    10,
   );
 });
 

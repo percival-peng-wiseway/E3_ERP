@@ -8,6 +8,30 @@ const PUBLIC_PATHS = new Set([
   "/api/auth/session",
 ]);
 
+const REMOTE_READ_ONLY_POST_PATHS = new Set([
+  "/api/agent",
+  "/api/agent/attachments/status",
+  "/api/agent/chat",
+]);
+
+function remoteDataMutationBlocked(request: NextRequest) {
+  if (process.env.ERP_REMOTE_DATA_READ_ONLY !== "true") return false;
+  if (!request.nextUrl.pathname.startsWith("/api/")) return false;
+
+  const method = request.method.toUpperCase();
+  if (method === "GET" || method === "HEAD" || method === "OPTIONS") return false;
+  return method !== "POST" || !REMOTE_READ_ONLY_POST_PATHS.has(request.nextUrl.pathname);
+}
+
+function remoteDataReadOnlyResponse() {
+  const response = NextResponse.json({
+    error: "This local environment is connected to production data in read-only mode.",
+    code: "remote_data_read_only",
+  }, { status: 403 });
+  response.headers.set("cache-control", "no-store");
+  return response;
+}
+
 function trustedServerRequest(request: NextRequest) {
   const expected = process.env.ERP_INTERNAL_API_TOKEN;
   return Boolean(expected && request.headers.get("authorization") === `Bearer ${expected}`);
@@ -25,6 +49,7 @@ export async function middleware(request: NextRequest) {
   }
 
   if (authenticated || (pathname.startsWith("/api/") && trustedServerRequest(request))) {
+    if (remoteDataMutationBlocked(request)) return remoteDataReadOnlyResponse();
     return NextResponse.next();
   }
 

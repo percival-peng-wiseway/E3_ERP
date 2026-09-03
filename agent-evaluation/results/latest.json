@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "runId": "2026-09-03T10-56-48-838Z",
+  "status": "failed",
+  "startedAt": "2026-09-03T10:56:48.838Z",
+  "finishedAt": "2026-09-03T10:56:59.772Z",
+  "scope": [
+    "local-agent",
+    "full-suite",
+    "build"
+  ],
+  "environment": {
+    "node": "v24.19.0",
+    "platform": "win32",
+    "architecture": "x64"
+  },
+  "privacy": {
+    "storeRawPrompts": false,
+    "storeRawAnswers": false,
+    "storeToolArguments": false,
+    "storeToolResults": false,
+    "storeSecrets": false
+  },
+  "datasets": [
+    {
+      "id": "main-agent-business",
+      "path": "evals/agent-business.json",
+      "caseCount": 9,
+      "status": "validated only"
+    },
+    {
+      "id": "business-agent-regression",
+      "path": "evals/business-agent.json",
+      "caseCount": 13,
+      "status": "validated only"
+    },
+    {
+      "id": "knowledge-rag",
+      "path": "evals/knowledge-rag.json",
+      "caseCount": 40,
+      "status": "validated only"
+    }
+  ],
+  "releaseGates": {
+    "deterministicWorkflowAccuracy": 1,
+    "skillToolsetRoutingAccuracy": 0.98,
+    "toolSelectionAccuracy": 0.95,
+    "knowledgeRecallAt5": 0.9,
+    "citationCorrectness": 0.98,
+    "groundedFactAccuracy": 0.95,
+    "correctAbstentionRate": 0.95,
+    "permissionLeakRate": 0,
+    "writeOperationCount": 0
+  },
+  "steps": [
+    {
+      "name": "TypeScript",
+      "status": "passed",
+      "exitCode": 0,
+      "durationMs": 1637
+    },
+    {
+      "name": "Agent tests",
+      "status": "passed",
+      "exitCode": 0,
+      "durationMs": 727
+    },
+    {
+      "name": "Full repository tests",
+      "status": "failed",
+      "exitCode": 1,
+      "durationMs": 3028
+    },
+    {
+      "name": "Next.js production build",
+      "status": "passed",
+      "exitCode": 0,
+      "durationMs": 5540
+    }
+  ],
+  "notes": [
+    "Live dataset scoring was not run. Use --live with a signed-in read-only session.",
+    "Non-passing steps: Full repository tests. Review console output; raw output is not copied into result files."
+  ]
+}

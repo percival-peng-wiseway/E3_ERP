@@ -2,6 +2,7 @@
 import { inventorySkuCandidates, isBareInventorySkuLookup, isInventoryStockIntent, isInventoryUsageIntent } from "./inventory-usage.ts";
 
 export type FocusedAgentToolName =
+  | "get_workspace_overview"
   | "search_inventory"
   | "search_inventory_usage"
   | "search_product_activity"
@@ -9,7 +10,11 @@ export type FocusedAgentToolName =
   | "search_quotations"
   | "search_delivery_orders"
   | "search_payment_projects"
-  | "search_weekly_schedule";
+  | "search_weekly_schedule"
+  | "search_reimbursements"
+  | "read_reports_notes"
+  | "search_announcements"
+  | "search_group_messages";
 
 function hasInventoryIdentifier(message: string): boolean {
   return inventorySkuCandidates(message).length > 0;
@@ -33,6 +38,7 @@ export function shouldUseKnowledgeConversationIntent(
     hasAttachedKnowledgeDocuments?: boolean;
   } = {},
 ) {
+  if (/\breports?\s+needs\s+document\b|报告需求文档|需求文档状态/iu.test(message)) return false;
   const hasSku = inventorySkuCandidates(message).length > 0;
   if (hasSku && (isInventoryUsageIntent(message) || isInventoryStockIntent(message))) return false;
   if (context.hasImages && !context.hasAttachedKnowledgeDocuments) {
@@ -50,10 +56,12 @@ export function shouldUseKnowledgeConversationIntent(
 /** Return a safe narrow tool set, or null when the model needs the full set. */
 export function focusedAgentToolNames(message: string): FocusedAgentToolName[] | null {
   const intent = message.toLocaleLowerCase("en-AU");
+  if (/\b(?:reimburse(?:ment)?|expense)\b|报销/u.test(intent)) return ["search_reimbursements"];
+  if (/\b(?:report|reports|needs\s+document)\b|报告|需求文档/u.test(intent)) return ["read_reports_notes"];
+  if (/\b(?:announcements?|notices?)\b|公告|通知/u.test(intent)) return ["search_announcements"];
+  if (/\bgroup\s+(?:chat|message|discussion)\b|群聊|群消息/u.test(intent)) return ["search_group_messages"];
+  if (/\bworkspace\s+(?:overview|summary)\b|工作区(?:总览|概况)/u.test(intent)) return ["get_workspace_overview"];
   if (isKnowledgeIntent(intent)) return ["search_knowledge_base"];
-  if (/\b(?:reimburse(?:ment)?|expense|report|announcement|notice|group\s+(?:chat|message))\b|报销|公告|通知|群聊/u.test(intent)) {
-    return null;
-  }
   if (isInventoryUsageIntent(intent) && hasInventoryIdentifier(intent)) {
     const usageTools: FocusedAgentToolName[] = ["search_inventory_usage"];
     if (isInventoryStockIntent(intent)) {
