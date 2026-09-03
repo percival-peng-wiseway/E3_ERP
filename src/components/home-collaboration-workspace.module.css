@@ -1,7 +1,7 @@
 .workspace {
   display: flex;
   min-width: 0;
-  max-width: 1380px;
+  max-width: 1680px;
   margin: 0 auto;
   flex-direction: column;
   gap: 18px;
@@ -37,7 +37,7 @@
   display: grid;
   min-width: 0;
   grid-template-columns: minmax(0, .96fr) minmax(0, 1.04fr);
-  gap: 14px;
+  gap: 16px;
 }
 
 .leftStack {
@@ -45,9 +45,9 @@
   height: calc(100vh - 220px);
   min-width: 0;
   min-height: 500px;
-  max-height: 760px;
+  max-height: 900px;
   grid-template-rows: minmax(0, 1.08fr) minmax(0, .92fr);
-  gap: 14px;
+  gap: 16px;
 }
 
 .leftStack .panel {
@@ -61,7 +61,7 @@
   height: calc(100vh - 220px);
   min-width: 0;
   min-height: 500px;
-  max-height: 760px;
+  max-height: 900px;
   overflow: hidden;
   flex-direction: column;
   background: #fff;
