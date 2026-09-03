@@ -3,10 +3,8 @@
 import {
   Activity,
   Bell,
-  CheckCircle2,
   ChevronDown,
   ChevronRight,
-  CircleDollarSign,
   ClipboardList,
   CreditCard,
   FileBarChart,
@@ -92,7 +90,7 @@ const UserManagementDialog = dynamic(
   { ssr: false, loading: WorkspaceLoading },
 );
 
-type ModuleId = "home" | "files" | "inventory" | "quotations" | "projects" | "site-visits" | "payments" | "reimbursements" | "reports" | "finance";
+type ModuleId = "home" | "files" | "inventory" | "quotations" | "projects" | "site-visits" | "payments" | "reimbursements" | "reports";
 type EntityNavigationTarget = { module: ModuleId; entityId: string; requestId: number };
 
 const NAVIGATION: Array<{
@@ -112,12 +110,6 @@ const NAVIGATION: Array<{
       { id: "reimbursements", label: "Reimbursements", icon: ReceiptText, enabled: true },
     ],
   },
-  {
-    group: "Coming Soon",
-    items: [
-      { id: "finance", label: "Finance & Accounting", icon: CircleDollarSign, enabled: false },
-    ],
-  },
 ];
 
 const MODULE_LABELS: Record<ModuleId, string> = {
@@ -130,7 +122,6 @@ const MODULE_LABELS: Record<ModuleId, string> = {
   payments: "Project Track",
   reimbursements: "Reimbursements",
   reports: "Reports",
-  finance: "Finance & Accounting",
 };
 
 const ERP_BROWSER_ACCOUNT_KEY = "e3-erp-browser-account:v1";
@@ -513,7 +504,6 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
           {activeModule === "payments" && <PaymentTrackWorkspace authenticatedRole={currentUser.role} openEntityTarget={entityNavigationTarget?.module === "payments" ? entityNavigationTarget : undefined} />}
           {activeModule === "reimbursements" && <ReimbursementWorkspace authenticatedRole={currentUser.role} openEntityTarget={entityNavigationTarget?.module === "reimbursements" ? entityNavigationTarget : undefined} />}
           {activeModule === "reports" && <ReportsWorkspace />}
-          {activeModule === "finance" && <ComingSoon />}
         </main>
       </div>
       {currentUser.role === "admin" && agentTraceSidebarOpen ? (
@@ -545,10 +535,6 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
       ) : null}
     </div>
   );
-}
-
-function ComingSoon() {
-  return <section className="module-placeholder"><span><CircleDollarSign size={26} /></span><h1>Finance &amp; Accounting is not available yet</h1><button className="ghost-button"><CheckCircle2 size={15} />View Implementation Checklist</button></section>;
 }
 
 function WorkspaceLoading() {
