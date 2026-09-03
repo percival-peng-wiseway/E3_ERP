@@ -46,7 +46,7 @@ test("rebate receipts are persisted separately from customer outstanding payment
   assert.match(repositorySource, /project\.stcSolarReceivedAmountCents = amount/);
   assert.match(repositorySource, /project\.stcBatteryReceivedAmountCents = amount/);
   assert.match(repositorySource, /project\.solarRebateReceivedAmountCents = amount/);
-  const confirmedCentsExpression = repositorySource.match(/const confirmedCents = [\s\S]*?;\n  return \{/);
+  const confirmedCentsExpression = repositorySource.match(/const confirmedCents = [\s\S]*?;\r?\n  return \{/);
   assert.ok(confirmedCentsExpression);
   assert.doesNotMatch(confirmedCentsExpression[0], /stcSolarReceivedAmountCents|stcBatteryReceivedAmountCents|solarRebateReceivedAmountCents/);
 });

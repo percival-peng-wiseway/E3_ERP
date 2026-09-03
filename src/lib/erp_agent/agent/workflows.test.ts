@@ -95,6 +95,43 @@ test("managed weekly summary uses the deterministic composite and preserves fina
   }
 });
 
+test("deterministic finance workflows do not read their data sources without finance permission", async () => {
+  const cases = [
+    { message: "Give me a workspace overview", workflow: "workspace_overview" },
+    { message: "Show outstanding payments", workflow: "outstanding_payments" },
+    { message: "Show the projects in Project Track", workflow: "project_track_query" },
+    { message: "Show the reimbursement payment summary", workflow: "reimbursement_summary" },
+  ] as const;
+
+  for (const item of cases) {
+    let protectedReads = 0;
+    const result = await runDeterministicWorkflow(
+      provider(),
+      item.message,
+      new AgentTrace(),
+      dependencies({
+        fastWorkspaceOverviewAnswer: async () => {
+          protectedReads += 1;
+          return { mode: "local", answer: "Protected workspace data", suggestions: [] };
+        },
+        fastPaymentTrackAnswer: async () => {
+          protectedReads += 1;
+          return { mode: "local", answer: "Protected Project Track data", suggestions: [] };
+        },
+        listReimbursements: async () => {
+          protectedReads += 1;
+          return [];
+        },
+      }),
+      { includeFinance: false },
+    );
+
+    assert.equal(result?.workflow, item.workflow, item.message);
+    assert.match(result?.answer || "", /requires finance read access/u, item.message);
+    assert.equal(protectedReads, 0, item.message);
+  }
+});
+
 test("greeting matching is anchored and preserves business intent", async () => {
   let paymentCalls = 0;
   const result = await runDeterministicWorkflow(

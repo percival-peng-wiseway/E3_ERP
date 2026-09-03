@@ -101,8 +101,8 @@ type HomeCollaborationWorkspaceProps = {
 };
 
 const DEFAULT_SUGGESTIONS = [
+  "Summarize this week",
   "Which inventory items need attention?",
-  "Summarise current payment collections",
   "Show unscheduled Weekly Schedule work",
 ];
 const LEGACY_AGENT_CONVERSATION_STORAGE_KEY = "e3-agent-conversation:v1";
