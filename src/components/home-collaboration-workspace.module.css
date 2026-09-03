@@ -1085,19 +1085,15 @@
 }
 
 .reminderPanel .notificationFeed {
-  padding: 10px;
+  padding: 8px;
 }
 
 .reminderPanel .notificationList {
-  gap: 7px;
-}
-
-.reminderPanel .notificationCard {
-  padding: 9px 10px;
-}
-
-.reminderPanel .notificationCardTopline {
-  margin-bottom: 5px;
+  overflow: hidden;
+  gap: 0;
+  background: #fff;
+  border: 1px solid #dce3e7;
+  border-radius: 8px;
 }
 
 .announcementComposer {
@@ -1355,29 +1351,36 @@
   list-style: none;
 }
 
+.notificationList li + li {
+  border-top: 1px solid #e7ecef;
+}
+
 .notificationCard {
-  display: flex;
+  display: grid;
   width: 100%;
+  min-height: 58px;
   min-width: 0;
-  padding: 11px 12px 10px;
-  flex-direction: column;
+  padding: 8px 10px 8px 9px;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, auto) 17px;
+  align-items: center;
+  gap: 10px;
   color: #34414a;
   background: #fff;
-  border: 1px solid #dce3e7;
-  border-left-width: 4px;
-  border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(31, 48, 61, .035);
+  border: 0;
+  border-left: 3px solid transparent;
+  border-radius: 0;
+  box-shadow: none;
   font: inherit;
   text-align: left;
   cursor: pointer;
-  transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+  transition: background-color 120ms ease;
 }
 
 .notificationCard:hover:not(:disabled) {
-  border-color: #bdc6cc;
-  box-shadow: 0 4px 12px rgba(31, 48, 61, .08);
-  transform: translateY(-1px);
+  background: #f8fafb;
 }
+
+.notificationCard:active:not(:disabled) { background: #f1f5f7; }
 
 .notificationCard:disabled {
   cursor: default;
@@ -1387,22 +1390,22 @@
 .priorityHigh { border-left-color: #df9a2f; }
 .priorityNormal { border-left-color: #5f8bc7; }
 
-.notificationCardTopline {
-  display: flex;
-  align-items: center;
-  margin-bottom: 7px;
-  gap: 6px;
-  flex-wrap: wrap;
+.notificationContent {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
 }
 
 .notificationMetadata {
   display: inline-flex;
-  min-width: 0;
+  max-width: 260px;
   align-items: center;
+  justify-content: flex-end;
   gap: 5px;
   color: #5f6d76;
   font-size: 12px;
   line-height: 1.35;
+  text-align: right;
   overflow-wrap: anywhere;
 }
 
@@ -1420,6 +1423,13 @@
   font-size: 12px;
   font-weight: 750;
   line-height: 1;
+}
+
+.priorityBadge {
+  min-width: 44px;
+  min-height: 24px;
+  justify-content: center;
+  border-radius: 6px;
 }
 
 .priorityUrgent .priorityBadge {
@@ -1443,18 +1453,32 @@
 }
 
 .notificationTitle {
+  overflow: hidden;
   color: #29353e;
-  font-size: 15px;
+  font-size: 14px;
   line-height: 1.35;
-  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .notificationDescription {
-  margin-top: 4px;
+  overflow: hidden;
   color: #71808a;
-  font-size: 13px;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notificationChevron {
+  flex: 0 0 auto;
+  color: #9aa5ac;
+  transition: color 120ms ease, transform 120ms ease;
+}
+
+.notificationCard:hover:not(:disabled) .notificationChevron {
+  color: #596873;
+  transform: translateX(2px);
 }
 
 .notificationFooter {
@@ -1518,8 +1542,12 @@
   .skillCreatedCard { grid-template-columns: 32px minmax(0, 1fr); }
   .skillCreatedCard button { grid-column: 1 / -1; width: 100%; }
   .notificationFilters { padding-right: 10px; padding-left: 10px; }
-  .notificationCard { padding-right: 10px; padding-left: 10px; }
-  .notificationMetadata { width: 100%; }
+  .notificationCard {
+    padding-right: 10px;
+    padding-left: 10px;
+    grid-template-columns: auto minmax(0, 1fr) 17px;
+  }
+  .notificationMetadata { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

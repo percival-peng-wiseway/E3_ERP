@@ -5,6 +5,7 @@ import {
   BellRing,
   Blocks,
   Bot,
+  ChevronRight,
   Download,
   Eye,
   FileImage,
@@ -1355,26 +1356,27 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSkills, onOpenSe
                           onClick={() => onNavigate?.(notification.module, notification.entityId)}
                           disabled={!onNavigate}
                         >
-                          <span className={styles.notificationCardTopline}>
-                            <span className={styles.priorityBadge}>
-                              {notification.badgeLabel || NOTIFICATION_PRIORITY_LABELS[notification.priority]}
-                            </span>
-                            {(notification.projectCreatedAt || notification.ownerName) && (
-                              <span className={styles.notificationMetadata}>
-                                {notification.projectCreatedAt ? (
-                                  <time dateTime={notification.projectCreatedAt}>
-                                    Created {formatProjectCreatedAt(notification.projectCreatedAt)}
-                                  </time>
-                                ) : (
-                                  <span>Created date unavailable</span>
-                                )}
-                                <span className={styles.notificationMetadataDivider} aria-hidden="true">·</span>
-                                <span>Responsible: {notification.ownerName || "Unassigned"}</span>
-                              </span>
-                            )}
+                          <span className={styles.priorityBadge}>
+                            {notification.badgeLabel || NOTIFICATION_PRIORITY_LABELS[notification.priority]}
                           </span>
-                          <strong className={styles.notificationTitle}>{notification.title}</strong>
-                          <span className={styles.notificationDescription}>{notification.description}</span>
+                          <span className={styles.notificationContent}>
+                            <strong className={styles.notificationTitle}>{notification.title}</strong>
+                            <span className={styles.notificationDescription}>{notification.description}</span>
+                          </span>
+                          {(notification.projectCreatedAt || notification.ownerName) && (
+                            <span className={styles.notificationMetadata}>
+                              {notification.projectCreatedAt ? (
+                                <time dateTime={notification.projectCreatedAt}>
+                                  Created {formatProjectCreatedAt(notification.projectCreatedAt)}
+                                </time>
+                              ) : (
+                                <span>Created date unavailable</span>
+                              )}
+                              <span className={styles.notificationMetadataDivider} aria-hidden="true">·</span>
+                              <span>Responsible: {notification.ownerName || "Unassigned"}</span>
+                            </span>
+                          )}
+                          <ChevronRight className={styles.notificationChevron} size={17} aria-hidden="true" />
                         </button>
                       </li>
                     );
