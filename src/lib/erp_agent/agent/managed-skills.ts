@@ -15,6 +15,7 @@ import {
 import { E3_BUSINESS_SKILLS, type BusinessSkillId } from "./skills.ts";
 
 export const WEEKLY_BUSINESS_SUMMARY_SKILL_ID = "weekly-business-summary";
+export const PERSONAL_SKILL_BUILDER_SKILL_ID = "personal-skill-builder";
 
 export type AgentManagedSkill = {
   id: string;
@@ -34,6 +35,7 @@ type StoredCustomSkill = AgentManagedSkill & {
   source: "custom";
   createdAt: string;
   createdBy: string;
+  creationRequestId?: string;
 };
 
 type StoredSkillCatalog = {
@@ -92,7 +94,21 @@ const BUILT_IN_WEEKLY_SUMMARY: AgentManagedSkill = {
   updatedBy: "system",
 };
 
-const BUILT_IN_TRIGGER_ALIASES = [
+const BUILT_IN_PERSONAL_SKILL_BUILDER: AgentManagedSkill = {
+  id: PERSONAL_SKILL_BUILDER_SKILL_ID,
+  name: "Create a personal Skill",
+  description: "Turn an explicit request into a validated, manually triggered and read-only personal E3 Agent Skill.",
+  trigger: "Create a Skill",
+  prompt: "Create a personal read-only Skill from my current request.",
+  enabled: true,
+  source: "built_in",
+  capabilityIds: [],
+  version: 1,
+  updatedAt: null,
+  updatedBy: "system",
+};
+
+const WEEKLY_SUMMARY_TRIGGER_ALIASES = [
   "Summarize this week",
   "Summarise this week",
   "Summrize this week",
@@ -100,12 +116,17 @@ const BUILT_IN_TRIGGER_ALIASES = [
   "总结本周",
   "本周汇总",
 ] as const;
+const BUILT_IN_SKILLS = [BUILT_IN_WEEKLY_SUMMARY, BUILT_IN_PERSONAL_SKILL_BUILDER] as const;
+const BUILT_IN_TRIGGER_GROUPS = [
+  { skill: BUILT_IN_WEEKLY_SUMMARY, aliases: WEEKLY_SUMMARY_TRIGGER_ALIASES },
+] as const;
 const BUSINESS_SKILL_IDS = new Set<BusinessSkillId>(E3_BUSINESS_SKILLS.map((skill) => skill.id));
 const MAX_CUSTOM_SKILLS = 30;
 const MAXIMUM_STORAGE_RETRIES = 5;
 const ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ACTOR_PATTERN = /^[a-z0-9][a-z0-9._-]{2,39}$/;
 const PRINCIPAL_HASH_PATTERN = /^[0-9a-f]{64}$/i;
+const CREATION_REQUEST_ID_PATTERN = /^[a-zA-Z0-9_-]{1,128}$/;
 const LEGACY_CLOUDFLARE_DOCUMENT_KEY = "agent/managed-skills";
 const PERSONAL_CLOUDFLARE_DOCUMENT_PREFIX = "agent/managed-skills/v2";
 const dataRoot = path.resolve(
@@ -184,6 +205,14 @@ function normalizedOwner(value: ManagedSkillOwner): ManagedSkillOwner {
   };
 }
 
+function normalizedCreationRequestId(value: unknown) {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !CREATION_REQUEST_ID_PATTERN.test(value)) {
+    throw new ManagedSkillError("The Skill creation request ID is invalid.");
+  }
+  return value;
+}
+
 function normalizedCreateInput(value: unknown): CreateManagedSkillInput {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new ManagedSkillError("Enter a valid Skill configuration.");
   const record = value as Record<string, unknown>;
@@ -235,7 +264,7 @@ function normalizedStoredSkill(value: unknown): StoredCustomSkill | null {
   const item = value as Partial<StoredCustomSkill>;
   const allowed = new Set([
     "id", "name", "description", "trigger", "prompt", "enabled", "source", "capabilityIds",
-    "version", "createdAt", "createdBy", "updatedAt", "updatedBy",
+    "version", "createdAt", "createdBy", "creationRequestId", "updatedAt", "updatedBy",
   ]);
   if (Object.keys(item).some((key) => !allowed.has(key))
     || typeof item.id !== "string" || !ID_PATTERN.test(item.id)
@@ -245,6 +274,8 @@ function normalizedStoredSkill(value: unknown): StoredCustomSkill | null {
     || typeof item.createdAt !== "string" || Number.isNaN(Date.parse(item.createdAt))
     || typeof item.updatedAt !== "string" || Number.isNaN(Date.parse(item.updatedAt))
     || typeof item.createdBy !== "string" || !ACTOR_PATTERN.test(item.createdBy)
+    || (item.creationRequestId !== undefined
+      && (typeof item.creationRequestId !== "string" || !CREATION_REQUEST_ID_PATTERN.test(item.creationRequestId)))
     || typeof item.updatedBy !== "string" || !ACTOR_PATTERN.test(item.updatedBy)) return null;
   try {
     const normalized = normalizedCreateInput({
@@ -262,6 +293,7 @@ function normalizedStoredSkill(value: unknown): StoredCustomSkill | null {
       version: item.version as number,
       createdAt: item.createdAt,
       createdBy: item.createdBy,
+      ...(item.creationRequestId !== undefined ? { creationRequestId: item.creationRequestId } : {}),
       updatedAt: item.updatedAt,
       updatedBy: item.updatedBy,
     };
@@ -279,7 +311,7 @@ function normalizedCatalogSkills(value: unknown): StoredCustomSkill[] {
     throw new ManagedSkillError("The saved Skill catalog is invalid.", 500, "skills_corrupt");
   }
   const ids = new Set<string>();
-  const triggers = new Set(BUILT_IN_TRIGGER_ALIASES.map(normalizeManagedSkillTrigger));
+  const triggers = new Set(BUILT_IN_TRIGGER_GROUPS.flatMap(({ aliases }) => aliases.map(normalizeManagedSkillTrigger)));
   for (const skill of skills as StoredCustomSkill[]) {
     const trigger = normalizeManagedSkillTrigger(skill.trigger);
     if (ids.has(skill.id) || triggers.has(trigger)) {
@@ -434,7 +466,7 @@ function withCatalogMutation<T>(owner: ManagedSkillOwner, work: (catalog: Stored
 
 function assertUniqueTrigger(trigger: string, skills: readonly StoredCustomSkill[], exceptId?: string) {
   const key = normalizeManagedSkillTrigger(trigger);
-  if (BUILT_IN_TRIGGER_ALIASES.some((value) => normalizeManagedSkillTrigger(value) === key)
+  if (BUILT_IN_TRIGGER_GROUPS.some(({ aliases }) => aliases.some((value) => normalizeManagedSkillTrigger(value) === key))
     || skills.some((skill) => skill.id !== exceptId && normalizeManagedSkillTrigger(skill.trigger) === key)) {
     throw new ManagedSkillError("That trigger phrase is already used by another Skill.", 409, "skill_trigger_exists");
   }
@@ -448,6 +480,16 @@ export function parseUpdateManagedSkillInput(value: unknown) {
   return normalizedUpdateInput(value);
 }
 
+function publicManagedSkill(skill: StoredCustomSkill): AgentManagedSkill {
+  const {
+    createdAt: _createdAt,
+    createdBy: _createdBy,
+    creationRequestId: _creationRequestId,
+    ...publicSkill
+  } = skill;
+  return publicSkill;
+}
+
 export async function listManagedAgentSkills(
   ownerValue: ManagedSkillOwner,
   options: { includeDisabled?: boolean } = {},
@@ -457,15 +499,36 @@ export async function listManagedAgentSkills(
   const { catalog } = await readStoredCatalog(owner);
   const custom = catalog.skills
     .filter((skill) => options.includeDisabled || skill.enabled)
-    .map(({ createdAt: _createdAt, createdBy: _createdBy, ...skill }) => skill)
+    .map(publicManagedSkill)
     .sort((left, right) => left.name.localeCompare(right.name, "en-AU"));
-  return [BUILT_IN_WEEKLY_SUMMARY, ...custom];
+  return [...BUILT_IN_SKILLS, ...custom];
 }
 
-export async function createManagedAgentSkill(value: unknown, ownerValue: ManagedSkillOwner): Promise<AgentManagedSkill> {
+export async function findManagedAgentSkillByCreationRequestId(
+  ownerValue: ManagedSkillOwner,
+  requestIdValue: string,
+): Promise<AgentManagedSkill | null> {
+  const owner = normalizedOwner(ownerValue);
+  const requestId = normalizedCreationRequestId(requestIdValue);
+  await mutationQueue;
+  const { catalog } = await readStoredCatalog(owner);
+  const existing = catalog.skills.find((skill) => skill.creationRequestId === requestId);
+  return existing ? publicManagedSkill(existing) : null;
+}
+
+export async function createManagedAgentSkill(
+  value: unknown,
+  ownerValue: ManagedSkillOwner,
+  options: { requestId?: string } = {},
+): Promise<AgentManagedSkill> {
   const input = normalizedCreateInput(value);
   const owner = normalizedOwner(ownerValue);
+  const requestId = normalizedCreationRequestId(options.requestId);
   return withCatalogMutation(owner, async (catalog) => {
+    const existing = requestId
+      ? catalog.skills.find((skill) => skill.creationRequestId === requestId)
+      : null;
+    if (existing) return publicManagedSkill(existing);
     if (catalog.skills.length >= MAX_CUSTOM_SKILLS) {
       throw new ManagedSkillError("The custom Skill limit has been reached.", 409, "skill_limit");
     }
@@ -478,12 +541,12 @@ export async function createManagedAgentSkill(value: unknown, ownerValue: Manage
       version: 1,
       createdAt: timestamp,
       createdBy: owner.username,
+      ...(requestId ? { creationRequestId: requestId } : {}),
       updatedAt: timestamp,
       updatedBy: owner.username,
     };
     catalog.skills.push(skill);
-    const { createdAt: _createdAt, createdBy: _createdBy, ...publicSkill } = skill;
-    return publicSkill;
+    return publicManagedSkill(skill);
   });
 }
 
@@ -515,8 +578,7 @@ export async function updateManagedAgentSkill(
       updatedBy: owner.username,
     };
     catalog.skills[index] = next;
-    const { createdAt: _createdAt, createdBy: _createdBy, ...publicSkill } = next;
-    return publicSkill;
+    return publicManagedSkill(next);
   });
 }
 
@@ -550,9 +612,13 @@ export async function resolveInvokedManagedSkill(input: {
   const owner = normalizedOwner(input.owner);
   const requestedId = input.skillId?.toLocaleLowerCase("en-AU");
   const trigger = normalizeManagedSkillTrigger(input.message);
-  if (requestedId === WEEKLY_BUSINESS_SUMMARY_SKILL_ID
-    || (!requestedId && BUILT_IN_TRIGGER_ALIASES.some((value) => normalizeManagedSkillTrigger(value) === trigger))) {
-    return BUILT_IN_WEEKLY_SUMMARY;
+  const requestedBuiltIn = requestedId ? BUILT_IN_SKILLS.find((skill) => skill.id === requestedId) : null;
+  if (requestedBuiltIn) return requestedBuiltIn;
+  if (!requestedId) {
+    const triggeredBuiltIn = BUILT_IN_TRIGGER_GROUPS.find(({ aliases }) => (
+      aliases.some((value) => normalizeManagedSkillTrigger(value) === trigger)
+    ));
+    if (triggeredBuiltIn) return triggeredBuiltIn.skill;
   }
   const skills = await listManagedAgentSkills(owner, { includeDisabled: true });
   if (requestedId) {

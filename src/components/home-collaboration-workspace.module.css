@@ -607,6 +607,90 @@
   border-color: #c8d0ef;
 }
 
+.skillCreatedCard {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  align-items: center;
+  margin-top: 7px;
+  padding: 8px 9px;
+  gap: 8px;
+  color: #354c45;
+  background: #f2faf7;
+  border: 1px solid #cfe8dd;
+  border-radius: 7px;
+  text-align: left;
+}
+
+.skillCreatedIcon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  color: #22775f;
+  background: #dff3eb;
+  border-radius: 7px;
+}
+
+.skillCreatedCard > div {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.skillCreatedCard small {
+  color: #48806e;
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.skillCreatedCard strong {
+  overflow: hidden;
+  color: #29483e;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skillCreatedCard > div > span {
+  overflow: hidden;
+  color: #61786f;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skillCreatedCard code {
+  color: #326957;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 10px;
+}
+
+.skillCreatedCard button {
+  min-height: 29px;
+  padding: 0 8px;
+  color: #286b57;
+  background: #fff;
+  border: 1px solid #bcdccc;
+  border-radius: 5px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.skillCreatedCard button:hover {
+  background: #e7f6ef;
+  border-color: #93c9b2;
+}
+
+.skillCreatedCard button:focus-visible {
+  outline: 2px solid #4c8e79;
+  outline-offset: 2px;
+}
+
 .messageAvatar {
   display: grid;
   width: 28px;
@@ -1431,6 +1515,8 @@
   .citationPanel li { align-items: flex-start; flex-direction: column; }
   .citationActions { width: 100%; }
   .citationActions a { flex: 1; justify-content: center; }
+  .skillCreatedCard { grid-template-columns: 32px minmax(0, 1fr); }
+  .skillCreatedCard button { grid-column: 1 / -1; width: 100%; }
   .notificationFilters { padding-right: 10px; padding-left: 10px; }
   .notificationCard { padding-right: 10px; padding-left: 10px; }
   .notificationMetadata { width: 100%; }

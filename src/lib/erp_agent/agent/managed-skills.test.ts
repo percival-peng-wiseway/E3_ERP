@@ -13,6 +13,7 @@ mutableProcessEnv.AGENT_SKILLS_DATA_DIR = testDataDirectory;
 const modulePath = "./managed-skills.ts";
 const {
   ManagedSkillError,
+  PERSONAL_SKILL_BUILDER_SKILL_ID,
   WEEKLY_BUSINESS_SUMMARY_SKILL_ID,
   createManagedAgentSkill,
   deleteManagedAgentSkill,
@@ -79,11 +80,40 @@ test("built-in weekly summary resolves without mutable catalog state", async () 
   }
 });
 
+test("the personal Skill Builder is visible as a locked built-in Skill", async () => {
+  const skills = await listManagedAgentSkills(ADMIN_OWNER, { includeDisabled: true });
+  const builder = skills.find(({ id }) => id === PERSONAL_SKILL_BUILDER_SKILL_ID);
+  assert.ok(builder);
+  assert.equal(builder.source, "built_in");
+  assert.equal(builder.enabled, true);
+  assert.equal(builder.updatedBy, "system");
+  assert.equal(
+    (await resolveInvokedManagedSkill({
+      skillId: PERSONAL_SKILL_BUILDER_SKILL_ID,
+      message: "Create a Skill",
+      owner: ADMIN_OWNER,
+    }))?.id,
+    PERSONAL_SKILL_BUILDER_SKILL_ID,
+  );
+
+  const legacyCompatible = await createManagedAgentSkill({
+    ...validSkill,
+    name: "Existing create-skill trigger",
+    trigger: "Create a Skill",
+  }, ADMIN_OWNER);
+  assert.equal(
+    (await resolveInvokedManagedSkill({ message: "Create a Skill", owner: ADMIN_OWNER }))?.id,
+    legacyCompatible.id,
+    "an existing personal trigger must take precedence over the conversational builder heuristic",
+  );
+  await deleteManagedAgentSkill(legacyCompatible.id, legacyCompatible.version, ADMIN_OWNER);
+});
+
 test("custom Skills persist, enforce trigger uniqueness and optimistic versions", async () => {
   const created = await createManagedAgentSkill(validSkill, ADMIN_OWNER);
   assert.equal(created.source, "custom");
   assert.equal(created.version, 1);
-  assert.equal((await listManagedAgentSkills(ADMIN_OWNER, { includeDisabled: true })).length, 2);
+  assert.equal((await listManagedAgentSkills(ADMIN_OWNER, { includeDisabled: true })).length, 3);
   assert.equal((await resolveInvokedManagedSkill({ message: `${validSkill.trigger}.`, owner: ADMIN_OWNER }))?.id, created.id);
 
   await assert.rejects(
@@ -94,7 +124,6 @@ test("custom Skills persist, enforce trigger uniqueness and optimistic versions"
     createManagedAgentSkill({ ...validSkill, name: "Reserved", trigger: "This week summary" }, ADMIN_OWNER),
     (error: unknown) => error instanceof ManagedSkillError && error.code === "skill_trigger_exists",
   );
-
   const disabled = await updateManagedAgentSkill(created.id, {
     expectedVersion: created.version,
     enabled: false,
@@ -112,7 +141,7 @@ test("custom Skills persist, enforce trigger uniqueness and optimistic versions"
   );
 
   assert.equal(await deleteManagedAgentSkill(created.id, disabled.version, ADMIN_OWNER), created.id);
-  assert.equal((await listManagedAgentSkills(ADMIN_OWNER, { includeDisabled: true })).length, 1);
+  assert.equal((await listManagedAgentSkills(ADMIN_OWNER, { includeDisabled: true })).length, 2);
 });
 
 test("custom Skills are isolated per owner while the same trigger remains available to each owner", async () => {
@@ -135,11 +164,11 @@ test("custom Skills are isolated per owner while the same trigger remains availa
   assert.notEqual(alice.id, bob.id);
   assert.deepEqual(
     (await listManagedAgentSkills(ALICE_OWNER, { includeDisabled: true })).map(({ id }) => id),
-    [WEEKLY_BUSINESS_SUMMARY_SKILL_ID, alice.id],
+    [WEEKLY_BUSINESS_SUMMARY_SKILL_ID, PERSONAL_SKILL_BUILDER_SKILL_ID, alice.id],
   );
   assert.deepEqual(
     (await listManagedAgentSkills(BOB_OWNER, { includeDisabled: true })).map(({ id }) => id),
-    [WEEKLY_BUSINESS_SUMMARY_SKILL_ID, bob.id],
+    [WEEKLY_BUSINESS_SUMMARY_SKILL_ID, PERSONAL_SKILL_BUILDER_SKILL_ID, bob.id],
   );
 
   const aliceResolved = await resolveInvokedManagedSkill({ message: `${sharedTrigger}!`, owner: ALICE_OWNER });
@@ -232,17 +261,17 @@ test("an empty personal catalog remains authoritative after deleting a legacy Sk
 
   assert.deepEqual(
     (await listManagedAgentSkills(LEGACY_OWNER, { includeDisabled: true })).map(({ id }) => id),
-    [WEEKLY_BUSINESS_SUMMARY_SKILL_ID, legacySkill.id],
+    [WEEKLY_BUSINESS_SUMMARY_SKILL_ID, PERSONAL_SKILL_BUILDER_SKILL_ID, legacySkill.id],
   );
   assert.equal(await deleteManagedAgentSkill(legacySkill.id, legacySkill.version, LEGACY_OWNER), legacySkill.id);
   assert.deepEqual(
     (await listManagedAgentSkills(LEGACY_OWNER, { includeDisabled: true })).map(({ id }) => id),
-    [WEEKLY_BUSINESS_SUMMARY_SKILL_ID],
+    [WEEKLY_BUSINESS_SUMMARY_SKILL_ID, PERSONAL_SKILL_BUILDER_SKILL_ID],
     "the still-present legacy file must not resurrect a Skill after its personal catalog is saved empty",
   );
   assert.deepEqual(
     (await listManagedAgentSkills(OTHER_LEGACY_OWNER, { includeDisabled: true })).map(({ id }) => id),
-    [WEEKLY_BUSINESS_SUMMARY_SKILL_ID, otherLegacySkill.id],
+    [WEEKLY_BUSINESS_SUMMARY_SKILL_ID, PERSONAL_SKILL_BUILDER_SKILL_ID, otherLegacySkill.id],
     "migrating one owner must not consume another owner's legacy Skills",
   );
 });

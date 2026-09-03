@@ -49,6 +49,18 @@ type AgentMessage = {
   content: string;
   citations?: AgentCitation[];
   attachments?: AgentMessageAttachment[];
+  skillMutation?: AgentSkillMutation;
+};
+
+type AgentSkillMutation = {
+  type: "created";
+  skill: {
+    id: string;
+    name: string;
+    trigger: string;
+    version: number;
+    capabilityIds: string[];
+  };
 };
 
 type AgentAttachmentStatus = "uploading" | "processing" | "ready" | "unsupported" | "failed";
@@ -95,7 +107,7 @@ type Announcement = {
 
 type HomeCollaborationWorkspaceProps = {
   currentUser: ErpUser;
-  onOpenSkills?: () => void;
+  onOpenSkills?: (initialSkillId?: string) => void;
   onOpenSettings?: () => void;
   onNavigate?: (module: NotificationModule, entityId?: string) => void;
 };
@@ -109,6 +121,20 @@ const LEGACY_AGENT_CONVERSATION_STORAGE_KEY = "e3-agent-conversation:v1";
 const AGENT_CONVERSATION_STORAGE_VERSION = 1;
 const MAX_MESSAGE_LENGTH = 2_000;
 const MAX_AGENT_ATTACHMENTS = 4;
+const AGENT_SKILL_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const AGENT_SKILL_CAPABILITY_IDS = new Set([
+  "workspace",
+  "weekly_schedule",
+  "site_visits",
+  "inventory",
+  "project_track",
+  "project_management",
+  "quotations",
+  "reimbursements",
+  "knowledge",
+  "reports",
+  "communications",
+]);
 const MAX_AGENT_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 const MAX_AGENT_HISTORY_MESSAGES = 100;
 const MAX_AGENT_HISTORY_CHARACTERS = 200_000;
@@ -211,6 +237,37 @@ function readAgentMessageAttachments(value: unknown) {
   });
 }
 
+function hasExactlyKeys(value: Record<string, unknown>, keys: readonly string[]) {
+  return Object.keys(value).length === keys.length && Object.keys(value).every((key) => keys.includes(key));
+}
+
+function readAgentSkillMutation(value: unknown): AgentSkillMutation | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const mutation = value as Record<string, unknown>;
+  if (!hasExactlyKeys(mutation, ["type", "skill"]) || mutation.type !== "created"
+    || !mutation.skill || typeof mutation.skill !== "object" || Array.isArray(mutation.skill)) return null;
+  const skill = mutation.skill as Record<string, unknown>;
+  if (!hasExactlyKeys(skill, ["id", "name", "trigger", "version", "capabilityIds"])
+    || typeof skill.id !== "string" || !AGENT_SKILL_ID_PATTERN.test(skill.id)
+    || typeof skill.name !== "string" || !skill.name.trim() || skill.name.length > 80
+    || typeof skill.trigger !== "string" || !skill.trigger.trim() || skill.trigger.length > 120
+    || typeof skill.version !== "number" || !Number.isSafeInteger(skill.version) || skill.version < 1
+    || !Array.isArray(skill.capabilityIds) || !skill.capabilityIds.length
+    || skill.capabilityIds.length > AGENT_SKILL_CAPABILITY_IDS.size
+    || skill.capabilityIds.some((id) => typeof id !== "string" || !AGENT_SKILL_CAPABILITY_IDS.has(id))
+    || new Set(skill.capabilityIds).size !== skill.capabilityIds.length) return null;
+  return {
+    type: "created",
+    skill: {
+      id: skill.id.toLocaleLowerCase("en-AU"),
+      name: skill.name.trim(),
+      trigger: skill.trigger.trim(),
+      version: skill.version,
+      capabilityIds: [...skill.capabilityIds] as string[],
+    },
+  };
+}
+
 function readAgentMessage(value: unknown): AgentMessage | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const item = value as Record<string, unknown>;
@@ -227,10 +284,12 @@ function readAgentMessage(value: unknown): AgentMessage | null {
   }
   const citations = item.role === "assistant" ? readAgentCitations(item.citations) : [];
   const attachments = item.role === "user" ? readAgentMessageAttachments(item.attachments) : [];
+  const skillMutation = item.role === "assistant" ? readAgentSkillMutation(item.skillMutation) : null;
   return {
     id: item.id, role: item.role, content: item.content,
     ...(citations.length ? { citations } : {}),
     ...(attachments.length ? { attachments } : {}),
+    ...(skillMutation ? { skillMutation } : {}),
   };
 }
 
@@ -250,8 +309,9 @@ function limitAgentMessages(messages: readonly unknown[]) {
     if (!message || ids.has(message.id)) continue;
     const citationCharacters = message.citations ? JSON.stringify(message.citations).length : 0;
     const attachmentCharacters = message.attachments ? JSON.stringify(message.attachments).length : 0;
+    const skillMutationCharacters = message.skillMutation ? JSON.stringify(message.skillMutation).length : 0;
     const nextCharacterCount = characterCount + message.id.length + message.content.length
-      + citationCharacters + attachmentCharacters;
+      + citationCharacters + attachmentCharacters + skillMutationCharacters;
     if (limited.length >= MAX_AGENT_HISTORY_MESSAGES || nextCharacterCount > MAX_AGENT_HISTORY_CHARACTERS) break;
     limited.push(message);
     ids.add(message.id);
@@ -1033,8 +1093,7 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSkills, onOpenSe
     const lastMessage = agentMessages.at(-1);
     const lastAttachmentIds = lastMessage?.attachments?.map((attachment) => attachment.fileId).join(":") || "";
     const currentAttachmentIds = messageAttachments.map((attachment) => attachment.fileId).join(":");
-    const isRetry = Boolean(agentError)
-      && lastMessage?.role === "user"
+    const isRetry = lastMessage?.role === "user"
       && lastMessage.content.trim() === message
       && lastAttachmentIds === currentAttachmentIds;
     const history = (isRetry ? agentMessages.slice(0, -1) : agentMessages)
@@ -1052,6 +1111,7 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSkills, onOpenSe
       content: message,
       ...(persistedAttachments.length ? { attachments: persistedAttachments } : {}),
     };
+    const requestId = isRetry && lastMessage?.role === "user" ? lastMessage.id : userMessage.id;
     if (!isRetry) {
       setAgentMessages((current) => limitAgentMessages([...current, userMessage]));
     }
@@ -1075,6 +1135,7 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSkills, onOpenSe
           section: "all",
           history,
           conversation_id: conversationId,
+          request_id: requestId,
           attachments: persistedAttachments.map((attachment) => ({ file_id: attachment.fileId })),
         }),
         signal: controller.signal,
@@ -1089,7 +1150,7 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSkills, onOpenSe
         answer?: unknown;
         response?: unknown;
         suggestions?: unknown;
-        meta?: { configured?: unknown; modelStatus?: unknown; warning?: unknown };
+        meta?: { configured?: unknown; modelStatus?: unknown; warning?: unknown; skillMutation?: unknown };
       };
       if (
         !mountedRef.current
@@ -1111,6 +1172,17 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSkills, onOpenSe
       }
       const mode = typeof body.data?.mode === "string" ? body.data.mode : "";
       const citations = readAgentCitations(body.data?.citations);
+      const skillMutation = readAgentSkillMutation(body.meta?.skillMutation);
+      if (skillMutation) {
+        const trigger = skillMutation.skill.trigger;
+        setAgentSuggestions((current) => [
+          trigger,
+          ...current.filter((suggestion) => suggestion.toLocaleLowerCase("en-AU") !== trigger.toLocaleLowerCase("en-AU")),
+        ].slice(0, 3));
+        window.dispatchEvent(new CustomEvent("erp:agent-skills-updated", {
+          detail: { type: skillMutation.type, skillId: skillMutation.skill.id },
+        }));
+      }
       if (typeof body.meta?.configured === "boolean") {
         setAgentConfigured(body.meta.configured);
       } else if (mode === "openai" || mode === "kimi") {
@@ -1132,6 +1204,7 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSkills, onOpenSe
           role: "assistant",
           content: limitAgentContent(answerValue.trim()),
           ...(citations.length ? { citations } : {}),
+          ...(skillMutation ? { skillMutation } : {}),
         },
       ]));
     } catch (error) {
@@ -1435,7 +1508,7 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSkills, onOpenSe
               <button
                 className={`${styles.iconButton} ${styles.skillManageButton}`}
                 type="button"
-                onClick={onOpenSkills}
+                onClick={() => onOpenSkills()}
                 title="Manage your Agent skills"
                 aria-label="Manage your Agent skills"
                 aria-haspopup="dialog"
@@ -1521,6 +1594,29 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSkills, onOpenSe
                           </ol>
                         </section>
                       )}
+                      {message.skillMutation ? (
+                        <section
+                          className={styles.skillCreatedCard}
+                          aria-label={`Skill created: ${message.skillMutation.skill.name}`}
+                        >
+                          <span className={styles.skillCreatedIcon}><Blocks size={16} aria-hidden="true" /></span>
+                          <div>
+                            <small>Personal Skill created</small>
+                            <strong>{message.skillMutation.skill.name}</strong>
+                            <span>Exact trigger: <code>{message.skillMutation.skill.trigger}</code></span>
+                          </div>
+                          {onOpenSkills ? (
+                            <button
+                              type="button"
+                              onClick={() => onOpenSkills(message.skillMutation?.skill.id)}
+                              aria-haspopup="dialog"
+                              aria-label={`Open ${message.skillMutation.skill.name} in My Agent Skills`}
+                            >
+                              Open in My Skills
+                            </button>
+                          ) : null}
+                        </section>
+                      ) : null}
                     </>
                   ) : (
                     <>

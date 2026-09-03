@@ -11,6 +11,7 @@ export type FocusedAgentToolName =
   | "search_delivery_orders"
   | "search_payment_projects"
   | "search_weekly_schedule"
+  | "search_site_visits"
   | "search_reimbursements"
   | "read_reports_notes"
   | "search_announcements"
@@ -72,6 +73,10 @@ export function focusedAgentToolNames(message: string): FocusedAgentToolName[] |
   const productActivity = /\b(?:sold|sell|sales\s+(?:volume|quantity|count)|units?\s+sold|product\s+activity)\b|卖了|销售(?:量|数量)?|销量|售出|出货量/iu.test(intent);
   if (productActivity) return ["search_product_activity"];
   if (isInventoryStockIntent(intent) && hasInventoryIdentifier(intent)) return ["search_inventory"];
+  const siteVisitIntent = /\bsite\s*visit(?:ing|s)?\b|现场勘察|上门勘察/iu.test(intent);
+  const nonSiteBusinessIntent = /\b(?:inventory|stock|sku|qtn|quote|quotation|payment|receivable|outstanding|unpaid|amount\s+due|balance\s+due|deliver(?:y|ies|ed)?|install(?:ation|ations|ment|ments|ing|ed)?|project\s+track|reimburse(?:ment)?|expense)\b|库存|存货|报价|尾款|未收(?:款)?|欠款|应收(?:款)?|送货|配送|安装|项目追踪|报销/u.test(intent);
+  if (siteVisitIntent && !nonSiteBusinessIntent) return ["search_site_visits"];
+  if (siteVisitIntent) return null;
   const legacyProjectManagement = /\bproject\s+management\b|\bdeliveries?\s+(?:pending|waiting)\s+(?:for\s+)?pm\s+review\b|\bpending\s+pm\s+deliveries?\b|待\s*pm\s*审核.{0,8}送货/u.test(intent);
   const datedSchedule = /\b(?:weekly\s+schedule|today|tomorrow|this\s+week|next\s+week|last\s+week|schedul(?:e|ed|ing)|unscheduled|overdue)\b|周排程|周计划|今天|明天|本周|下周|上周|排期|逾期/u.test(intent);
   if (legacyProjectManagement && !datedSchedule) return ["search_delivery_orders"];

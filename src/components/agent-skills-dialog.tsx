@@ -168,9 +168,11 @@ function knownCapabilityLabel(id: string) {
 
 export function AgentSkillsDialog({
   open,
+  initialSkillId,
   onClose,
 }: {
   open: boolean;
+  initialSkillId?: string;
   onClose: () => void;
 }) {
   const [skills, setSkills] = useState<AgentSkill[]>([]);
@@ -241,13 +243,13 @@ export function AgentSkillsDialog({
     setError("");
     setNotice("");
     setConfirmingDelete(false);
-    void loadSkills();
+    void loadSkills(initialSkillId);
     return () => {
       const controller = loadAbortRef.current;
       loadAbortRef.current = null;
       controller?.abort();
     };
-  }, [open]);
+  }, [initialSkillId, open]);
 
   useEffect(() => {
     if (!open) return;

@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const [workspace, home, dialog, styles, collectionRoute, itemRoute, agentRoute] = await Promise.all([
+const [workspace, home, dialog, styles, homeStyles, collectionRoute, itemRoute, agentRoute] = await Promise.all([
   readFile(new URL("../../../components/erp-workspace.tsx", import.meta.url), "utf8"),
   readFile(new URL("../../../components/home-collaboration-workspace.tsx", import.meta.url), "utf8"),
   readFile(new URL("../../../components/agent-skills-dialog.tsx", import.meta.url), "utf8"),
   readFile(new URL("../../../components/agent-skills-dialog.module.css", import.meta.url), "utf8"),
+  readFile(new URL("../../../components/home-collaboration-workspace.module.css", import.meta.url), "utf8"),
   readFile(new URL("../../../app/api/settings/agent/skills/route.ts", import.meta.url), "utf8"),
   readFile(new URL("../../../app/api/settings/agent/skills/[id]/route.ts", import.meta.url), "utf8"),
   readFile(new URL("../../../app/api/agent/route.ts", import.meta.url), "utf8"),
@@ -14,9 +15,9 @@ const [workspace, home, dialog, styles, collectionRoute, itemRoute, agentRoute] 
 
 test("Skill Management is available to every signed-in user without widening administrator tools", () => {
   assert.match(workspace, /import\("\.\/agent-skills-dialog"\)/);
-  assert.match(workspace, /onOpenSkills=\{\(\) => setAgentSkillsOpen\(true\)\}/);
+  assert.match(workspace, /onOpenSkills=\{\(initialSkillId\) => \{[\s\S]*?setAgentSkillsInitialId\(initialSkillId\);[\s\S]*?setAgentSkillsOpen\(true\)/);
   assert.doesNotMatch(workspace, /onOpenSkills=\{currentUser\.role === "admin"/);
-  assert.match(workspace, /\{agentSkillsOpen \? \([\s\S]*?<AgentSkillsDialog open/);
+  assert.match(workspace, /\{agentSkillsOpen \? \([\s\S]*?<AgentSkillsDialog[\s\S]*?\bopen\b/);
   assert.match(home, /\{onOpenSkills \? \(/);
   assert.doesNotMatch(home, /isAdmin && onOpenSkills/);
   assert.match(home, /aria-label="Manage your Agent skills"/);
@@ -61,6 +62,35 @@ test("Skill APIs derive personal ownership from authentication and preserve writ
   assert.match(agentRoute, /resolveInvokedManagedSkill\(\{[\s\S]*?owner: \{ principalHash: auth\.principalHash, username: session\.user\.username \}/);
 });
 
+test("chat-created Skills use strict structured metadata and remain discoverable", () => {
+  assert.match(home, /type AgentSkillMutation = \{[\s\S]*?type: "created";[\s\S]*?capabilityIds: string\[\]/);
+  assert.match(home, /hasExactlyKeys\(mutation, \["type", "skill"\]\)/);
+  assert.match(home, /hasExactlyKeys\(skill, \["id", "name", "trigger", "version", "capabilityIds"\]\)/);
+  assert.match(home, /AGENT_SKILL_ID_PATTERN\.test\(skill\.id\)/);
+  assert.match(home, /AGENT_SKILL_CAPABILITY_IDS\.has\(id\)/);
+  assert.match(home, /const skillMutation = readAgentSkillMutation\(body\.meta\?\.skillMutation\)/);
+  assert.match(home, /const requestId = isRetry && lastMessage\?\.role === "user" \? lastMessage\.id : userMessage\.id/);
+  assert.match(home, /request_id: requestId/);
+  assert.doesNotMatch(home, /const isRetry = Boolean\(agentError\)/);
+  assert.match(home, /skillMutationCharacters = message\.skillMutation \? JSON\.stringify\(message\.skillMutation\)\.length : 0/);
+  assert.match(home, /new CustomEvent\("erp:agent-skills-updated"/);
+  assert.match(home, /setAgentSuggestions\(\(current\) => \[[\s\S]*?skillMutation\.skill\.trigger/);
+  assert.match(home, /Personal Skill created/);
+  assert.match(home, /Exact trigger:/);
+  assert.match(home, /Open in My Skills/);
+  assert.match(home, /onOpenSkills\(message\.skillMutation\?\.skill\.id\)/);
+  assert.doesNotMatch(home, /skillMutation\.skill\.(?:prompt|owner|updatedBy)/);
+});
+
+test("chat-created Skills open a freshly loaded dialog focused on their ID", () => {
+  assert.match(workspace, /const \[agentSkillsInitialId, setAgentSkillsInitialId\] = useState<string>\(\)/);
+  assert.match(workspace, /initialSkillId=\{agentSkillsInitialId\}/);
+  assert.match(dialog, /initialSkillId\?: string/);
+  assert.match(dialog, /void loadSkills\(initialSkillId\)/);
+  assert.match(dialog, /fetch\("\/api\/settings\/agent\/skills", \{ cache: "no-store"/);
+  assert.match(dialog, /nextSkills\.find\(\(skill\) => skill\.id === preferredId\)/);
+});
+
 test("Skill Management preserves modal keyboard and responsive behaviour", () => {
   assert.match(dialog, /event\.key === "Escape"/);
   assert.match(dialog, /event\.key !== "Tab"/);
@@ -69,4 +99,6 @@ test("Skill Management preserves modal keyboard and responsive behaviour", () =>
   assert.match(styles, /@media \(max-width: 760px\)/);
   assert.match(styles, /@media \(max-width: 520px\)/);
   assert.match(styles, /:focus-visible/);
+  assert.match(home, /className=\{styles\.skillCreatedCard\}/);
+  assert.match(homeStyles, /\.skillCreatedCard button:focus-visible/);
 });

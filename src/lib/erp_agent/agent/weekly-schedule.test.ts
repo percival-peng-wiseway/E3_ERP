@@ -86,6 +86,34 @@ function project(overrides: Partial<PaymentTrackProject> = {}): PaymentTrackProj
   };
 }
 
+function siteVisit(overrides: Partial<SiteVisit> = {}): SiteVisit {
+  return {
+    id: "55555555-5555-4555-8555-555555555555",
+    createdBy: "Kevin",
+    projectName: "Site Alpha",
+    address: "5 Private Avenue",
+    contact: "Customer phone details",
+    reason: "Roof inspection",
+    requestedDate: "2026-08-27",
+    requestedTime: "10:00",
+    scheduledDate: "2026-08-28",
+    scheduledTime: "10:00",
+    assignee: "Hogan",
+    status: "scheduled",
+    approvedAt: null,
+    approvedBy: null,
+    scheduledAt: null,
+    scheduledBy: null,
+    cancelledFrom: null,
+    checklist: [],
+    notes: "Visit note",
+    photos: [],
+    createdAt: "2026-08-20T00:00:00.000Z",
+    updatedAt: "2026-08-21T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
 function args(overrides: Partial<NonNullable<ReturnType<typeof normalizedWeeklyScheduleArgs>>> = {}) {
   return {
     query: "",
@@ -496,6 +524,61 @@ test("aggregates all Weekly Schedule sources, respects overrides and gates conta
   assert.deepEqual(customerContactOnly.entries[0].contact, { name: "Customer phone details" });
   assert.equal("location" in customerContactOnly.entries[0], false);
   assert.equal("assignee" in customerContactOnly.entries[0], false);
+});
+
+test("Site Visiting keeps approval-stage requests in the pending schedule", () => {
+  const pendingApproval = siteVisit({
+    id: "55555555-5555-4555-8555-555555555551",
+    status: "pending_approval",
+    scheduledDate: null,
+    scheduledTime: null,
+    assignee: "",
+  });
+  const approved = siteVisit({
+    id: "55555555-5555-4555-8555-555555555552",
+    status: "approved",
+    scheduledDate: null,
+    scheduledTime: null,
+    assignee: "",
+  });
+  const cancelled = siteVisit({
+    id: "55555555-5555-4555-8555-555555555553",
+    status: "cancelled",
+    cancelledFrom: "approved",
+    scheduledDate: null,
+    scheduledTime: null,
+    assignee: "",
+  });
+  const sources = { siteVisits: [pendingApproval, approved, cancelled] };
+  const filter = args({ source: "site_visit", kind: "site_visit" });
+  const all = aggregateWeeklySchedule(sources, filter);
+
+  assert.equal(all.count, 3);
+  assert.equal(all.entries.find(({ id }) => id.endsWith(pendingApproval.id))?.status, "unscheduled");
+  assert.equal(all.entries.find(({ id }) => id.endsWith(approved.id))?.status, "pre_scheduled");
+  assert.equal(all.entries.find(({ id }) => id.endsWith(cancelled.id))?.status, "cancelled");
+  assert.equal(all.entries.find(({ id }) => id.endsWith(pendingApproval.id))?.scheduledDate, null);
+  assert.equal(all.entries.find(({ id }) => id.endsWith(pendingApproval.id))?.preferredDate, "2026-08-27");
+
+  const pendingOnly = aggregateWeeklySchedule(sources, { ...filter, status: "pending" });
+  assert.equal(pendingOnly.count, 2);
+  assert.equal(pendingOnly.pendingCount, 2);
+  assert.deepEqual(new Set(pendingOnly.entries.map(({ status }) => status)), new Set(["unscheduled", "pre_scheduled"]));
+
+  const laterWeek = aggregateWeeklySchedule(sources, {
+    ...filter,
+    from: "2026-09-07",
+    to: "2026-09-13",
+  });
+  assert.equal(laterWeek.count, 2, "persistent approval-stage requests remain visible");
+  assert.equal(laterWeek.entries.some(({ status }) => status === "cancelled"), false,
+    "an undated cancelled visit is scoped to its requested week");
+  assert.equal(aggregateWeeklySchedule(sources, {
+    ...filter,
+    status: "cancelled",
+    from: "2026-09-07",
+    to: "2026-09-13",
+  }).count, 0);
 });
 
 test("projects expose assignee, location and customer contact details independently", () => {

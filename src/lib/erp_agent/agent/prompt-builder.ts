@@ -65,6 +65,9 @@ export function buildAgentSystemPrompt(context: AgentPromptContext): string {
     enabled(context, "weekly_schedule")
       ? "For schedules use search_weekly_schedule. It is the canonical aggregate for Project Track work, Site Visits, Inventory deliveries and custom jobs; search_project_schedule is compatibility-only."
       : "",
+    enabled(context, "site_visits")
+      ? "For Site Visiting summaries, pending visits and scheduled visits use search_site_visits."
+      : "",
     enabled(context, "communications")
       ? "Use search_announcements for current notices and search_group_messages only for an explicit legacy group-discussion request."
       : "",

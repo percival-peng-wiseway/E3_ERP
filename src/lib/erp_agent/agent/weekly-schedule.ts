@@ -569,14 +569,23 @@ function siteVisitDrafts(
   overrides: ReadonlyMap<string, ProjectScheduleSourceOverride["state"]>,
 ) {
   return visits.flatMap((visit): ScheduleEntryDraft[] => {
-    if (!visit.scheduledDate || !visit.scheduledTime
-      || !["scheduled", "in_progress", "completed"].includes(visit.status)) return [];
+    const requiresConfirmedSchedule = ["scheduled", "in_progress", "completed"].includes(visit.status);
+    if (requiresConfirmedSchedule && (!visit.scheduledDate || !visit.scheduledTime)) return [];
     const overrideKey = `site-visit:${visit.id.toLowerCase()}`;
     const override = overrides.get(overrideKey);
     if (override === "deleted") return [];
     const status: WeeklyScheduleStatus = override === "cancelled"
       ? "cancelled"
-      : visit.status === "completed" ? "completed" : "scheduled";
+      : visit.status === "pending_approval" ? "unscheduled"
+        : visit.status === "approved" ? "pre_scheduled"
+          : visit.status === "completed" ? "completed"
+            : visit.status === "cancelled" ? "cancelled" : "scheduled";
+    const preserveConfirmedSchedule = requiresConfirmedSchedule || visit.status === "cancelled";
+    const scheduledDate = preserveConfirmedSchedule ? visit.scheduledDate : null;
+    const scheduledTime = preserveConfirmedSchedule ? visit.scheduledTime : null;
+    const requestedDate = cleanText(visit.requestedDate, 10) || null;
+    if (status === "cancelled" && !scheduledDate
+      && (!requestedDate || requestedDate < args.from || requestedDate > args.to)) return [];
     const noteValue = joinedNotes([visit.reason, visit.notes]);
     return [{
       id: overrideKey,
@@ -584,9 +593,13 @@ function siteVisitDrafts(
       kind: "site_visit",
       status,
       title: cleanText(visit.projectName, 200) || "Site visit",
-      scheduledDate: visit.scheduledDate,
-      scheduledTime: visit.scheduledTime,
+      scheduledDate,
+      scheduledTime,
       endTime: null,
+      ...(!scheduledDate ? {
+        preferredDate: requestedDate,
+        preferredTime: cleanText(visit.requestedTime, 5) || null,
+      } : {}),
       sourceStatus: visit.status,
       createdBy: visit.createdBy,
       updatedAt: visit.updatedAt,
@@ -605,8 +618,10 @@ function siteVisitDrafts(
         visit.status,
         visit.createdBy,
         "site visit",
-        visit.scheduledDate,
-        visit.scheduledTime,
+        scheduledDate,
+        scheduledTime,
+        visit.requestedDate,
+        visit.requestedTime,
         ...(args.includeLocation ? [visit.address] : []),
         ...(args.includeAssignee ? [visit.assignee] : []),
         ...(args.includeCustomerContactDetails ? [visit.contact] : []),

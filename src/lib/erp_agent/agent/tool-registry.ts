@@ -13,6 +13,7 @@ export type AgentToolsetId =
   | "project_management"
   | "project_track"
   | "weekly_schedule"
+  | "site_visits"
   | "reimbursements"
   | "reports"
   | "communications";
@@ -37,6 +38,7 @@ const TOOL_METADATA = {
   search_delivery_orders: { skill: "project_management", toolset: "project_management", dataClassification: "confidential", requiredPermissions: ["order.read"] },
   search_payment_projects: { skill: "project_track", toolset: "project_track", dataClassification: "confidential", requiredPermissions: ["project.read"] },
   search_weekly_schedule: { skill: "weekly_schedule", toolset: "weekly_schedule", dataClassification: "confidential", requiredPermissions: ["project.read", "order.read"] },
+  search_site_visits: { skill: "site_visits", toolset: "site_visits", dataClassification: "confidential", requiredPermissions: ["project.read"] },
   search_project_schedule: { skill: "weekly_schedule", toolset: "weekly_schedule", dataClassification: "confidential", requiredPermissions: ["project.read"] },
   search_reimbursements: { skill: "reimbursements", toolset: "reimbursements", dataClassification: "confidential", requiredPermissions: [] },
   read_reports_notes: { skill: "reports", toolset: "reports", dataClassification: "confidential", requiredPermissions: ["project.read"] },

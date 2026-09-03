@@ -7,6 +7,7 @@ const ISSUE_CODE_SET = new Set<AgentTraceIssueCode>([
   "knowledge_disabled",
   "model_error",
   "model_unavailable",
+  "skill_unavailable",
   "settings_unavailable",
   "tool_empty",
   "tool_error",

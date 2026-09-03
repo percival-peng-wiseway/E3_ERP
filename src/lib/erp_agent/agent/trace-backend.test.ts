@@ -42,11 +42,11 @@ test("all-user Trace records keep safe conversation metadata and derive problem 
     requestLanguage: "chinese",
     dataSource: "cloudflare",
     modelStatus: "unavailable",
-    issueCodes: ["model_unavailable"],
+    issueCodes: ["model_unavailable", "skill_unavailable"],
   });
   assert.equal(record.actorUsername, "percival");
   assert.equal(record.messageLength, 42);
-  assert.deepEqual([...record.issueCodes].sort(), ["abstained", "model_unavailable", "tool_unavailable"]);
+  assert.deepEqual([...record.issueCodes].sort(), ["abstained", "model_unavailable", "skill_unavailable", "tool_unavailable"]);
   assert.equal(Object.hasOwn(record, "message"), false);
   assert.equal(Object.hasOwn(record, "answer"), false);
 });

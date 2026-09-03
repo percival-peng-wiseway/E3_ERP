@@ -135,6 +135,7 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [agentTraceSidebarOpen, setAgentTraceSidebarOpen] = useState(false);
   const [agentSkillsOpen, setAgentSkillsOpen] = useState(false);
+  const [agentSkillsInitialId, setAgentSkillsInitialId] = useState<string>();
   const [agentSettingsOpen, setAgentSettingsOpen] = useState(false);
   const [userManagementOpen, setUserManagementOpen] = useState(false);
   const [wipUnscheduledProjectCount, setWipUnscheduledProjectCount] = useState<number | null>(null);
@@ -491,7 +492,10 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
           <div className="persistent-home-workspace" hidden={activeModule !== "home"}>
             <HomeCollaborationWorkspace
               currentUser={currentUser}
-              onOpenSkills={() => setAgentSkillsOpen(true)}
+              onOpenSkills={(initialSkillId) => {
+                setAgentSkillsInitialId(initialSkillId);
+                setAgentSkillsOpen(true);
+              }}
               onOpenSettings={currentUser.role === "admin" ? () => setAgentSettingsOpen(true) : undefined}
               onNavigate={(module, entityId) => navigate(module, true, entityId)}
             />
@@ -530,7 +534,14 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
         </>
       ) : null}
       {agentSkillsOpen ? (
-        <AgentSkillsDialog open onClose={() => setAgentSkillsOpen(false)} />
+        <AgentSkillsDialog
+          open
+          initialSkillId={agentSkillsInitialId}
+          onClose={() => {
+            setAgentSkillsOpen(false);
+            setAgentSkillsInitialId(undefined);
+          }}
+        />
       ) : null}
       {currentUser.role === "admin" ? (
         <>

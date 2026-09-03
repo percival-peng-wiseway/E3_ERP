@@ -8,10 +8,10 @@ import { parseKnowledgeCitationSelection } from "./knowledge-citation-selection"
 import { KimiRequestError, kimiHttpError, kimiNetworkError } from "./kimi-error";
 import {
   executeRegisteredAgentTool,
+  registeredAgentTool,
   selectRegisteredAgentTools,
-  type AgentToolDefinition,
 } from "./tool-registry";
-import { resolveAgentSkillPolicy, type BusinessSkillId } from "./skills";
+import { E3_BUSINESS_SKILLS, resolveAgentSkillPolicy, type BusinessSkillId } from "./skills";
 import { controlledMemoryFromConversation, type AgentControlledMemory } from "./memory";
 import { AGENT_PROMPT_VERSION, buildAgentSystemPrompt } from "./prompt-builder";
 import type { AgentTrace } from "./trace";
@@ -113,6 +113,14 @@ function productActivityIsVerified(content: string) {
 
 type ToolVerification = "verified" | "empty" | "unavailable";
 
+function containsUnavailableMarker(value: unknown, depth = 0): boolean {
+  if (depth > 8 || !value || typeof value !== "object") return false;
+  if (Array.isArray(value)) return value.some((item) => containsUnavailableMarker(item, depth + 1));
+  const record = value as Record<string, unknown>;
+  if (record.available === false) return true;
+  return Object.values(record).some((item) => containsUnavailableMarker(item, depth + 1));
+}
+
 function toolOutputVerification(content: string): ToolVerification {
   let value: unknown;
   try { value = JSON.parse(content); } catch { return "unavailable"; }
@@ -121,9 +129,11 @@ function toolOutputVerification(content: string): ToolVerification {
   if (record.error || record.ok === false || record.incomplete_data === true || record.complete === false) {
     return "unavailable";
   }
+  if (containsUnavailableMarker(record)) return "unavailable";
   if (Array.isArray(record.sourceWarnings) && record.sourceWarnings.length > 0) return "unavailable";
   if (record.inventoryOrdersAvailable === false || record.projectTrackAvailable === false) return "unavailable";
   if (record.found === false) return "empty";
+  if (record.complete === true) return "verified";
   if (typeof record.count === "number") return record.count > 0 ? "verified" : "empty";
   if (Array.isArray(record.data)) return record.data.length > 0 ? "verified" : "empty";
   if (typeof record.content === "string") return record.content.trim() ? "verified" : "empty";
@@ -132,7 +142,7 @@ function toolOutputVerification(content: string): ToolVerification {
     return usageArrays.some((key) => Array.isArray(record[key]) && (record[key] as unknown[]).length > 0)
       ? "verified" : "empty";
   }
-  return "verified";
+  return "unavailable";
 }
 
 function melbourneToday() {
@@ -152,6 +162,16 @@ type KimiToolCall = {
   function: {
     name: string;
     arguments: string;
+  };
+};
+
+type KimiToolDefinition = {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    strict: true;
+    parameters: unknown;
   };
 };
 
@@ -233,7 +253,7 @@ async function createCompletion(options: {
   baseUrl: string;
   model: string;
   messages: KimiMessage[];
-  tools: readonly AgentToolDefinition[];
+  tools: readonly KimiToolDefinition[];
   forceToolName?: string;
   conversationId?: string;
 }) {
@@ -298,7 +318,7 @@ async function createCompletion(options: {
     throw new Error("The model API returned invalid tool calls.");
   }
   const offeredToolNames = new Set(options.tools.map((tool) => tool.function.name));
-  if (calls.some((call) => !offeredToolNames.has(call.function.name as AgentToolDefinition["function"]["name"]))) {
+  if (calls.some((call) => !offeredToolNames.has(call.function.name))) {
     throw new Error("The model API requested an unavailable tool.");
   }
   if (choice?.finish_reason !== (calls.length ? "tool_calls" : "stop")) {
@@ -320,6 +340,113 @@ async function createCompletion(options: {
   };
 }
 
+export const PERSONAL_SKILL_PROPOSAL_TOOL = {
+  type: "function",
+  function: {
+    name: "propose_personal_skill",
+    description: "Return either one clarification question or one bounded personal read-only Skill proposal.",
+    strict: true,
+    parameters: {
+      anyOf: [{
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          action: { type: "string", enum: ["clarify"] },
+          question: { type: "string" },
+        },
+        required: ["action", "question"],
+      }, {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          action: { type: "string", enum: ["create"] },
+          skill: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              name: { type: "string" },
+              description: { type: "string" },
+              trigger: { type: "string" },
+              prompt: { type: "string" },
+              enabled: { type: "boolean", enum: [true] },
+              capabilityIds: {
+                type: "array",
+                items: { type: "string", enum: E3_BUSINESS_SKILLS.map(({ id }) => id) },
+              },
+            },
+            required: ["name", "description", "trigger", "prompt", "enabled", "capabilityIds"],
+          },
+        },
+        required: ["action", "skill"],
+      }],
+    },
+  },
+} as const satisfies KimiToolDefinition;
+
+export async function proposePersonalSkillWithKimi(options: {
+  message: string;
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  trace?: AgentTrace;
+}): Promise<unknown> {
+  const allowedCapabilities = E3_BUSINESS_SKILLS
+    .map(({ id, name }) => `${id} (${name})`)
+    .join(", ");
+  const system = [
+    "You prepare a proposal for one personal E3 Agent Skill after the user explicitly requested its creation.",
+    "This is proposal generation only. You cannot save, update, delete or execute anything.",
+    "Use only the latest user message. Do not infer consent or requirements from earlier conversation.",
+    "A Skill is manually triggered and read-only. It may answer questions or summarize authorised ERP data, but it cannot run automatically, monitor in the background, notify people, send messages, approve work, or modify ERP data.",
+    `Choose the smallest relevant capabilityIds only from: ${allowedCapabilities}.`,
+    "Never output owner, username, permissions, roles, credentials, URLs, code, tool definitions or extra fields.",
+    "The skill.prompt must describe only a read operation and begin with a read verb such as Summarize, Show, List, Find, Explain, Compare, Check, Calculate, Read, 总结, 显示, 查看, 列出, 查找, 说明, 比较, 检查, 统计 or 读取.",
+    "Use action=create only when the current message states a clear repeatable task and an exact trigger phrase can be derived. Include skill with enabled=true.",
+    "Otherwise use action=clarify with one short question asking the user to restate a complete explicit creation request, including task, data and trigger phrase. Omit skill for clarification and omit question for creation.",
+    "Call propose_personal_skill exactly once and do not provide ordinary assistant text.",
+  ].join("\n");
+  const modelStartedAt = Date.now();
+  let completion: Awaited<ReturnType<typeof createCompletion>>;
+  try {
+    completion = await createCompletion({
+      apiKey: options.apiKey,
+      baseUrl: options.baseUrl,
+      model: options.model,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: options.message.slice(0, 2_000) },
+      ],
+      tools: [PERSONAL_SKILL_PROPOSAL_TOOL],
+      forceToolName: PERSONAL_SKILL_PROPOSAL_TOOL.function.name,
+    });
+    options.trace?.recordModelRound({
+      model: options.model,
+      status: "ok",
+      durationMs: Date.now() - modelStartedAt,
+      toolCallCount: completion.message.tool_calls?.length || 0,
+      ...(completion.usage.inputTokens !== undefined ? { inputTokens: completion.usage.inputTokens } : {}),
+      ...(completion.usage.outputTokens !== undefined ? { outputTokens: completion.usage.outputTokens } : {}),
+    });
+  } catch (error) {
+    options.trace?.recordModelRound({
+      model: options.model,
+      status: "error",
+      durationMs: Date.now() - modelStartedAt,
+      toolCallCount: 0,
+    });
+    throw error;
+  }
+  const calls = completion.message.tool_calls || [];
+  if (calls.length !== 1 || calls[0].function.name !== PERSONAL_SKILL_PROPOSAL_TOOL.function.name) {
+    return null;
+  }
+  try {
+    return JSON.parse(calls[0].function.arguments) as unknown;
+  } catch {
+    return null;
+  }
+}
+
 export async function answerWithKimi(options: {
   provider: ERPProvider;
   auth: AgentAuthContext;
@@ -336,11 +463,13 @@ export async function answerWithKimi(options: {
   memory?: AgentControlledMemory;
   trace?: AgentTrace;
   traceSkillTags?: readonly string[];
+  requireVerifiedTool?: boolean;
 }): Promise<AgentAnswer> {
   const { provider, auth, message, history = [], section, apiKey, baseUrl, model, trace } = options;
   const attachmentDocuments = (options.attachmentDocuments || []).slice(0, 4);
   const imageParts = (options.imageParts || []).slice(0, 4);
   const enabledSkills = options.enabledSkills || resolveAgentSkillPolicy().enabled;
+  const requireVerifiedTool = options.requireVerifiedTool === true;
   const memory = options.memory || controlledMemoryFromConversation(message, history);
   const knowledgeRequired = attachmentDocuments.length > 0
     || shouldUseKnowledgeConversationIntent(
@@ -368,16 +497,24 @@ export async function answerWithKimi(options: {
       ? [...imageParts, { type: "text", text: message }]
       : message },
   ];
-  const focusedNames = knowledgeRequired
-    ? ["search_knowledge_base"] as const
-    : imageParts.length > 0
-      ? null
-      : focusedAgentToolNames(message);
-  const selection = knowledgeRequired
-    ? selectRegisteredAgentTools({ enabledSkills, focusedNames, permissions: auth.permissions })
-    : imageParts.length > 0
-      ? selectRegisteredAgentTools({ enabledSkills, excludeNames: ["search_knowledge_base"], permissions: auth.permissions })
-      : selectRegisteredAgentTools({ enabledSkills, focusedNames: focusedAgentToolNames(message), permissions: auth.permissions });
+  const focusedNames = requireVerifiedTool
+    ? null
+    : knowledgeRequired
+      ? ["search_knowledge_base"] as const
+      : imageParts.length > 0
+        ? null
+        : focusedAgentToolNames(message);
+  const selection = requireVerifiedTool
+    ? selectRegisteredAgentTools({
+      enabledSkills,
+      ...(imageParts.length > 0 ? { excludeNames: ["search_knowledge_base"] as const } : {}),
+      permissions: auth.permissions,
+    })
+    : knowledgeRequired
+      ? selectRegisteredAgentTools({ enabledSkills, focusedNames, permissions: auth.permissions })
+      : imageParts.length > 0
+        ? selectRegisteredAgentTools({ enabledSkills, excludeNames: ["search_knowledge_base"], permissions: auth.permissions })
+        : selectRegisteredAgentTools({ enabledSkills, focusedNames, permissions: auth.permissions });
   const tools = selection.definitions;
   trace?.selectRoute({
     promptVersion: AGENT_PROMPT_VERSION,
@@ -391,10 +528,15 @@ export async function answerWithKimi(options: {
   };
   if (knowledgeRequired && !selection.names.includes("search_knowledge_base")) return abstain();
   if (focusedNames && selection.names.length !== focusedNames.length) return abstain();
+  if (requireVerifiedTool && selection.skills.length !== enabledSkills.size) return abstain();
+  if (requireVerifiedTool && tools.length === 0) return abstain();
+  const requiredToolsets = new Set(selection.toolsets);
+  const observedToolsets = new Set(selection.toolsets.slice(0, 0));
   const groundedCitationsByChunk = new Map<string, AgentCitation>();
   let knowledgeSearchAttempted = false;
   let productActivityAttempted = false;
   let productActivityVerified = true;
+  let verifiedToolObserved = false;
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
     const modelStartedAt = Date.now();
@@ -432,6 +574,10 @@ export async function answerWithKimi(options: {
     if (!calls.length) {
       const answer = assistant.content?.trim();
       if (!answer) throw new Error("The model API did not return displayable text.");
+      if (requireVerifiedTool && (
+        !verifiedToolObserved
+        || [...requiredToolsets].some((toolset) => !observedToolsets.has(toolset))
+      )) return abstain();
       if (knowledgeRequired) {
         const selected = parseKnowledgeCitationSelection(answer);
         const citations = selected
@@ -447,6 +593,7 @@ export async function answerWithKimi(options: {
           citations: citations.filter((citation): citation is AgentCitation => Boolean(citation)),
         };
       }
+      if (requireVerifiedTool && !verifiedToolObserved) return abstain();
       return { mode: "kimi", answer, suggestions: SUGGESTIONS };
     }
     const outputs = await Promise.all(calls.map(async (call) => {
@@ -475,6 +622,7 @@ export async function answerWithKimi(options: {
         }
       }
       const verification = toolOutputVerification(content);
+      const registration = registeredAgentTool(call.function.name);
       trace?.recordTool({
         name: call.function.name,
         status: verification,
@@ -483,14 +631,21 @@ export async function answerWithKimi(options: {
       return {
         message: { role: "tool" as const, tool_call_id: call.id, content },
         verification,
+        toolset: registration?.toolset,
       };
     }));
+    for (const output of outputs) {
+      if (output.verification === "verified") verifiedToolObserved = true;
+      if (output.verification !== "unavailable" && output.toolset) observedToolsets.add(output.toolset);
+    }
     messages.push(...outputs.map((output) => output.message));
     if (productActivityAttempted && !productActivityVerified) return abstain();
-    if (outputs.some((output) => output.verification === "unavailable")
-      || outputs.every((output) => output.verification === "empty")) {
-      return abstain();
+    if (outputs.some((output) => output.verification === "unavailable")) return abstain();
+    if (outputs.every((output) => output.verification === "empty")) {
+      const observedEveryRequiredToolset = [...requiredToolsets].every((toolset) => observedToolsets.has(toolset));
+      if (!requireVerifiedTool || knowledgeRequired || (observedEveryRequiredToolset && !verifiedToolObserved)) return abstain();
     }
   }
+  if (requireVerifiedTool) return abstain();
   throw new Error("The model API exceeded the safe tool-call limit.");
 }

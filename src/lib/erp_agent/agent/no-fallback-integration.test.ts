@@ -33,7 +33,7 @@ test("Kimi builds multimodal content arrays with thinking disabled", () => {
   assert.match(modelOrchestrator, /\[...imageParts, \{ type: "text", text: message \}\]/u);
   assert.match(modelOrchestrator, /prompt_cache_key/u);
   assert.match(modelOrchestrator, /mode: "kimi"/u);
-  assert.match(route, /const modelRequest = imageParts\.length > 0 \|\| requiresKnowledge/u);
+  assert.match(route, /const modelRequest = buildingPersonalSkill \|\| imageParts\.length > 0 \|\| requiresKnowledge/u);
   assert.match(route, /if \(modelRequest && !settings\.apiKey\)/u);
   assert.match(route, /kimiRequestWarning\(primaryError, settings\.region\)/u);
   assert.doesNotMatch(modelOrchestrator, /modelErrorDetail|error\?\.message/u);

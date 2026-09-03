@@ -64,6 +64,15 @@ test("unrecognised or cross-module requests retain the complete tool set", () =>
   assert.equal(focusedAgentToolNames("Compare low inventory with pending deliveries"), null);
 });
 
+test("Site Visiting uses its dedicated read-only tool without hiding combined summaries", () => {
+  assert.deepEqual(focusedAgentToolNames("Summarize Site Visiting this week"), ["search_site_visits"]);
+  assert.deepEqual(focusedAgentToolNames("显示本周现场勘察安排"), ["search_site_visits"]);
+  assert.equal(
+    focusedAgentToolNames("Summarize this week's site visits, deliveries, inventory and payments"),
+    null,
+  );
+});
+
 test("ERP support domains receive a narrow Toolset", () => {
   assert.deepEqual(focusedAgentToolNames("Show reimbursement expenses"), ["search_reimbursements"]);
   assert.deepEqual(focusedAgentToolNames("Read the Reports needs document"), ["read_reports_notes"]);
