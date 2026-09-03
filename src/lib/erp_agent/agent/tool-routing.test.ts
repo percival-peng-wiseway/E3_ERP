@@ -62,6 +62,34 @@ test("unrecognised or cross-module requests retain the complete tool set", () =>
   assert.deepEqual(focusedAgentToolNames("What is scheduled tomorrow?"), ["search_weekly_schedule"]);
   assert.deepEqual(focusedAgentToolNames("Give me the workspace overview"), ["get_workspace_overview"]);
   assert.equal(focusedAgentToolNames("Compare low inventory with pending deliveries"), null);
+  assert.equal(focusedAgentToolNames("Compare inventory with deliveries this week"), null);
+  assert.equal(focusedAgentToolNames("上周有多少收款"), null);
+  assert.equal(focusedAgentToolNames("上周有几单付款"), null);
+  assert.equal(focusedAgentToolNames("上周有几笔回款"), null);
+  assert.deepEqual(focusedAgentToolNames("上周有几项费用"), ["search_reimbursements"]);
+});
+
+test("weekly period facts select the canonical Weekly Schedule tool", () => {
+  for (const message of [
+    "Show completed work this week",
+    "Show completed work last week",
+    "上周情况",
+    "上周工作情况",
+    "本周完成情况",
+    "上周一共有几单",
+    "上周有几单",
+    "上周都做了什么",
+    "What did we complete last week?",
+    "What did we finish last week?",
+    "Show inventory deliveries completed last week",
+    "显示上周库存送货",
+  ]) {
+    assert.deepEqual(focusedAgentToolNames(message), ["search_weekly_schedule"], message);
+  }
+  assert.deepEqual(
+    focusedAgentToolNames("Show the current Project Track status"),
+    ["search_payment_projects"],
+  );
 });
 
 test("Site Visiting uses its dedicated read-only tool without hiding combined summaries", () => {

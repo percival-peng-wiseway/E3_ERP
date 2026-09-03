@@ -52,10 +52,10 @@ const IDENTIFIER = /\b(?=[a-z0-9_.-]{2,40}\b)(?=[a-z0-9_.-]*[a-z])(?=[a-z0-9_.-]
 const STRUCTURED_ALPHA_IDENTIFIER = /\b[A-Z]{2,}(?:[_.-][A-Z]{2,})+\b/gu;
 const KNOWN_ALPHA_IDENTIFIER = /\b(?:BOLLARD|CANOPY)\b/giu;
 const NON_SKU_WORDS = new Set([
-  "A", "AN", "AND", "ARE", "AUD", "BY", "CANCELLED", "CUSTOMER", "CUSTOMERS", "DELIVERED", "DELIVERY",
-  "E3", "FOR", "FROM", "HAS", "HAVE", "HOW", "IN", "INSTALL", "INSTALLED", "INSTALLER", "INVENTORY", "IS", "IT", "ITEM", "ITEMS", "ITS",
-  "ORDER", "ORDERS", "PM", "PROJECT", "PROJECTS", "QR", "SKU", "STC", "STOCK", "THAT", "THE", "THEM", "THESE", "THIS", "THOSE", "TO",
-  "USED", "USES", "USING", "WHAT", "WHICH", "WHO", "WIP", "WITH",
+  "A", "AN", "AND", "ARE", "AUD", "BY", "CANCELLED", "CUSTOMER", "CUSTOMERS", "DELIVERED", "DELIVERIES", "DELIVERY",
+  "CURRENT", "E3", "FOR", "FROM", "HAS", "HAVE", "HOW", "IN", "INSTALL", "INSTALLATION", "INSTALLATIONS", "INSTALLED", "INSTALLER", "INVENTORY", "IS", "IT", "ITEM", "ITEMS", "ITS",
+  "JOB", "JOBS", "LAST", "NEXT", "ORDER", "ORDERS", "PM", "PROJECT", "PROJECTS", "QR", "SKU", "STC", "STOCK", "TASK", "TASKS", "THAT", "THE", "THEM", "THESE", "THIS", "THOSE", "TO", "TODAY", "TOMORROW",
+  "USED", "USES", "USING", "WEEK", "WHAT", "WHICH", "WHO", "WIP", "WITH", "WORK",
 ]);
 
 export function normalizedInventorySku(value: string) {

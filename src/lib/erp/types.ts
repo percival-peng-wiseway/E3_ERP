@@ -118,6 +118,12 @@ export interface AgentAnswer {
   mode: "local" | "openai" | "kimi";
   suggestions: string[];
   citations?: AgentCitation[];
+  /**
+   * The answer contains only the live sources that could be verified for this
+   * request. This is structured control metadata; it must never contain source
+   * payloads, prompts, answers or other business data.
+   */
+  incompleteData?: boolean;
 }
 
 export interface ApiMeta {

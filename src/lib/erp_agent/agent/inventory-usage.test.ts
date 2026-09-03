@@ -88,6 +88,20 @@ test("recognizes SKU usage questions without treating stock questions as usage",
   assert.equal(isBareInventorySkuLookup("What is KH10 used for?"), false);
 });
 
+test("plural schedule nouns are never inferred as inventory SKUs", () => {
+  for (const message of [
+    "Which customers had deliveries last week?",
+    "Who had installations last week?",
+    "Who delivered last week?",
+    "Who installed last week?",
+    "Who delivered next week?",
+    "Who had jobs last week?",
+    "Who had tasks last week?",
+  ]) {
+    assert.deepEqual(inventorySkuCandidates(message), [], message);
+  }
+});
+
 test("customer, assignee and pending intent gates stay independent", () => {
   assert.equal(inventoryUsageRequestsCustomers("Which customer used KH10?"), true);
   assert.equal(inventoryUsageRequestsAssignee("Which customer used KH10?"), false);

@@ -409,7 +409,29 @@ test("Weekly Schedule questions use the live aggregate workflow without a model"
 });
 
 test("last-week and overdue wording stays on the Weekly Schedule workflow", async () => {
-  for (const message of ["Show completed jobs last week", "Show deliveries last week", "Show overdue Weekly Schedule work", "显示上周安装任务"]) {
+  for (const message of [
+    "Show completed jobs last week",
+    "Show completed work this week",
+    "Show completed work last week",
+    "Show deliveries last week",
+    "Show overdue Weekly Schedule work",
+    "显示上周安装任务",
+    "上周情况",
+    "上周工作情况",
+    "本周完成情况",
+    "上周一共有几单",
+    "上周有几单",
+    "上周都做了什么",
+    "What did we complete last week?",
+    "What did we finish last week?",
+    "Show inventory deliveries completed last week",
+    "显示上周库存送货",
+    "Which customers had deliveries last week?",
+    "Which customer deliveries were completed last week?",
+    "Who had installations last week?",
+    "Who delivered last week?",
+    "Who installed last week?",
+  ]) {
     let weeklyCalls = 0;
     const result = await runDeterministicWorkflow(
       provider(),
@@ -448,6 +470,31 @@ test("explicit Project Track unscheduled questions are not misrouted to Weekly S
   assert.equal(result?.workflow, "project_track_query");
   assert.equal(weeklyCalls, 0);
   assert.equal(paymentCalls, 1);
+});
+
+test("generic weekly wording does not hijack other ERP domains", async () => {
+  for (const message of [
+    "上周有几条报销",
+    "上周有多少收款",
+    "上周有几项库存",
+    "Compare inventory with deliveries this week",
+    "Summarize this week's deliveries, inventory and payments",
+  ]) {
+    let weeklyCalls = 0;
+    const result = await runDeterministicWorkflow(
+      provider(),
+      message,
+      new AgentTrace(),
+      dependencies({
+        fastWeeklyScheduleAnswer: async () => {
+          weeklyCalls += 1;
+          return { mode: "local", answer: "Wrong weekly route.", suggestions: [] };
+        },
+      }),
+    );
+    assert.notEqual(result?.workflow, "weekly_schedule_query", message);
+    assert.equal(weeklyCalls, 0, message);
+  }
 });
 
 test("dated Project Track schedule questions use the Weekly aggregate", async () => {

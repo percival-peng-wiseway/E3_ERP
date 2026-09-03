@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const [route, modelOrchestrator, promptBuilder, homeWorkspace, settingsRoute, settingsDialog, settingsModule] = await Promise.all([
+const [route, modelOrchestrator, promptBuilder, homeWorkspace, settingsRoute, settingsDialog, settingsModule, toolExecutor] = await Promise.all([
   readFile(new URL("../../../app/api/agent/route.ts", import.meta.url), "utf8"),
   readFile(new URL("./kimi.ts", import.meta.url), "utf8"),
   readFile(new URL("./prompt-builder.ts", import.meta.url), "utf8"),
@@ -10,6 +10,7 @@ const [route, modelOrchestrator, promptBuilder, homeWorkspace, settingsRoute, se
   readFile(new URL("../../../app/api/settings/agent/route.ts", import.meta.url), "utf8"),
   readFile(new URL("../../../components/agent-settings-dialog.tsx", import.meta.url), "utf8"),
   readFile(new URL("./settings.ts", import.meta.url), "utf8"),
+  readFile(new URL("./tools.ts", import.meta.url), "utf8"),
 ]);
 
 test("Agent failures return the fixed no-information response without local downgrade", () => {
@@ -19,6 +20,18 @@ test("Agent failures return the fixed no-information response without local down
   assert.match(modelOrchestrator, /No matching information was found\. Please try again\./u);
   assert.doesNotMatch(homeWorkspace, /Local mode/u);
   assert.match(homeWorkspace, /Model unavailable/u);
+});
+
+test("partial deterministic answers are surfaced as structured fallback diagnostics", () => {
+  assert.match(toolExecutor, /const incompleteData = sourceWarnings\.length > 0/u);
+  assert.match(toolExecutor, /verified entries \(partial data\)/u);
+  assert.match(toolExecutor, /\{ incompleteData: true \}/u);
+  assert.match(route, /if \(workflowAnswer\.incompleteData\)/u);
+  assert.match(route, /trace\.markOutcome\("fallback"\)/u);
+  assert.match(route, /name: workflow === "weekly_schedule_query"[\s\S]*?"search_weekly_schedule"/u);
+  assert.match(route, /status: "unavailable"/u);
+  assert.match(route, /issueCodes\.add\("tool_unavailable"\)/u);
+  assert.doesNotMatch(route, /recordTool\(\{[\s\S]*?(?:arguments|result|sourceWarnings):/u);
 });
 
 test("product activity is a controlled cross-source model tool", () => {

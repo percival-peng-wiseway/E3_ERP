@@ -43,6 +43,12 @@ export type WeeklyScheduleStatus = Exclude<WeeklyScheduleStatusFilter, "all" | "
 export type WeeklyScheduleKindFilter = (typeof WEEKLY_SCHEDULE_KINDS)[number];
 export type WeeklyScheduleKind = Exclude<WeeklyScheduleKindFilter, "all">;
 
+export type WeeklyScheduleDateBasis =
+  | "scheduled"
+  | "recorded_completion"
+  | "status_updated_at"
+  | "scheduled_fallback";
+
 type UnknownRecord = Record<string, unknown>;
 
 export type WeeklyScheduleArgs = {
@@ -57,6 +63,8 @@ export type WeeklyScheduleArgs = {
   includeLocation: boolean;
   includeCustomerContactDetails: boolean;
   includeNotes: boolean;
+  /** Trusted caller-only scope; never accepted from model tool arguments. */
+  strictDateRange?: boolean;
 };
 
 export type WeeklyScheduleEntry = {
@@ -67,6 +75,13 @@ export type WeeklyScheduleEntry = {
   title: string;
   scheduledDate: string | null;
   scheduledTime: string | null;
+  /**
+   * Date/time used to place completed work in a reporting period. The planned
+   * schedule remains available separately in scheduledDate/scheduledTime.
+   */
+  completionDate: string | null;
+  completionTime: string | null;
+  dateBasis: WeeklyScheduleDateBasis;
   endTime: string | null;
   preferredDate?: string | null;
   preferredTime?: string | null;
@@ -175,11 +190,27 @@ export function weeklyScheduleTextQuery(rawMessage: string) {
     .replace(/[’']s\b/gu, "")
     .replace(/\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}\/\d{1,2}\/\d{4}\b/gu, " ")
     .replace(/\bweekly\s+schedule\b|\bproject\s*track(?:ing)?\b|\bworking\s+in\s+progress\b|\bpre[\s_-]*scheduled\b/gu, " ")
-    .replace(/\b(?:show|list|find|search|get|give|me|what|which|who|when|where|how|many|is|are|was|were|on|for|of|in|the|all|a|an|and|to|from|this|current|next|last|week|today|tomorrow|schedule|scheduled|scheduling|unscheduled|completed|complete|cancelled|canceled|pending|overdue|not|work|job|jobs|task|tasks|delivery|deliveries|deliver|delivered|material|installation|installations|installment|installments|installing|installed|install|combined|site|visit|visits|custom|inventory|warehouse|assigned|assignee|driver|installer|address|location|contact|phone|email|pm|chosen|selected|note|notes|remark|remarks|detail|details|instruction|instructions|number|item|items|sku)\b/gu, " ")
-    .replace(/周排程|周计划|项目追踪|项目跟踪|工作进度|本周|下周|上周|今天|明天|查看|显示|列出|查找|所有|全部|安排|排期|日程|未排期|预排期|已排期|已完成|已取消|已送达|已送货|已安装|逾期|待排期|任务|工作|送货|配送|物料|安装|现场勘察|上门勘察|自定义|仓库|谁|负责人|送货人|安装人|地址|位置|哪里|电话|邮箱|备注|说明|详情|编号|商品|项目|和|的/gu, " ")
+    // Remove complete no-entity intent phrases first. In particular, do not
+    // make "do" or "team" global stop words: both can be real customer text.
+    .replace(/\bwhat\s+did\s+(?:we|the\s+team)\s+(?:complete|finish|do)\s+(?:this|current|next|last)\s+week\b/gu, " ")
+    .replace(/\bhow\s+many\s+(?:jobs?|tasks?|orders?|work\s+items?)\s+(?:did\s+(?:we|the\s+team)\s+)?(?:complete|finish)\s+(?:this|current|next|last)\s+week\b/gu, " ")
+    .replace(/\b(?:(?:this|current|next|last)\s+week\s+(?:(?:work|activity)\s+)?(?:summary|overview|status|situation|progress)|(?:(?:work|activity)\s+)?(?:summary|overview|status|situation|progress)\s+(?:for\s+)?(?:this|current|next|last)\s+week)\b/gu, " ")
+    .replace(/(?:本周|上周|下周)(?:的)?(?:(?:工作|任务|业务)(?:的)?)?(?:情况|汇总|总结|概况|状态|进展|完成情况)/gu, " ")
+    .replace(/(?:本周|上周|下周)(?:的)?(?:都)?(?:做|完成)了?(?:什么|哪些)(?:任务|工作)?/gu, " ")
+    .replace(/(?:本周|上周|下周)(?:的)?有?哪些(?:客户|项目)(?:完成|做)了?(?:的)?/gu, " ")
+    .replace(/\b(?:show|list|find|search|get|give|me|what|which|who|when|where|how|many|did|we|had|is|are|was|were|on|for|of|in|the|all|a|an|and|to|from|this|current|next|last|week|today|tomorrow|schedule|scheduled|scheduling|unscheduled|completed|complete|finished|finish|cancelled|canceled|pending|overdue|not|work|job|jobs|task|tasks|customer|customers|delivery|deliveries|deliver|delivered|material|installation|installations|installment|installments|installing|installed|install|combined|site|visit|visits|custom|inventory|warehouse|assigned|assignee|driver|installer|address|location|contact|phone|email|pm|chosen|selected|note|notes|remark|remarks|detail|details|instruction|instructions|number|item|items|sku)\b/gu, " ")
+    // Remove complete counting-question phrases before the generic Chinese
+    // vocabulary. Deleting single characters such as “有” or “单” globally
+    // would corrupt customer names such as 王有才 and 单伟.
+    .replace(/(?:本周|上周|下周)?(?:一共|总共)?有(?:多少|几)(?:个|条|项|单)?|(?:本周|上周|下周)?都?做了什么/gu, " ")
+    .replace(/周排程|周计划|项目追踪|项目跟踪|工作进度|本周|下周|上周|今天|明天|查看|显示|列出|查找|所有|全部|安排|排期|日程|未排期|预排期|已排期|已完成|完成|已取消|已送达|已送货|已安装|逾期|待排期|情况|汇总|总结|概况|状态|进展|一共|总共|做了|什么|任务|工作|送货|配送|物料|安装|现场勘察|上门勘察|自定义|库存|存货|仓库|谁|负责人|送货人|安装人|地址|位置|哪里|电话|邮箱|备注|说明|详情|编号|商品|项目|和|的/gu, " ")
+    .replace(/(?:了)?吗\s*$/gu, " ")
     .replace(/[^\p{L}\p{N}_-]+/gu, " ")
     .replace(/\s+/gu, " ")
-    .trim();
+    .trim()
+    // When the only residue is a requested output dimension, it is not an
+    // entity filter. Keep real names intact when any identifying text exists.
+    .replace(/^(?:客户|项目|(?:客户|项目)(?:有)?哪些|(?:有)?哪些(?:客户|项目)(?:了)?)$/u, "");
 }
 
 /** Derives an exact Weekly Schedule card kind without consuming entity/SKU text. */
@@ -203,18 +234,69 @@ function containsQuery(values: unknown[], query: string) {
   return terms.every((term) => searchable.some((value) => value.includes(term)));
 }
 
-function melbourneDateFromTimestamp(value: string | null | undefined) {
+function parsedStoredTimestamp(value: string | null | undefined) {
   if (!value) return null;
-  const date = new Date(value);
+  const cleaned = value.trim();
+  if (!cleaned) return null;
+  // SQLite CURRENT_TIMESTAMP values have no suffix but are UTC. Parsing them
+  // as local time makes production and local development disagree near a day
+  // boundary, so make the UTC interpretation explicit.
+  const timestamp = /^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?)?$/u.test(cleaned)
+    ? `${cleaned.replace(" ", "T")}${cleaned.length === 10 ? "T00:00:00" : ""}Z`
+    : cleaned;
+  const date = new Date(timestamp);
   if (Number.isNaN(date.getTime())) return null;
+  return date;
+}
+
+function melbourneDateTimeFromTimestamp(value: string | null | undefined) {
+  const date = parsedStoredTimestamp(value);
+  if (!date) return null;
   const parts = new Intl.DateTimeFormat("en-AU", {
     timeZone: MELBOURNE_TIME_ZONE,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
   }).formatToParts(date);
   const record = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${record.year}-${record.month}-${record.day}`;
+  return {
+    date: `${record.year}-${record.month}-${record.day}`,
+    time: `${record.hour}:${record.minute}`,
+  };
+}
+
+function melbourneDateFromTimestamp(value: string | null | undefined) {
+  return melbourneDateTimeFromTimestamp(value)?.date || null;
+}
+
+function completionMetadata(
+  status: WeeklyScheduleStatus,
+  timestamp: string | null | undefined,
+  fallbackDate: string | null,
+  timestampBasis: Extract<WeeklyScheduleDateBasis, "recorded_completion" | "status_updated_at">,
+) {
+  if (status !== "completed") {
+    return {
+      completionDate: null,
+      completionTime: null,
+      dateBasis: "scheduled" as const,
+    };
+  }
+  const completed = melbourneDateTimeFromTimestamp(timestamp);
+  return completed
+    ? {
+      completionDate: completed.date,
+      completionTime: completed.time,
+      dateBasis: timestampBasis,
+    }
+    : {
+      completionDate: fallbackDate,
+      completionTime: null,
+      dateBasis: "scheduled_fallback" as const,
+    };
 }
 
 function customerName(project: PaymentTrackProject) {
@@ -308,6 +390,7 @@ function paymentDraft(
   values: {
     scheduledDate?: string | null;
     scheduledTime?: string | null;
+    completedAt?: string | null;
     request?: PaymentTrackScheduleRequest | null;
   } = {},
 ): ScheduleEntryDraft | null {
@@ -320,6 +403,12 @@ function paymentDraft(
     : kind === "installation" ? project.installationAssignee : project.deliveryAssignee;
   const noteValue = joinedNotes([request?.notes, project.pmNotes]);
   const items = projectItems(project);
+  const completion = completionMetadata(
+    actualStatus,
+    values.completedAt,
+    values.scheduledDate || null,
+    "recorded_completion",
+  );
   return {
     id: overrideKey || `pending-payment-${kind}:${project.id.toLowerCase()}`,
     source: "project_track",
@@ -328,6 +417,7 @@ function paymentDraft(
     title: customerName(project),
     scheduledDate: values.scheduledDate || null,
     scheduledTime: values.scheduledTime || null,
+    ...completion,
     endTime: null,
     ...(request ? {
       preferredDate: cleanText(request.preferredDate, 10) || null,
@@ -357,6 +447,8 @@ function paymentDraft(
       status,
       values.scheduledDate,
       values.scheduledTime,
+      completion.completionDate,
+      completion.completionTime,
       request?.preferredDate,
       request?.preferredTime,
       ...items.flatMap((item) => [item.sku, item.quantity]),
@@ -389,7 +481,11 @@ function projectDrafts(
         project.deliveredAt ? "completed" : "scheduled",
         `payment-delivery:${project.id.toLowerCase()}`,
         overrides,
-        { scheduledDate: deliveryDate, scheduledTime: project.deliveryScheduledTime },
+        {
+          scheduledDate: deliveryDate,
+          scheduledTime: project.deliveryScheduledTime,
+          completedAt: project.deliveredAt,
+        },
       );
       if (value) entries.push(value);
     }
@@ -406,7 +502,11 @@ function projectDrafts(
         project.installedAt ? "completed" : "scheduled",
         `payment-installation:${project.id.toLowerCase()}`,
         overrides,
-        { scheduledDate: installationDate, scheduledTime: project.installationScheduledTime },
+        {
+          scheduledDate: installationDate,
+          scheduledTime: project.installationScheduledTime,
+          completedAt: project.installedAt,
+        },
       );
       if (value) entries.push(value);
     }
@@ -423,7 +523,11 @@ function projectDrafts(
           project.installedAt ? "completed" : "scheduled",
           `payment-combined:${project.id.toLowerCase()}`,
           overrides,
-          { scheduledDate: combinedDate, scheduledTime: project.deliveryScheduledTime || project.installationScheduledTime },
+          {
+            scheduledDate: combinedDate,
+            scheduledTime: project.deliveryScheduledTime || project.installationScheduledTime,
+            completedAt: project.installedAt,
+          },
         );
         if (value) entries.push(value);
       }
@@ -498,6 +602,15 @@ function canonicalInventoryGroups(orders: readonly Order[]) {
   return [...groups.values()].map((rows) => [...rows].sort((left, right) => left.id - right.id));
 }
 
+function latestStoredTimestamp(values: readonly (string | null | undefined)[]) {
+  return values.reduce<string | null>((latest, value) => {
+    const parsed = parsedStoredTimestamp(value);
+    if (!parsed) return latest;
+    const latestParsed = parsedStoredTimestamp(latest);
+    return !latestParsed || parsed.getTime() > latestParsed.getTime() ? value?.trim() || null : latest;
+  }, null);
+}
+
 function inventoryDrafts(
   sources: WeeklyScheduleSources,
   args: WeeklyScheduleArgs,
@@ -511,7 +624,11 @@ function inventoryDrafts(
   for (const orders of groups) {
     const primary = orders[0];
     if (!primary) continue;
-    const scheduledDate = primary.planned_date || melbourneDateFromTimestamp(primary.delivered_at);
+    // A grouped delivery is complete when its last line is recorded delivered.
+    // In normal data every row has the same value; using the latest also keeps
+    // partially migrated groups from being assigned too early.
+    const deliveredAt = latestStoredTimestamp(orders.map((order) => order.delivered_at));
+    const scheduledDate = primary.planned_date || melbourneDateFromTimestamp(deliveredAt);
     if (!scheduledDate) continue;
     const overrideKey = `inventory:orders:${orders.map((order) => order.id).join(",")}`;
     const override = overrides.get(overrideKey);
@@ -519,6 +636,12 @@ function inventoryDrafts(
     const status: WeeklyScheduleStatus = override === "cancelled"
       ? "cancelled"
       : primary.status === "delivered" ? "completed" : "scheduled";
+    const completion = completionMetadata(
+      status,
+      deliveredAt,
+      scheduledDate,
+      "recorded_completion",
+    );
     const items = orders.slice(0, 20).map((order) => ({ sku: cleanText(order.sku, 160), quantity: order.quantity }));
     const noteValue = cleanText(primary.note, 2_000) || null;
     entries.push({
@@ -529,10 +652,11 @@ function inventoryDrafts(
       title: cleanText(primary.customer, 200) || "Customer",
       scheduledDate,
       scheduledTime: cleanText(primary.delivery_time, 5) || null,
+      ...completion,
       endTime: null,
       sourceStatus: primary.status,
       items,
-      updatedAt: cleanText(primary.delivered_at || primary.created_at, 40),
+      updatedAt: cleanText(deliveredAt || primary.created_at, 40),
       ...(args.includeLocation ? {
         location: cleanText(primary.address, 500) || null,
       } : {}),
@@ -552,6 +676,8 @@ function inventoryDrafts(
         "material delivery",
         scheduledDate,
         primary.delivery_time,
+        completion.completionDate,
+        completion.completionTime,
         ...items.flatMap((item) => [item.sku, item.quantity]),
         ...(args.includeLocation ? [primary.address] : []),
         ...(args.includeAssignee ? [primary.driver] : []),
@@ -587,6 +713,15 @@ function siteVisitDrafts(
     if (status === "cancelled" && !scheduledDate
       && (!requestedDate || requestedDate < args.from || requestedDate > args.to)) return [];
     const noteValue = joinedNotes([visit.reason, visit.notes]);
+    // Site Visiting currently has no dedicated completedAt field. A visit that
+    // remains completed cannot be edited without first being reopened, so its
+    // latest status update is the conservative completion-date proxy.
+    const completion = completionMetadata(
+      status,
+      visit.updatedAt,
+      scheduledDate,
+      "status_updated_at",
+    );
     return [{
       id: overrideKey,
       source: "site_visit",
@@ -595,6 +730,7 @@ function siteVisitDrafts(
       title: cleanText(visit.projectName, 200) || "Site visit",
       scheduledDate,
       scheduledTime,
+      ...completion,
       endTime: null,
       ...(!scheduledDate ? {
         preferredDate: requestedDate,
@@ -620,6 +756,8 @@ function siteVisitDrafts(
         "site visit",
         scheduledDate,
         scheduledTime,
+        completion.completionDate,
+        completion.completionTime,
         visit.requestedDate,
         visit.requestedTime,
         ...(args.includeLocation ? [visit.address] : []),
@@ -632,47 +770,76 @@ function siteVisitDrafts(
 }
 
 function customJobDrafts(jobs: readonly ProjectScheduleJob[], args: WeeklyScheduleArgs) {
-  return jobs.map((job): ScheduleEntryDraft => ({
-    id: `custom:${job.id}`,
-    source: "custom",
-    kind: "custom",
-    status: job.status,
-    title: cleanText(job.title, 200) || "Custom job",
-    scheduledDate: job.scheduledDate,
-    scheduledTime: job.startTime,
-    endTime: job.endTime,
-    sourceStatus: job.status,
-    updatedAt: job.updatedAt,
-    ...(args.includeLocation ? {
-      location: cleanText(job.location, 500) || null,
-    } : {}),
-    ...(args.includeAssignee ? {
-      assignee: cleanText(job.assignee, 160) || null,
-    } : {}),
-    ...(args.includeNotes ? { notes: cleanText(job.notes, 2_000) || null } : {}),
-    queryValues: [
-      job.title,
+  return jobs.map((job): ScheduleEntryDraft => {
+    // Custom jobs do not retain the transition timestamp separately and may be
+    // edited after completion. updatedAt therefore cannot safely be presented
+    // as the actual completion time; retain the planned date as an explicit
+    // fallback until that source gains completedAt.
+    const completion = completionMetadata(
       job.status,
-      "custom",
+      null,
       job.scheduledDate,
-      job.startTime,
-      job.endTime,
-      ...(args.includeLocation ? [job.location] : []),
-      ...(args.includeAssignee ? [job.assignee] : []),
-      ...(args.includeNotes ? [job.notes] : []),
-    ],
-  }));
+      "recorded_completion",
+    );
+    return {
+      id: `custom:${job.id}`,
+      source: "custom",
+      kind: "custom",
+      status: job.status,
+      title: cleanText(job.title, 200) || "Custom job",
+      scheduledDate: job.scheduledDate,
+      scheduledTime: job.startTime,
+      ...completion,
+      endTime: job.endTime,
+      sourceStatus: job.status,
+      updatedAt: job.updatedAt,
+      ...(args.includeLocation ? {
+        location: cleanText(job.location, 500) || null,
+      } : {}),
+      ...(args.includeAssignee ? {
+        assignee: cleanText(job.assignee, 160) || null,
+      } : {}),
+      ...(args.includeNotes ? { notes: cleanText(job.notes, 2_000) || null } : {}),
+      queryValues: [
+        job.title,
+        job.status,
+        "custom",
+        job.scheduledDate,
+        job.startTime,
+        job.endTime,
+        completion.completionDate,
+        completion.completionTime,
+        ...(args.includeLocation ? [job.location] : []),
+        ...(args.includeAssignee ? [job.assignee] : []),
+        ...(args.includeNotes ? [job.notes] : []),
+      ],
+    };
+  });
+}
+
+function entryReportingDate(entry: ScheduleEntryDraft) {
+  return entry.status === "completed"
+    ? entry.completionDate || entry.scheduledDate
+    : entry.scheduledDate;
+}
+
+function entryReportingTime(entry: ScheduleEntryDraft) {
+  return entry.status === "completed"
+    ? entry.completionTime || entry.scheduledTime
+    : entry.scheduledTime;
 }
 
 function entrySort(left: ScheduleEntryDraft, right: ScheduleEntryDraft) {
-  const pendingOrder = Number(Boolean(left.scheduledDate)) - Number(Boolean(right.scheduledDate));
+  const leftDate = entryReportingDate(left);
+  const rightDate = entryReportingDate(right);
+  const pendingOrder = Number(Boolean(leftDate)) - Number(Boolean(rightDate));
   if (pendingOrder) return pendingOrder;
-  const dateOrder = (left.scheduledDate || "").localeCompare(right.scheduledDate || "");
+  const dateOrder = (leftDate || "").localeCompare(rightDate || "");
   if (dateOrder) return dateOrder;
   const completionOrder = Number(right.status === "completed") - Number(left.status === "completed");
   if (completionOrder) return completionOrder;
-  return `${left.scheduledTime || "99:99"}:${left.title}:${left.id}`.localeCompare(
-    `${right.scheduledTime || "99:99"}:${right.title}:${right.id}`,
+  return `${entryReportingTime(left) || "99:99"}:${left.title}:${left.id}`.localeCompare(
+    `${entryReportingTime(right) || "99:99"}:${right.title}:${right.id}`,
   );
 }
 
@@ -705,9 +872,14 @@ export function aggregateWeeklySchedule(
       || (args.status === "pending" && (entry.status === "unscheduled" || entry.status === "pre_scheduled"))
       || (args.status === "overdue" && isOverdue(entry))
       || entry.status === args.status)
-    .filter((entry) => !entry.scheduledDate
-      || (entry.scheduledDate >= args.from && entry.scheduledDate <= args.to)
-      || (isOverdue(entry) && (args.status === "overdue" || (args.status === "all" && rangeDays === 6))))
+    .filter((entry) => {
+      const reportingDate = entryReportingDate(entry);
+      if (!reportingDate) return args.strictDateRange !== true;
+      if (reportingDate >= args.from && reportingDate <= args.to) return true;
+      return args.strictDateRange !== true
+        && isOverdue(entry)
+        && (args.status === "overdue" || (args.status === "all" && rangeDays === 6));
+    })
     .filter((entry) => containsQuery(entry.queryValues, args.query))
     .sort(entrySort);
   const entries = matched.slice(0, args.limit).map(({ queryValues: _queryValues, ...entry }) => entry);

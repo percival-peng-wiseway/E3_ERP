@@ -123,13 +123,14 @@ function unavailableRow(label: string) {
 
 export function formatWeeklyBusinessSummary(snapshot: WeeklyBusinessSummarySnapshot, language: "english" | "chinese") {
   const chinese = language === "chinese";
+  const partialSchedule = snapshot.scheduleWarningCount > 0;
   const heading = chinese
     ? `## 本周业务汇总（${snapshot.from} 至 ${snapshot.to}）`
     : `## This week summary (${snapshot.from} to ${snapshot.to})`;
   const scheduleHeading = chinese ? "### 送货、安装与 Site Visiting" : "### Delivery, installation and Site Visiting";
   const scheduleHeader = chinese
-    ? "| 工作类型 | 总数 | 已完成 | 已排期 | 待排期 |\n|---|---:|---:|---:|---:|"
-    : "| Work type | Total | Completed | Scheduled | Pending |\n|---|---:|---:|---:|---:|";
+    ? `| 工作类型 | ${partialSchedule ? "已核实记录" : "总数"} | 已完成 | 已排期 | 待排期 |\n|---|---:|---:|---:|---:|`
+    : `| Work type | ${partialSchedule ? "Verified records" : "Total"} | Completed | Scheduled | Pending |\n|---|---:|---:|---:|---:|`;
   const rows = snapshot.work ? [
     workRow(chinese ? "送货" : "Delivery", snapshot.work.delivery),
     workRow(chinese ? "安装" : "Installation", snapshot.work.installation),
@@ -162,17 +163,18 @@ export function formatWeeklyBusinessSummary(snapshot: WeeklyBusinessSummarySnaps
       : `- Confirmed this week: **${snapshot.payments.confirmedCount} payments · ${money(snapshot.payments.confirmedAmountCents)}**.${missing}\n- Outstanding now: **${snapshot.payments.outstandingProjectCount} projects · ${money(snapshot.payments.outstandingAmountCents)}**.`;
   }
 
-  const warning = snapshot.scheduleWarningCount
-    ? `\n\n> ${chinese ? `${snapshot.scheduleWarningCount} 个排期数据源暂时不可用；表格只包含已核实数据。` : `${snapshot.scheduleWarningCount} schedule source(s) were unavailable; the table includes verified data only.`}`
-    : "";
+  const warning = partialSchedule
+    ? `> ${chinese ? `这是部分数据：${snapshot.scheduleWarningCount} 个排期数据源暂时不可用；表格只包含已核实记录，不能视为完整总数。` : `This is partial data: ${snapshot.scheduleWarningCount} schedule source(s) were unavailable; the table contains verified records only, not a complete total.`}`
+    : null;
   return [
     heading,
     scheduleHeading,
+    warning,
     `${scheduleHeader}\n${rows.join("\n")}`,
     scheduleNote,
     inventoryHeading,
     inventoryText,
     paymentsHeading,
     paymentsText,
-  ].join("\n\n") + warning;
+  ].filter((section): section is string => Boolean(section)).join("\n\n");
 }

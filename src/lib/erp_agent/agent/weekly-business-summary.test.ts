@@ -67,5 +67,23 @@ test("weekly summary keeps combined work separate and never treats unavailable s
   assert.match(answer, /Inventory data is currently unavailable/u);
   assert.match(answer, /Payment data is currently unavailable/u);
   assert.match(answer, /1 schedule source\(s\) were unavailable/u);
+  assert.match(answer, /Verified records/u);
+  assert.match(answer, /not a complete total/u);
+  assert.ok(answer.indexOf("partial data") < answer.indexOf("| Work type |"));
   assert.doesNotMatch(answer, /customer|phone|email|address|notes?/iu);
+});
+
+test("Chinese partial summary labels verified counts before displaying them", () => {
+  const answer = formatWeeklyBusinessSummary({
+    from: "2026-08-31",
+    to: "2026-09-06",
+    work: null,
+    inventory: null,
+    payments: null,
+    scheduleWarningCount: 2,
+  }, "chinese");
+  assert.match(answer, /这是部分数据/u);
+  assert.match(answer, /已核实记录/u);
+  assert.match(answer, /不能视为完整总数/u);
+  assert.ok(answer.indexOf("这是部分数据") < answer.indexOf("| 工作类型 |"));
 });

@@ -4,6 +4,7 @@ import { answerWithKimi, informationNotFound, proposePersonalSkillWithKimi } fro
 import { kimiRequestWarning, safeKimiErrorKind } from "@/lib/erp_agent/agent/kimi-error";
 import { shouldUseKnowledgeConversationIntent } from "@/lib/erp_agent/agent/tool-routing";
 import { resolveInventoryUsageMessage } from "@/lib/erp_agent/agent/inventory-usage";
+import { resolveWeeklyFollowUpMessage } from "@/lib/erp_agent/agent/weekly-follow-up";
 import {
   AgentRequestBodyTooLarge,
   readLimitedAgentJson,
@@ -336,7 +337,10 @@ async function processAgentRequest(request: Request) {
     return tracedError(400, "skill_builder_sensitive_request", "Remove credentials, email addresses, webhooks and external links before creating a Skill.");
   }
   const executionMessage = managedSkill?.source === "custom" ? managedSkill.prompt : input.message;
-  const workspaceMessage = resolveInventoryUsageMessage(executionMessage, input.history);
+  const weeklyFollowUpMessage = !managedSkill && input.attachment_ids.length === 0
+    ? resolveWeeklyFollowUpMessage(executionMessage, input.history)
+    : executionMessage;
+  const workspaceMessage = resolveInventoryUsageMessage(weeklyFollowUpMessage, input.history);
   const enabledSkills = new Set([...skillPolicy.enabled].filter((skill) => (
     !managedSkill || managedSkill.capabilityIds.includes(skill)
   )));
@@ -505,6 +509,21 @@ async function processAgentRequest(request: Request) {
       );
       if (workflowAnswer) {
         const workflow = trace.snapshot().workflow;
+        if (workflowAnswer.incompleteData) {
+          // Only structured diagnostics are recorded. The unavailable marker
+          // intentionally carries no source payload, tool arguments or result.
+          trace.markOutcome("fallback");
+          trace.recordTool({
+            name: workflow === "weekly_schedule_query"
+              ? "search_weekly_schedule"
+              : workflow === "weekly_business_summary"
+                ? "weekly_business_summary_sources"
+                : "workflow_data_sources",
+            status: "unavailable",
+            durationMs: 0,
+          });
+          issueCodes.add("tool_unavailable");
+        }
         const workflowSkill = workflow ? skillForWorkflow(workflow) : null;
         trace.selectRoute({
           skills: managedSkill

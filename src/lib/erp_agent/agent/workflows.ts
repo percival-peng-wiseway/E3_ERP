@@ -3,6 +3,8 @@ import type { AgentAnswer, ERPProvider, QuotationStatus } from "@/lib/erp";
 import { hasInventoryUsageReference, inventorySkuCandidates, isBareInventorySkuLookup, isInventoryStockIntent, isInventoryUsageIntent } from "./inventory-usage.ts";
 // @ts-expect-error -- focused Node ESM tests require the explicit extension.
 import { isRebateReceiptAmountIntent } from "./rebate-receipts.ts";
+// @ts-expect-error -- focused Node ESM tests require the explicit extension.
+import { isWeeklyPeriodFactIntent } from "./tool-routing.ts";
 import type { AgentTrace } from "./trace";
 import type { BusinessSkillId } from "./skills";
 
@@ -127,7 +129,19 @@ function hasProjectTrackIntent(message: string): boolean {
 }
 
 function hasWeeklyScheduleIntent(message: string): boolean {
-  const explicitlyWeekly = /\bweekly\s+schedule\b|\b(?:this|current|next|last)\s+week(?:'s)?\s+(?:schedule|jobs?|work|deliveries|installations|site\s*visits?)\b|\b(?:deliveries|installations|site\s*visits?|completed\s+jobs?|delivered|installed)\s+(?:this|next|last)\s+week\b|\b(?:today|tomorrow)(?:'s)?\s+(?:schedule|jobs?|deliveries|installations|site\s*visits?)\b|周排程|周计划|(?:本周|下周|上周)(?:安排|排期|日程|送货|安装|任务|完成)/u.test(message);
+  const explicitScheduleDomain = /\bweekly\s+schedule\b|\b(?:deliver(?:y|ies|ed)?|install(?:ation|ations|ed)?|site\s*visits?|schedul(?:e|ed|ing))\b|周排程|周计划|送货|配送|安装|现场勘察|上门勘察|排期|日程/u.test(message);
+  const inventoryBusinessDomain = /\b(?:inventory|stock|sku|warehouse)\b|库存|存货|仓库/u.test(message);
+  const inventoryDeliveryIntent = /\b(?:inventory|stock|warehouse)\s+(?:material\s+)?deliver(?:y|ies|ed)?\b|(?:库存|存货|仓库).{0,4}(?:送货|配送|送达)/u.test(message);
+  const unrelatedBusinessDomain = /\b(?:reimbursements?|expenses?|quotations?|quotes?|payments?|receivables?|outstanding|unpaid)\b|报销|费用|报价|收款|付款|回款|尾款|欠款|应收/u.test(message);
+  const weeklyPeriodFact = isWeeklyPeriodFactIntent(message);
+  // Cross-domain requests stay on the model/tool-registry path. Inventory
+  // deliveries are the one inventory phrase owned by Weekly Schedule.
+  if (unrelatedBusinessDomain) return false;
+  if (inventoryBusinessDomain && !inventoryDeliveryIntent) return false;
+  const datedScheduleDomain = explicitScheduleDomain
+    && /\b(?:today|tomorrow|this\s+week|current\s+week|next\s+week|last\s+week|\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{4})\b|今天|明天|本周|下周|上周/u.test(message);
+  const explicitlyWeekly = weeklyPeriodFact || datedScheduleDomain
+    || /\bweekly\s+schedule\b|\b(?:this|current|next|last)\s+week(?:'s)?\s+(?:schedule|jobs?|work|deliveries|installations|site\s*visits?)\b|\b(?:deliveries|installations|site\s*visits?|completed\s+jobs?|delivered|installed)\s+(?:this|next|last)\s+week\b|\b(?:today|tomorrow)(?:'s)?\s+(?:schedule|jobs?|deliveries|installations|site\s*visits?)\b|周排程|周计划|(?:本周|下周|上周)(?:安排|排期|日程|送货|安装|任务|完成)/u.test(message);
   if (explicitlyWeekly) return true;
   const projectScheduleWithDate = hasProjectTrackIntent(message)
     && /\b(?:today|tomorrow|this\s+week|current\s+week|next\s+week|last\s+week|\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{4})\b|今天|明天|本周|下周|上周/u.test(message)

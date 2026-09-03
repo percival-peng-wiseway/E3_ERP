@@ -1105,7 +1105,11 @@ export async function runAgentTool(
   provider: ERPProvider,
   call: ToolCall,
   auth?: AgentAuthContext,
-  context: { knowledgeDocumentIds?: readonly string[] } = {},
+  context: {
+    knowledgeDocumentIds?: readonly string[];
+    /** Application-owned scope; model arguments cannot set this. */
+    weeklyScheduleStrictDateRange?: boolean;
+  } = {},
 ): Promise<string> {
   const args = parseToolArguments(call.arguments);
   if (!args) return safeToolJson({ error: { code: "invalid_arguments", message: "Tool arguments must be one JSON object." } });
@@ -1316,7 +1320,9 @@ export async function runAgentTool(
       }
       const { sources, sourceWarnings } = await weeklyScheduleSources(weeklyArgs);
       return safeWeeklyScheduleSearchJson(
-        aggregateWeeklySchedule(sources, weeklyArgs),
+        aggregateWeeklySchedule(sources, context.weeklyScheduleStrictDateRange
+          ? { ...weeklyArgs, strictDateRange: true }
+          : weeklyArgs),
         sourceWarnings,
       );
     }
@@ -1332,7 +1338,9 @@ export async function runAgentTool(
       }
       const { sources, sourceWarnings } = await weeklyScheduleSources(weeklyArgs);
       return safeWeeklyScheduleSearchJson(
-        aggregateWeeklySchedule(sources, weeklyArgs),
+        aggregateWeeklySchedule(sources, context.weeklyScheduleStrictDateRange
+          ? { ...weeklyArgs, strictDateRange: true }
+          : weeklyArgs),
         sourceWarnings,
       );
     }
@@ -1548,7 +1556,7 @@ function weeklyScheduleStatus(message: string): WeeklyScheduleArgs["status"] {
   if (/\bpending(?:\s+schedule)?\b|待排期/u.test(message)) return "pending";
   if (/\boverdue\b|逾期/u.test(message)) return "overdue";
   if (/\bcancelled\b|\bcanceled\b|已取消/u.test(message)) return "cancelled";
-  if (/\bcompleted?\b|\bdelivered\b|\binstalled\b|已完成|已送达|已安装/u.test(message)) return "completed";
+  if (/\bcompleted?\b|\bfinish(?:ed)?\b|\bdelivered\b|\binstalled\b|\bwhat\s+did\s+(?:we|the\s+team)\s+do\b|已完成|已送达|已安装|(?:本周|下周|上周).{0,12}完成|(?:本周|上周).{0,12}做了/u.test(message)) return "completed";
   if (/\bscheduled\b|已排期/u.test(message)) return "scheduled";
   return "all";
 }
@@ -1556,7 +1564,7 @@ function weeklyScheduleStatus(message: string): WeeklyScheduleArgs["status"] {
 function weeklyScheduleSource(message: string): WeeklyScheduleArgs["source"] {
   if (/\bsite\s*visits?\b|现场勘察|上门勘察/u.test(message)) return "site_visit";
   if (/\bcustom(?:\s+jobs?)?\b|自定义任务/u.test(message)) return "custom";
-  if (/\binventory\b|\bwarehouse\b|仓库/u.test(message)) return "inventory";
+  if (/\binventory\b|\bwarehouse\b|库存|存货|仓库/u.test(message)) return "inventory";
   if (/\bproject\s*track(?:ing)?\b|\bwip\b|working\s+in\s+progress|项目(?:追踪|跟踪|进度)/u.test(message)) return "project_track";
   return "all";
 }
@@ -1573,6 +1581,7 @@ export async function fastWeeklyScheduleAnswer(provider: ERPProvider, rawMessage
   const asksContact = /\b(?:contact|phone|email)\b|电话|邮箱|联系方式/u.test(message);
   const asksNotes = /\b(?:note|notes|remark|remarks|instructions?)\b|备注|说明/u.test(message);
   const asksItems = /\b(?:item|items|sku|material|materials)\b|物料|商品/u.test(message);
+  const strictHistoricalRange = status === "all" && range.to < melbourneWeekRange().from;
   try {
     const raw = await runAgentTool(provider, {
       name: "search_weekly_schedule",
@@ -1588,7 +1597,7 @@ export async function fastWeeklyScheduleAnswer(provider: ERPProvider, rawMessage
         include_customer_contact_details: asksContact,
         include_notes: asksNotes,
       }),
-    });
+    }, undefined, { weeklyScheduleStrictDateRange: strictHistoricalRange });
     const payload: unknown = JSON.parse(raw);
     if (!isRecord(payload) || isRecord(payload.error) || !Array.isArray(payload.entries)) return null;
     const entries = payload.entries.filter(isRecord);
@@ -1607,9 +1616,39 @@ export async function fastWeeklyScheduleAnswer(provider: ERPProvider, rawMessage
     const lines = entries.slice(0, 10).map((entry) => {
       const title = cleanText(entry.title, 200) || "Untitled";
       const kind = cleanText(entry.kind, 60).replaceAll("_", " ");
+      const entrySource = cleanText(entry.source, 40);
+      const sourceLabel = entrySource === "project_track"
+        ? "Project Track"
+        : entrySource === "site_visit"
+          ? "Site Visiting"
+          : entrySource === "inventory"
+            ? "Inventory"
+            : entrySource === "custom"
+              ? (isChinese ? "自定义" : "Custom")
+              : (isChinese ? "未知来源" : "Unknown source");
       const entryStatus = cleanText(entry.status, 40).replaceAll("_", " ");
-      const date = cleanText(entry.scheduledDate, 10);
-      const time = cleanText(entry.scheduledTime, 5);
+      const completed = entryStatus === "completed";
+      const completionDate = cleanText(entry.completionDate, 10);
+      const plannedDate = cleanText(entry.scheduledDate, 10);
+      const dateBasis = cleanText(entry.dateBasis, 40);
+      const date = completed ? completionDate || plannedDate : plannedDate;
+      const time = cleanText(completed
+        ? entry.completionTime || entry.scheduledTime
+        : entry.scheduledTime, 5);
+      const isRecordedCompletion = completed && Boolean(completionDate)
+        && dateBasis === "recorded_completion";
+      const usesStatusUpdateProxy = completed && Boolean(completionDate)
+        && dateBasis === "status_updated_at";
+      const usesScheduledFallback = completed && dateBasis === "scheduled_fallback";
+      const dateDetails = !date
+        ? ""
+        : isRecordedCompletion
+          ? ` · ${isChinese ? "实际完成" : "Actual completion"} ${date}${time ? ` ${time}` : ""}${plannedDate && plannedDate !== date ? ` · ${isChinese ? "原计划" : "planned"} ${plannedDate}${cleanText(entry.scheduledTime, 5) ? ` ${cleanText(entry.scheduledTime, 5)}` : ""}` : ""}`
+          : usesStatusUpdateProxy
+            ? ` · ${isChinese ? "完成状态更新时间（代理）" : "Completion status update (proxy)"} ${date}${time ? ` ${time}` : ""}${plannedDate && plannedDate !== date ? ` · ${isChinese ? "原计划" : "planned"} ${plannedDate}${cleanText(entry.scheduledTime, 5) ? ` ${cleanText(entry.scheduledTime, 5)}` : ""}` : ""}`
+          : usesScheduledFallback
+            ? ` · ${isChinese ? "计划日期（无独立完成时间）" : "Planned date (completion time unavailable)"} ${date}${time ? ` ${time}` : ""}`
+            : ` · ${date}${time ? ` ${time}` : ""}`;
       const assignee = asksAssignee ? cleanText(entry.assignee, 160) : "";
       const location = asksLocation ? cleanText(entry.location, 300) : "";
       const contact = asksContact && isRecord(entry.contact)
@@ -1622,19 +1661,28 @@ export async function fastWeeklyScheduleAnswer(provider: ERPProvider, rawMessage
       const displayedStatus = date && date < range.from && !["completed", "cancelled"].includes(entryStatus)
         ? "overdue"
         : entryStatus;
-      return `- **${title}** · ${kind} · ${displayedStatus}${date ? ` · ${date}${time ? ` ${time}` : ""}` : ""}${assignee ? ` · ${assignee}` : ""}${location ? ` · ${location}` : ""}${contact ? ` · ${contact}` : ""}${items ? ` · ${items}` : ""}${notes ? ` · Note: ${notes}` : ""}`;
+      return `- **${title}** · ${sourceLabel} · ${kind} · ${displayedStatus}${dateDetails}${assignee ? ` · ${assignee}` : ""}${location ? ` · ${location}` : ""}${contact ? ` · ${contact}` : ""}${items ? ` · ${items}` : ""}${notes ? ` · Note: ${notes}` : ""}`;
     }).join("\n");
     const hidden = Math.max(0, total - Math.min(entries.length, 10));
     const suggestions = isChinese
       ? ["显示本周未排期任务", "显示明天的安排", "显示本周已完成任务"]
       : ["Show unscheduled work this week", "What is scheduled tomorrow?", "Show completed work this week"];
+    const incompleteData = sourceWarnings.length > 0;
     const summary = isChinese
-      ? `${range.from} 至 ${range.to} 的 Weekly Schedule 共 **${total} 条**：待排期 ${pendingCount}（未排期 ${counts.unscheduled}，预排期 ${counts.pre_scheduled}），已排期 ${counts.scheduled}，已完成 ${counts.completed}，已取消 ${counts.cancelled}${overdueCount ? `，其中逾期 ${overdueCount}` : ""}。`
-      : `Weekly Schedule has **${total} entries** for ${range.from} to ${range.to}: ${pendingCount} pending (${counts.unscheduled} unscheduled and ${counts.pre_scheduled} pre-scheduled), ${counts.scheduled} scheduled, ${counts.completed} completed and ${counts.cancelled} cancelled${overdueCount ? `, including ${overdueCount} overdue` : ""}.`;
+      ? incompleteData
+        ? `${range.from} 至 ${range.to} 的 Weekly Schedule 当前可用来源核实到 **${total} 条记录（部分数据）**：待排期 ${pendingCount}（未排期 ${counts.unscheduled}，预排期 ${counts.pre_scheduled}），已排期 ${counts.scheduled}，已完成 ${counts.completed}，已取消 ${counts.cancelled}${overdueCount ? `，其中逾期 ${overdueCount}` : ""}。`
+        : `${range.from} 至 ${range.to} 的 Weekly Schedule 数据源记录共 **${total} 条**：待排期 ${pendingCount}（未排期 ${counts.unscheduled}，预排期 ${counts.pre_scheduled}），已排期 ${counts.scheduled}，已完成 ${counts.completed}，已取消 ${counts.cancelled}${overdueCount ? `，其中逾期 ${overdueCount}` : ""}。`
+      : incompleteData
+        ? `Available Weekly Schedule sources contain **${total} verified entries (partial data)** for ${range.from} to ${range.to}: ${pendingCount} pending (${counts.unscheduled} unscheduled and ${counts.pre_scheduled} pre-scheduled), ${counts.scheduled} scheduled, ${counts.completed} completed and ${counts.cancelled} cancelled${overdueCount ? `, including ${overdueCount} overdue` : ""}.`
+        : `Weekly Schedule has **${total} source records** for ${range.from} to ${range.to}: ${pendingCount} pending (${counts.unscheduled} unscheduled and ${counts.pre_scheduled} pre-scheduled), ${counts.scheduled} scheduled, ${counts.completed} completed and ${counts.cancelled} cancelled${overdueCount ? `, including ${overdueCount} overdue` : ""}.`;
+    const sourceCountingNotice = source === "all" && total > 0
+      ? `\n\n${isChinese ? "计数按数据来源记录，不代表去重后的工单数。" : "Counts are source records, not de-duplicated jobs."}`
+      : "";
     return {
       mode: "local" as const,
-      answer: `${summary}${lines ? `\n\n${lines}` : ""}${hidden ? `\n\n${isChinese ? `另有 ${hidden} 条未显示。` : `${hidden} more not shown.`}` : ""}${sourceWarnings.length ? `\n\n${isChinese ? "数据限制" : "Data limitation"}: ${sourceWarnings.join(" ")}` : ""}`,
+      answer: `${summary}${lines ? `\n\n${lines}` : ""}${hidden ? `\n\n${isChinese ? `另有 ${hidden} 条未显示。` : `${hidden} more not shown.`}` : ""}${sourceCountingNotice}${sourceWarnings.length ? `\n\n${isChinese ? "数据限制" : "Data limitation"}: ${sourceWarnings.join(" ")}` : ""}`,
       suggestions,
+      ...(incompleteData ? { incompleteData: true } : {}),
     };
   } catch {
     return null;
@@ -1692,6 +1740,10 @@ export async function fastWeeklyBusinessSummaryAnswer(
   const payments = paymentResult.status === "fulfilled" && paymentResult.value
     ? summarizeConfirmedPayments(paymentResult.value, range.from, range.to)
     : null;
+  const incompleteData = scheduleResult.status === "rejected"
+    || Boolean(schedule?.sourceWarnings.length)
+    || inventoryResult.status === "rejected"
+    || (options.includePayments && paymentResult.status === "rejected");
   const answer = formatWeeklyBusinessSummary({
     ...range,
     work: schedule ? {
@@ -1718,6 +1770,7 @@ export async function fastWeeklyBusinessSummaryAnswer(
     suggestions: /[\u3400-\u9fff]/u.test(rawMessage)
       ? ["显示本周未排期任务", "哪些库存需要关注？", "显示所有未收尾款"]
       : ["Show unscheduled work this week", "Which stock items need attention?", "Show all outstanding balances"],
+    ...(incompleteData ? { incompleteData: true } : {}),
   };
 }
 

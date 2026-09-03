@@ -12,6 +12,8 @@ const {
   weeklyScheduleKindFromMessage,
   weeklyScheduleTextQuery,
 } = await import(modulePath) as typeof import("./weekly-schedule");
+const toolRoutingModulePath = "./tool-routing.ts";
+const { isWeeklyPeriodFactIntent } = await import(toolRoutingModulePath) as typeof import("./tool-routing");
 
 function project(overrides: Partial<PaymentTrackProject> = {}): PaymentTrackProject {
   const receipt = {
@@ -201,6 +203,32 @@ test("extracts customer and item terms from natural Weekly Schedule questions", 
   assert.equal(weeklyScheduleTextQuery("Show Amit Singh's weekly schedule"), "amit singh");
   assert.equal(weeklyScheduleTextQuery("Show battery deliveries this week"), "battery");
   assert.equal(weeklyScheduleTextQuery("显示 Amit 的送货安排"), "amit");
+  assert.equal(weeklyScheduleTextQuery("本周完成情况"), "");
+  assert.equal(weeklyScheduleTextQuery("总结上周完成工作概况"), "");
+  assert.equal(weeklyScheduleTextQuery("上周一共有几单都做了什么"), "");
+  assert.equal(weeklyScheduleTextQuery("上周一共有几条"), "");
+  assert.equal(weeklyScheduleTextQuery("What did we complete last week?"), "");
+  assert.equal(weeklyScheduleTextQuery("What did we finish last week?"), "");
+  assert.equal(weeklyScheduleTextQuery("What did the team finish last week?"), "");
+  assert.equal(weeklyScheduleTextQuery("What did we do last week?"), "");
+  assert.equal(weeklyScheduleTextQuery("How many work items did the team finish last week?"), "");
+  assert.equal(weeklyScheduleTextQuery("Last week status"), "");
+  assert.equal(weeklyScheduleTextQuery("Summary for last week"), "");
+  assert.equal(weeklyScheduleTextQuery("本周业务总结"), "");
+  assert.equal(weeklyScheduleTextQuery("上周完成了哪些"), "");
+  assert.equal(weeklyScheduleTextQuery("上周完成了什么"), "");
+  assert.equal(weeklyScheduleTextQuery("上周都完成了哪些任务"), "");
+  assert.equal(weeklyScheduleTextQuery("上周做了哪些工作"), "");
+  assert.equal(weeklyScheduleTextQuery("王有才上周完成情况"), "王有才");
+  assert.equal(weeklyScheduleTextQuery("单伟上周完成情况"), "单伟");
+  assert.equal(weeklyScheduleTextQuery("成都上周完成情况"), "成都");
+  assert.equal(weeklyScheduleTextQuery("都市能源上周完成情况"), "都市能源");
+  assert.equal(weeklyScheduleTextQuery("都明上周完成情况"), "都明");
+  assert.equal(weeklyScheduleTextQuery("Lien Se Do上周完成了吗"), "lien se do");
+  assert.equal(weeklyScheduleTextQuery("Which customers had deliveries last week?"), "");
+  assert.equal(weeklyScheduleTextQuery("Which customer deliveries were completed last week?"), "");
+  assert.equal(weeklyScheduleTextQuery("Who had installations last week?"), "");
+  assert.equal(weeklyScheduleTextQuery("显示上周库存送货"), "");
   assert.equal(weeklyScheduleTextQuery("Show installations this week"), "");
   assert.equal(weeklyScheduleTextQuery("Who is assigned on tomorrow's schedule?"), "");
   assert.equal(weeklyScheduleTextQuery("Show CPEC5256 on the Weekly Schedule"), "cpec5256");
@@ -526,6 +554,35 @@ test("aggregates all Weekly Schedule sources, respects overrides and gates conta
   assert.equal("assignee" in customerContactOnly.entries[0], false);
 });
 
+test("every entity-free weekly period intent also produces an empty text query", () => {
+  for (const message of [
+    "Show completed work this week",
+    "What did the team finish last week?",
+    "What did we do last week?",
+    "How many work items did the team finish last week?",
+    "Last week status",
+    "Summary for last week",
+    "This week activity overview",
+    "上周情况",
+    "本周业务总结",
+    "上周一共有几单",
+    "上周有多少条",
+    "上周完成了哪些",
+    "上周都完成了哪些任务",
+    "上周的完成了哪些",
+    "上周的都完成了哪些任务",
+    "上周做了哪些工作",
+    "上周完成了哪些客户",
+    "上周完成了哪些客户的安装",
+    "上周做了哪些客户",
+    "上周完成的客户有哪些",
+    "上周有哪些客户完成了安装",
+  ]) {
+    assert.equal(isWeeklyPeriodFactIntent(message), true, message);
+    assert.equal(weeklyScheduleTextQuery(message), "", message);
+  }
+});
+
 test("Site Visiting keeps approval-stage requests in the pending schedule", () => {
   const pendingApproval = siteVisit({
     id: "55555555-5555-4555-8555-555555555551",
@@ -628,6 +685,63 @@ test("date range filters dated work but retains the undated Project Track queue"
   assert.deepEqual(result.entries.map((entry) => entry.reference), ["CPEC-PENDING"]);
 });
 
+test("strict historical ranges exclude the current undated queue and older overdue work", () => {
+  const undated = project({
+    id: "70000000-0000-4000-8000-000000000001",
+    quoteNumber: "CPEC-CURRENT-QUEUE",
+    workMode: "delivery_only",
+  });
+  const oldOverdue = project({
+    id: "70000000-0000-4000-8000-000000000002",
+    quoteNumber: "CPEC-OLD-OVERDUE",
+    workMode: "delivery_only",
+    deliveryScheduledFor: "2026-08-20",
+    deliveryScheduledTime: "09:00",
+  });
+  const inRange = project({
+    id: "70000000-0000-4000-8000-000000000003",
+    quoteNumber: "CPEC-IN-RANGE",
+    workMode: "delivery_only",
+    deliveryScheduledFor: "2026-08-26",
+    deliveryScheduledTime: "09:00",
+    deliveryAssignee: "Leo",
+  });
+  const result = aggregateWeeklySchedule(
+    { projects: [undated, oldOverdue, inRange] },
+    args({ source: "project_track", strictDateRange: true }),
+  );
+  assert.deepEqual(result.entries.map((entry) => entry.reference), ["CPEC-IN-RANGE"]);
+  assert.equal(result.count, 1);
+  assert.equal(result.pendingCount, 0);
+  assert.equal(result.overdueCount, 0);
+});
+
+test("preserves the complete count across tool and display pagination", () => {
+  const jobs: ProjectScheduleJob[] = Array.from({ length: 25 }, (_, index) => ({
+    id: `page-${String(index + 1).padStart(2, "0")}`,
+    title: `Paged job ${String(index + 1).padStart(2, "0")}`,
+    scheduledDate: "2026-08-26",
+    startTime: "09:00",
+    endTime: "10:00",
+    assignee: "",
+    location: "",
+    notes: "",
+    status: "scheduled",
+    createdAt: "2026-08-20T00:00:00.000Z",
+    updatedAt: "2026-08-20T00:00:00.000Z",
+  }));
+  const result = aggregateWeeklySchedule(
+    { customJobs: jobs },
+    args({ source: "custom", kind: "custom", limit: 20 }),
+  );
+  assert.equal(result.count, 25);
+  assert.equal(result.returned, 20);
+  assert.equal(result.entries.length, 20);
+  assert.equal(result.truncated, true);
+  assert.equal(result.count - Math.min(result.entries.length, 10), 15,
+    "the answer must report all 15 records hidden beyond its ten displayed rows");
+});
+
 test("completed combined work is represented by one combined entry", () => {
   const combined = project({
     workMode: "delivery_and_installation",
@@ -648,6 +762,218 @@ test("completed combined work is represented by one combined entry", () => {
   assert.equal(result.count, 1);
   assert.equal(result.statusCounts.completed, 1);
   assert.equal(result.entries[0]?.kind, "deliver_and_install");
+});
+
+test("scopes completed Project Track work by recorded completion time while preserving its planned schedule", () => {
+  const completedInRequestedWeek = [
+    project({
+      id: "10000000-0000-4000-8000-000000000001",
+      quoteNumber: "CPEC-ACTUAL-DELIVERY",
+      customer: { ...project().customer, firstName: "Delivery" },
+      stage: "waiting_coes",
+      workMode: "delivery_only",
+      deliveryScheduledFor: "2026-08-28",
+      deliveryScheduledTime: "09:00",
+      deliveryAssignee: "Leo",
+      deliveredAt: "2026-08-31T00:15:00.000Z",
+    }),
+    project({
+      id: "10000000-0000-4000-8000-000000000002",
+      quoteNumber: "CPEC-ACTUAL-INSTALL",
+      customer: { ...project().customer, firstName: "Installation" },
+      stage: "waiting_coes",
+      workMode: "installation_only",
+      installationScheduledFor: "2026-08-29",
+      installationScheduledTime: "10:00",
+      installationAssignee: "Daniel",
+      installedAt: "2026-09-01T01:30:00.000Z",
+    }),
+    project({
+      id: "10000000-0000-4000-8000-000000000003",
+      quoteNumber: "CPEC-ACTUAL-COMBINED",
+      customer: { ...project().customer, firstName: "Combined" },
+      stage: "waiting_coes",
+      workMode: "delivery_and_installation",
+      deliveryScheduledFor: "2026-08-30",
+      deliveryScheduledTime: "11:00",
+      deliveryAssignee: "Leo",
+      installationScheduledFor: "2026-08-30",
+      installationScheduledTime: "11:00",
+      installationAssignee: "Daniel",
+      deliveredAt: "2026-09-02T00:00:00.000Z",
+      installedAt: "2026-09-02T02:45:00.000Z",
+    }),
+  ];
+  const sources = { projects: completedInRequestedWeek };
+  const currentWeek = aggregateWeeklySchedule(sources, args({
+    source: "project_track",
+    status: "completed",
+    from: "2026-08-31",
+    to: "2026-09-06",
+  }));
+
+  assert.deepEqual(currentWeek.entries.map((entry) => ({
+    reference: entry.reference,
+    scheduledDate: entry.scheduledDate,
+    completionDate: entry.completionDate,
+    completionTime: entry.completionTime,
+    dateBasis: entry.dateBasis,
+  })), [
+    {
+      reference: "CPEC-ACTUAL-DELIVERY",
+      scheduledDate: "2026-08-28",
+      completionDate: "2026-08-31",
+      completionTime: "10:15",
+      dateBasis: "recorded_completion",
+    },
+    {
+      reference: "CPEC-ACTUAL-INSTALL",
+      scheduledDate: "2026-08-29",
+      completionDate: "2026-09-01",
+      completionTime: "11:30",
+      dateBasis: "recorded_completion",
+    },
+    {
+      reference: "CPEC-ACTUAL-COMBINED",
+      scheduledDate: "2026-08-30",
+      completionDate: "2026-09-02",
+      completionTime: "12:45",
+      dateBasis: "recorded_completion",
+    },
+  ]);
+  assert.equal(aggregateWeeklySchedule(sources, args({
+    source: "project_track",
+    status: "completed",
+  })).count, 0, "planned dates in the previous week must not pull later completions backwards");
+
+  const completedBeforeRequestedWeek = project({
+    id: "10000000-0000-4000-8000-000000000004",
+    quoteNumber: "CPEC-EARLY-COMPLETION",
+    stage: "waiting_coes",
+    workMode: "delivery_only",
+    deliveryScheduledFor: "2026-09-01",
+    deliveryScheduledTime: "09:00",
+    deliveryAssignee: "Leo",
+    deliveredAt: "2026-08-30T01:00:00.000Z",
+  });
+  assert.equal(aggregateWeeklySchedule({ projects: [completedBeforeRequestedWeek] }, args({
+    source: "project_track",
+    status: "completed",
+    from: "2026-08-31",
+    to: "2026-09-06",
+  })).count, 0, "a planned date in range must not include work actually completed in another week");
+});
+
+test("uses Inventory delivered_at in Melbourne time, including suffix-free UTC timestamps", () => {
+  const delivered: Order = {
+    id: 901,
+    order_group: "actual-week-group",
+    sales_rep: "Sam",
+    customer: "Boundary Customer",
+    phone: "",
+    sku: "CQ7",
+    quantity: 1,
+    created_at: "2026-08-20T00:00:00.000Z",
+    status: "delivered",
+    address: "",
+    planned_date: "2026-08-30",
+    driver: "Leo",
+    // D1/SQLite UTC format: this is 2026-08-31 00:30 in Melbourne.
+    delivered_at: "2026-08-30 14:30:00",
+    note: "",
+    driver_email: null,
+    delivery_time: "09:00",
+  };
+  const sources = { inventoryDeliveryHistory: [delivered] };
+  const currentWeek = aggregateWeeklySchedule(sources, args({
+    source: "inventory",
+    status: "completed",
+    from: "2026-08-31",
+    to: "2026-09-06",
+  }));
+
+  assert.equal(currentWeek.count, 1);
+  assert.equal(currentWeek.entries[0]?.scheduledDate, "2026-08-30");
+  assert.equal(currentWeek.entries[0]?.completionDate, "2026-08-31");
+  assert.equal(currentWeek.entries[0]?.completionTime, "00:30");
+  assert.equal(currentWeek.entries[0]?.dateBasis, "recorded_completion");
+  assert.equal(aggregateWeeklySchedule(sources, args({
+    source: "inventory",
+    status: "completed",
+  })).count, 0);
+});
+
+test("orders completed work on the same day by actual completion time", () => {
+  const laterActual = project({
+    id: "10000000-0000-4000-8000-000000000011",
+    quoteNumber: "CPEC-LATER-ACTUAL",
+    stage: "waiting_coes",
+    workMode: "delivery_only",
+    deliveryScheduledFor: "2026-08-20",
+    deliveryScheduledTime: "08:00",
+    deliveryAssignee: "Leo",
+    deliveredAt: "2026-09-01T03:00:00.000Z",
+  });
+  const earlierActual = project({
+    id: "10000000-0000-4000-8000-000000000012",
+    quoteNumber: "CPEC-EARLIER-ACTUAL",
+    stage: "waiting_coes",
+    workMode: "delivery_only",
+    deliveryScheduledFor: "2026-08-20",
+    deliveryScheduledTime: "17:00",
+    deliveryAssignee: "Leo",
+    deliveredAt: "2026-09-01T00:00:00.000Z",
+  });
+  const result = aggregateWeeklySchedule({ projects: [laterActual, earlierActual] }, args({
+    source: "project_track",
+    status: "completed",
+    from: "2026-08-31",
+    to: "2026-09-06",
+  }));
+
+  assert.deepEqual(result.entries.map((entry) => entry.reference), [
+    "CPEC-EARLIER-ACTUAL",
+    "CPEC-LATER-ACTUAL",
+  ]);
+});
+
+test("uses Site Visit status update as an explicit completion proxy and labels Custom fallback dates", () => {
+  const completedVisit = siteVisit({
+    status: "completed",
+    scheduledDate: "2026-08-28",
+    updatedAt: "2026-08-31T00:45:00.000Z",
+  });
+  const completedCustom: ProjectScheduleJob = {
+    id: "custom-completed",
+    title: "Legacy custom completion",
+    scheduledDate: "2026-09-02",
+    startTime: "09:00",
+    endTime: "10:00",
+    assignee: "Daniel",
+    location: "",
+    notes: "",
+    status: "completed",
+    createdAt: "2026-08-20T00:00:00.000Z",
+    updatedAt: "2026-09-04T02:00:00.000Z",
+  };
+  const result = aggregateWeeklySchedule({
+    siteVisits: [completedVisit],
+    customJobs: [completedCustom],
+  }, args({
+    status: "completed",
+    from: "2026-08-31",
+    to: "2026-09-06",
+  }));
+
+  const visitEntry = result.entries.find((entry) => entry.source === "site_visit");
+  assert.equal(visitEntry?.scheduledDate, "2026-08-28");
+  assert.equal(visitEntry?.completionDate, "2026-08-31");
+  assert.equal(visitEntry?.completionTime, "10:45");
+  assert.equal(visitEntry?.dateBasis, "status_updated_at");
+  const customEntry = result.entries.find((entry) => entry.source === "custom");
+  assert.equal(customEntry?.completionDate, "2026-09-02");
+  assert.equal(customEntry?.completionTime, null);
+  assert.equal(customEntry?.dateBasis, "scheduled_fallback");
 });
 
 test("applies Project Track request overrides before status filtering and limiting", () => {
