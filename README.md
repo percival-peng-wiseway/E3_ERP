@@ -29,10 +29,10 @@ Employee access is protected by a unified ERP sign-in. The server issues a signe
 - The E3 Agent Harness answers questions across eight bounded, read-only business Skills: Inventory, Quotations, Project Management, Project Track, Weekly Schedule, Site Visiting, Reimbursements and Reports
 - Weekly Schedule queries use the same Project Track, Inventory delivery, Site Visit, custom-job and source-override records that compose the calendar, including unscheduled and pre-scheduled work
 - Knowledge questions use the same-worker `search_knowledge_base` service, Workers AI embeddings, Cloudflare Vectorize retrieval and server-side Files/D1 permission checks; Kimi receives only authorised, current chunks and answers with validated Files citations
-- Common operational queries use deterministic workflows before any model call; open-ended questions and image understanding use Kimi K2.6 at Moonshot's fixed HTTPS endpoint
+- With a configured model, every ordinary question—including the built-in weekly summary—uses Kimi K3 to produce a strict query plan, application-owned tools to collect evidence, and Kimi K2.6 to organize the answer. The weekly Skill keeps a server-owned complete evidence floor, while no-model fallback retains deterministic workflows.
 - Users can attach up to four current-turn JPEG, PNG or WebP images for Kimi vision, or supported office/PDF/text files for authorised knowledge retrieval; image bytes are capped at 12 MiB per request
 - Agent diagnostics remain in privacy-safe local/Cloudflare structured logs containing workflow/tool names, status and duration; raw ERP prompts, answers, tool payloads and image/base64 content are not logged
-- `kimi-k2.6` is the only supported answer model. Administrators configure its Moonshot API key and trusted China/International region under Settings; deterministic workflows can still answer their bounded queries without a model key
+- Production defaults to `kimi-k3` for planning and `kimi-k2.6` for evidence-based answers. Administrators can independently select account-advertised planner/executor models and a trusted Moonshot region; deterministic workflows can still answer bounded queries without a model key
 - If Kimi or a required live source is unavailable, the Agent fails closed instead of generating a local or alternate-model answer
 - Payment proof URLs, reimbursement invoice URLs, access tokens, cookies and API keys are never included in model tool results
 - A separately deployable read-only Business Agent endpoint at `POST /api/agent/chat` adds strict inventory, knowledge, project and order-finance tools with deterministic complexity routing; both route classes use Kimi K2.6 and cache canonical tool results across the single escalation; see [docs/BUSINESS_AGENT.md](./docs/BUSINESS_AGENT.md)
@@ -168,6 +168,8 @@ MOONSHOT_API_KEY=
 KIMI_REGION=china
 KIMI_BASE_URL=https://api.moonshot.cn/v1
 KIMI_MODEL_NAME=kimi-k2.6
+KIMI_PLANNER_MODEL_NAME=kimi-k3
+KIMI_EXECUTOR_MODEL_NAME=kimi-k2.6
 ```
 
 - `/api/inventory/operations` accepts only approved Inventory actions and uses a fixed upstream address.
@@ -177,8 +179,8 @@ KIMI_MODEL_NAME=kimi-k2.6
 - Browser writes require both a valid employee session and a verifiably same-origin request. Trusted server writes require the `ERP_INTERNAL_API_TOKEN` bearer token.
 - QuoteHelp Excel uploads are limited to 25 MiB; Inventory JSON operations are limited to 512 KiB.
 - Agent and Agent Settings writes are same-origin protected and body-size limited. Local development stores an optional saved Moonshot key in a private `0700` directory using an atomic `0600` file; Cloudflare production stores saved settings in server-side D1. The key is returned only as a masked configured state, and the `MOONSHOT_API_KEY` Cloudflare Secret remains preferred for production.
-- Administrators can add or replace the Moonshot API key under **Settings → Agent Settings → Kimi K2.6 Agent**. The screen and its save API accept the key plus a trusted China/International region; the browser cannot override the endpoint or model. Saving first verifies that the selected platform exposes `kimi-k2.6`. Leaving the field blank preserves an ERP-saved key; an environment-only key must be re-entered before creating an ERP-saved override. Removing saved settings deletes them and restores environment fallback. Saving replaces retired provider credentials rather than carrying them forward.
-- The model connection maps the trusted `china` region to `https://api.moonshot.cn/v1` and `international` to `https://api.moonshot.ai/v1`; arbitrary endpoints are rejected and the model remains pinned to `kimi-k2.6`. Model tools use Kimi-compatible strict schemas, validate arguments and return bounded, sanitised, read-only records.
+- Administrators can add or replace the Moonshot API key under **Settings → Agent Settings → Kimi Agent Models**. The screen configures separate planner and executor model IDs plus a trusted China/International region. Saving verifies that the selected account advertises both models. Leaving the key blank preserves an ERP-saved key; an environment-only key must be re-entered before creating an ERP-saved override. Removing saved settings deletes them and restores environment fallback.
+- The model connection maps the trusted `china` region to `https://api.moonshot.cn/v1` and `international` to `https://api.moonshot.ai/v1`; arbitrary endpoints are rejected. Production uses `kimi-k3` for structured query planning and `kimi-k2.6` for answers by default. Every planned tool and argument is revalidated by the application-owned, read-only Tool Registry before execution.
 
 The unified read-only APIs use the live Inventory Operations service and the authenticated QuoteHelp session. An explicit quotation API can optionally replace the QuoteHelp session source:
 
@@ -265,7 +267,7 @@ Project Track rejects repeated Proposal Numbers across both PDF imports and manu
 | `GET/DELETE /api/site-visits/:id/photos/:photoId` | View or remove a protected site photo |
 | `GET/POST /api/project-schedule` | List or create custom Weekly Schedule jobs |
 | `PATCH/DELETE /api/project-schedule/:id` | Update a custom job or permanently remove it as Administrator |
-| `POST /api/agent` | Kimi K2.6 multimodal read-only questions across ERP workspaces, with fail-closed model handling |
+| `POST /api/agent` | Planned multimodal read-only questions across ERP workspaces, with K3 planning, K2.6 answer synthesis and fail-closed evidence handling |
 | `POST /api/agent/chat` | Strict read-only Business Agent for inventory, cited knowledge, project snapshots and order finance |
 | `GET /api/agent/health` | Verify all eight E3 Agent business data sources without returning business records |
 | `GET/PUT/DELETE /api/settings/agent` | Masked Agent configuration, secure save and environment fallback |

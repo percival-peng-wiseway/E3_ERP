@@ -15,6 +15,8 @@ import {
 type StoredAgentSettings = {
   apiKey?: string;
   region: KimiRegion;
+  plannerModel?: string;
+  executorModel?: string;
   updatedAt: string;
 };
 
@@ -34,12 +36,18 @@ export const KIMI_BASE_URLS: Readonly<Record<KimiRegion, string>> = {
 };
 export const DEFAULT_KIMI_BASE_URL = KIMI_BASE_URLS[DEFAULT_KIMI_REGION];
 export const DEFAULT_KIMI_MODEL = "kimi-k2.6";
+export const DEFAULT_KIMI_PLANNER_MODEL = "kimi-k3";
+export const DEFAULT_KIMI_EXECUTOR_MODEL = DEFAULT_KIMI_MODEL;
 
 export type ResolvedKimiSettings = {
   apiKey: string | null;
   region: KimiRegion;
   baseUrl: string;
+  plannerModel: string;
+  executorModel: string;
+  /** @deprecated Use executorModel. */
   fastModel: string;
+  /** @deprecated Use executorModel. */
   complexModel: string;
   source: "saved" | "environment" | "default";
 };
@@ -50,12 +58,16 @@ export type PublicAgentSettings = {
   region: KimiRegion;
   baseUrl: string;
   model: string;
+  plannerModel: string;
+  executorModel: string;
   source: "saved" | "environment" | "default";
 };
 
 export type AgentSettingsInput = {
   apiKey?: string;
   region?: KimiRegion;
+  plannerModel?: string;
+  executorModel?: string;
 };
 
 type AgentSettingsDependencies = {
@@ -119,12 +131,22 @@ function normalizedApiKey(value: string): string {
 export function parseAgentSettingsInput(value: unknown): AgentSettingsInput | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const body = value as Record<string, unknown>;
-  if (Object.keys(body).some((key) => !["apiKey", "region"].includes(key))) return null;
+  if (Object.keys(body).some((key) => !["apiKey", "region", "plannerModel", "executorModel"].includes(key))) return null;
   if (body.apiKey !== undefined && typeof body.apiKey !== "string") return null;
   if (body.region !== undefined && !KIMI_REGIONS.includes(body.region as KimiRegion)) return null;
+  if (body.plannerModel !== undefined && typeof body.plannerModel !== "string") return null;
+  if (body.executorModel !== undefined && typeof body.executorModel !== "string") return null;
+  try {
+    if (body.plannerModel !== undefined) normalizedKimiModel(body.plannerModel);
+    if (body.executorModel !== undefined) normalizedKimiModel(body.executorModel);
+  } catch {
+    return null;
+  }
   return {
     ...(typeof body.apiKey === "string" ? { apiKey: body.apiKey } : {}),
     ...(body.region !== undefined ? { region: body.region as KimiRegion } : {}),
+    ...(typeof body.plannerModel === "string" ? { plannerModel: body.plannerModel.trim() } : {}),
+    ...(typeof body.executorModel === "string" ? { executorModel: body.executorModel.trim() } : {}),
   };
 }
 
@@ -152,10 +174,15 @@ export function kimiBaseUrlForRegion(region: KimiRegion): string {
 }
 
 function normalizedKimiModel(value: string): string {
-  if (value.trim() !== DEFAULT_KIMI_MODEL) {
-    throw new AgentSettingsError(`Kimi model must be ${DEFAULT_KIMI_MODEL}.`);
+  const model = value.trim();
+  // Model IDs are sent only to a fixed official Moonshot endpoint and are
+  // verified against that account's /models response before being saved.
+  // Keeping the syntax narrow prevents control characters or URL-like values
+  // while allowing newly released Kimi model IDs without a code deployment.
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/.test(model)) {
+    throw new AgentSettingsError("Enter a valid Kimi model ID.");
   }
-  return DEFAULT_KIMI_MODEL;
+  return model;
 }
 
 function normalizeLegacyStoredKimi(value: unknown): StoredAgentSettings | null {
@@ -164,15 +191,21 @@ function normalizeLegacyStoredKimi(value: unknown): StoredAgentSettings | null {
   const allowed = new Set(["apiKey", "baseUrl", "fastModel", "complexModel"]);
   if (Object.keys(candidate).some((key) => !allowed.has(key))) return null;
   if (candidate.apiKey !== undefined && typeof candidate.apiKey !== "string") return null;
+  if (candidate.fastModel !== undefined && typeof candidate.fastModel !== "string") return null;
+  if (candidate.complexModel !== undefined && typeof candidate.complexModel !== "string") return null;
   try {
     const region = candidate.baseUrl
       ? kimiRegionForBaseUrl(String(candidate.baseUrl))
       : DEFAULT_KIMI_REGION;
-    normalizedKimiModel(String(candidate.fastModel || DEFAULT_KIMI_MODEL));
-    normalizedKimiModel(String(candidate.complexModel || DEFAULT_KIMI_MODEL));
+    const executorModel = normalizedKimiModel(String(candidate.fastModel || DEFAULT_KIMI_EXECUTOR_MODEL));
+    // Legacy settings had no planner/executor contract. Migrate them onto the
+    // new supported split instead of silently keeping K2.6 as the planner.
+    const plannerModel = DEFAULT_KIMI_PLANNER_MODEL;
     return {
       ...(typeof candidate.apiKey === "string" && candidate.apiKey.trim() ? { apiKey: normalizedApiKey(candidate.apiKey) } : {}),
       region,
+      plannerModel,
+      executorModel,
       updatedAt: new Date(0).toISOString(),
     };
   } catch { return null; }
@@ -184,9 +217,13 @@ function normalizeStoredSettings(value: unknown): StoredAgentSettings | null {
     kimi?: unknown;
     baseUrl?: unknown;
     model?: unknown;
+    plannerModel?: unknown;
+    executorModel?: unknown;
     region?: unknown;
   };
   if (candidate.apiKey !== undefined && typeof candidate.apiKey !== "string") return null;
+  if (candidate.plannerModel !== undefined && typeof candidate.plannerModel !== "string") return null;
+  if (candidate.executorModel !== undefined && typeof candidate.executorModel !== "string") return null;
   try {
     // Migrate the pre-Kimi-only document shape without preserving its legacy
     // endpoint or credential. The next save writes only this canonical shape.
@@ -200,8 +237,8 @@ function normalizeStoredSettings(value: unknown): StoredAgentSettings | null {
     }
     const legacyEndpointFieldsPresent = candidate.baseUrl !== undefined || candidate.model !== undefined;
     const allowed = legacyEndpointFieldsPresent
-      ? new Set(["apiKey", "baseUrl", "model", "region", "updatedAt"])
-      : new Set(["apiKey", "region", "updatedAt"]);
+      ? new Set(["apiKey", "baseUrl", "model", "region", "plannerModel", "executorModel", "updatedAt"])
+      : new Set(["apiKey", "region", "plannerModel", "executorModel", "updatedAt"]);
     if (Object.keys(candidate).some((key) => !allowed.has(key))) return null;
     let region = candidate.region === undefined
       ? DEFAULT_KIMI_REGION
@@ -213,11 +250,22 @@ function normalizeStoredSettings(value: unknown): StoredAgentSettings | null {
       region = endpointRegion;
       normalizedKimiModel(candidate.model);
     }
+    const legacyModel = typeof candidate.model === "string"
+      ? normalizedKimiModel(candidate.model)
+      : null;
+    const executorModel = candidate.executorModel === undefined
+      ? legacyModel || undefined
+      : normalizedKimiModel(candidate.executorModel);
+    const plannerModel = candidate.plannerModel === undefined
+      ? legacyModel ? DEFAULT_KIMI_PLANNER_MODEL : undefined
+      : normalizedKimiModel(candidate.plannerModel);
     return {
       ...(typeof candidate.apiKey === "string" && candidate.apiKey.trim()
         ? { apiKey: normalizedApiKey(candidate.apiKey) }
         : {}),
       region,
+      ...(plannerModel ? { plannerModel } : {}),
+      ...(executorModel ? { executorModel } : {}),
       updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : new Date(0).toISOString(),
     };
   } catch {
@@ -351,10 +399,17 @@ async function clearStoredSettings() {
 export function resolveEnvironmentKimiSettings(): ResolvedKimiSettings {
   let apiKey: string | null = null;
   let region = DEFAULT_KIMI_REGION;
-  let model = DEFAULT_KIMI_MODEL;
+  let plannerModel = DEFAULT_KIMI_PLANNER_MODEL;
+  let executorModel = DEFAULT_KIMI_EXECUTOR_MODEL;
   try {
     const configuredKey = process.env.MOONSHOT_API_KEY || process.env.KIMI_API_KEY;
-    const configuredModel = process.env.KIMI_MODEL_NAME || process.env.KIMI_MODEL_FAST || process.env.KIMI_MODEL_COMPLEX;
+    const sharedModel = process.env.KIMI_MODEL_NAME?.trim();
+    const configuredPlannerModel = process.env.KIMI_PLANNER_MODEL_NAME?.trim()
+      || process.env.KIMI_MODEL_COMPLEX?.trim()
+      || sharedModel;
+    const configuredExecutorModel = process.env.KIMI_EXECUTOR_MODEL_NAME?.trim()
+      || process.env.KIMI_MODEL_FAST?.trim()
+      || sharedModel;
     if (configuredKey?.trim()) apiKey = normalizedApiKey(configuredKey);
     const configuredRegion = process.env.KIMI_REGION?.trim()
       ? normalizedKimiRegion(process.env.KIMI_REGION.trim())
@@ -366,23 +421,25 @@ export function resolveEnvironmentKimiSettings(): ResolvedKimiSettings {
       throw new AgentSettingsError("KIMI_REGION and KIMI_BASE_URL select different Moonshot regions.");
     }
     region = configuredRegion || endpointRegion || DEFAULT_KIMI_REGION;
-    if (configuredModel?.trim()) {
-      model = normalizedKimiModel(configuredModel);
-    }
+    if (apiKey && configuredPlannerModel) plannerModel = normalizedKimiModel(configuredPlannerModel);
+    if (apiKey && configuredExecutorModel) executorModel = normalizedKimiModel(configuredExecutorModel);
   } catch (error) {
     // Fail closed as unconfigured. A typo must never pair a valid key with a
     // different default region or model than the operator selected.
     apiKey = null;
     region = DEFAULT_KIMI_REGION;
-    model = DEFAULT_KIMI_MODEL;
+    plannerModel = DEFAULT_KIMI_PLANNER_MODEL;
+    executorModel = DEFAULT_KIMI_EXECUTOR_MODEL;
     console.error("Invalid Kimi environment configuration", error instanceof Error ? error.name : "UnknownError");
   }
   return {
     apiKey,
     region,
     baseUrl: kimiBaseUrlForRegion(region),
-    fastModel: model,
-    complexModel: model,
+    plannerModel,
+    executorModel,
+    fastModel: executorModel,
+    complexModel: executorModel,
     source: apiKey ? "environment" : "default",
   };
 }
@@ -402,12 +459,20 @@ export async function resolveKimiSettings(): Promise<ResolvedKimiSettings> {
   const saved = document.settings;
   const useSaved = Boolean(saved?.apiKey);
   const region = useSaved ? saved?.region || DEFAULT_KIMI_REGION : environment.region;
+  const plannerModel = useSaved
+    ? saved?.plannerModel || environment.plannerModel
+    : environment.plannerModel;
+  const executorModel = useSaved
+    ? saved?.executorModel || environment.executorModel
+    : environment.executorModel;
   return {
     apiKey: saved?.apiKey || environment.apiKey,
     region,
     baseUrl: kimiBaseUrlForRegion(region),
-    fastModel: environment.fastModel,
-    complexModel: environment.complexModel,
+    plannerModel,
+    executorModel,
+    fastModel: executorModel,
+    complexModel: executorModel,
     source: saved?.apiKey ? "saved" : environment.source,
   };
 }
@@ -425,7 +490,9 @@ export async function publicAgentSettings(): Promise<PublicAgentSettings> {
     maskedApiKey: maskedApiKey(kimi.apiKey),
     region: kimi.region,
     baseUrl: kimi.baseUrl,
-    model: kimi.fastModel,
+    model: kimi.executorModel,
+    plannerModel: kimi.plannerModel,
+    executorModel: kimi.executorModel,
     source: kimi.source,
   };
 }
@@ -464,6 +531,7 @@ function regionLabel(region: KimiRegion) {
 async function validateKimiConnection(
   apiKey: string,
   region: KimiRegion,
+  models: { plannerModel: string; executorModel: string },
   fetchImpl: typeof fetch,
 ) {
   let response: Response;
@@ -500,7 +568,7 @@ async function validateKimiConnection(
       throw new AgentSettingsError("The Kimi account or IP allowlist does not permit this request.", 403, "kimi_permission_denied");
     }
     if (response.status === 404) {
-      throw new AgentSettingsError("Kimi K2.6 is not available to this account or region.", 400, "kimi_model_unavailable");
+      throw new AgentSettingsError("The selected Kimi models are not available to this account or region.", 400, "kimi_model_unavailable");
     }
     if (response.status === 429) {
       throw new AgentSettingsError("The Kimi account has insufficient quota or is currently rate limited.", 429, "kimi_quota_or_rate_limited");
@@ -519,12 +587,26 @@ async function validateKimiConnection(
   const data = body && typeof body === "object" && !Array.isArray(body)
     ? (body as { data?: unknown }).data
     : null;
-  const modelAvailable = Array.isArray(data) && data.some((item) => (
+  if (!Array.isArray(data)) {
+    throw new AgentSettingsError("The Kimi API returned an invalid model list.", 502, "kimi_invalid_response");
+  }
+  const availableModels = new Set(data.flatMap((item) => (
     item && typeof item === "object" && !Array.isArray(item)
-      && (item as { id?: unknown }).id === DEFAULT_KIMI_MODEL
-  ));
-  if (!modelAvailable) {
-    throw new AgentSettingsError("Kimi K2.6 is not available to this account or region.", 400, "kimi_model_unavailable");
+      && typeof (item as { id?: unknown }).id === "string"
+      ? [(item as { id: string }).id]
+      : []
+  )));
+  const unavailableRoles = [
+    ["planner", models.plannerModel],
+    ["executor", models.executorModel],
+  ].filter(([, model]) => !availableModels.has(model));
+  if (unavailableRoles.length) {
+    const selected = unavailableRoles.map(([role, model]) => `${role} (${model})`).join(" and ");
+    throw new AgentSettingsError(
+      `The selected Kimi ${selected} model${unavailableRoles.length === 1 ? " is" : "s are"} not available to this account or region.`,
+      400,
+      "kimi_model_unavailable",
+    );
   }
 }
 
@@ -539,20 +621,30 @@ export function saveAgentSettings(
     const apiKey = suppliedKey ? normalizedApiKey(suppliedKey) : current?.apiKey;
     if (!apiKey) throw new AgentSettingsError("Enter a valid Moonshot API key.");
     const region = normalizedKimiRegion(input.region || current?.region || DEFAULT_KIMI_REGION);
-    await validateKimiConnection(apiKey, region, dependencies.fetchImpl || fetch);
+    const environment = resolveEnvironmentKimiSettings();
+    const plannerModel = normalizedKimiModel(
+      input.plannerModel || current?.plannerModel || environment.plannerModel,
+    );
+    const executorModel = normalizedKimiModel(
+      input.executorModel || current?.executorModel || environment.executorModel,
+    );
+    await validateKimiConnection(apiKey, region, { plannerModel, executorModel }, dependencies.fetchImpl || fetch);
     await writeStoredSettings({
       apiKey,
       region,
+      plannerModel,
+      executorModel,
       updatedAt: new Date().toISOString(),
     }, document.version);
-    const environment = resolveEnvironmentKimiSettings();
     const resolvedKey = apiKey || environment.apiKey;
     return {
       configured: Boolean(resolvedKey),
       maskedApiKey: maskedApiKey(resolvedKey),
       region,
       baseUrl: kimiBaseUrlForRegion(region),
-      model: environment.fastModel,
+      model: executorModel,
+      plannerModel,
+      executorModel,
       source: "saved",
     };
   });
@@ -567,7 +659,9 @@ export function clearAgentSettings(): Promise<PublicAgentSettings> {
       maskedApiKey: maskedApiKey(kimi.apiKey),
       region: kimi.region,
       baseUrl: kimi.baseUrl,
-      model: kimi.fastModel,
+      model: kimi.executorModel,
+      plannerModel: kimi.plannerModel,
+      executorModel: kimi.executorModel,
       source: kimi.source,
     };
   });

@@ -174,6 +174,31 @@ test("usage lineage separates delivered orders from installed projects and exclu
   assert.doesNotMatch(serialized, /Cancelled Customer|Wrong Customer/u);
 });
 
+test("usage lineage reports exact totals, returned rows and truncation per response", () => {
+  const snapshot = buildInventoryUsageSnapshot({
+    sku: "KH10",
+    orders: [
+      order({ id: 41, order_group: "delivery-41" }),
+      order({ id: 42, order_group: "delivery-42" }),
+    ],
+    deliveryHistory: [],
+    projects: [
+      project({ quoteNumber: "QN-41" }),
+      project({ quoteNumber: "QN-42" }),
+    ],
+    includeCustomerNames: false,
+    includeAssignees: false,
+    includeCancelled: false,
+    limit: 1,
+  });
+
+  assert.equal(snapshot.totals.deliveredOrders, 2);
+  assert.equal(snapshot.returned.deliveredOrders, 1);
+  assert.equal(snapshot.totals.installedProjects, 2);
+  assert.equal(snapshot.returned.installedProjects, 1);
+  assert.equal(snapshot.truncated, true);
+});
+
 test("customer names are an explicit projection and never widen to contact details", () => {
   const snapshot = buildInventoryUsageSnapshot({
     sku: "kh10",

@@ -45,9 +45,19 @@ export function sanitiseAgentTrace(trace: AgentTraceSnapshot): AgentTraceSnapsho
     })),
     modelRounds: trace.modelRounds.slice(0, 32).map((round) => ({
       model: round.model.slice(0, 120),
+      ...(round.stage ? { stage: round.stage } : {}),
       status: round.status,
       durationMs: Math.max(0, Math.trunc(round.durationMs)),
       toolCallCount: Math.max(0, Math.trunc(round.toolCallCount)),
+      ...(round.plannedStepCount === undefined ? {} : {
+        plannedStepCount: Math.max(0, Math.min(16, Math.trunc(round.plannedStepCount))),
+      }),
+      ...(round.planDimensions === undefined ? {} : {
+        planDimensions: {
+          hasSalesFilter: round.planDimensions.hasSalesFilter === true,
+          hasCreatedRange: round.planDimensions.hasCreatedRange === true,
+        },
+      }),
       ...(round.inputTokens === undefined ? {} : { inputTokens: Math.max(0, Math.trunc(round.inputTokens)) }),
       ...(round.outputTokens === undefined ? {} : { outputTokens: Math.max(0, Math.trunc(round.outputTokens)) }),
     })),

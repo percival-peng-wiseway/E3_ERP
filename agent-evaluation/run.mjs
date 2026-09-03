@@ -109,6 +109,11 @@ steps.push(await runProcess(
   process.execPath,
   ["--experimental-strip-types", "--test", "src/lib/erp_agent/agent/*.test.ts"],
 ));
+steps.push(await runProcess(
+  "Evaluation validator tests",
+  process.execPath,
+  ["--test", "scripts/agent-eval-checks.test.mjs"],
+));
 
 if (includeFullSuite) {
   steps.push(await runProcess(

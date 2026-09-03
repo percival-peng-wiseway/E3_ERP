@@ -35,6 +35,14 @@ export type InventoryUsageSnapshot = {
     installedProjects: number;
     projectCommitments: number;
   };
+  returned: {
+    deliveredOrders: number;
+    activeOrders: number;
+    cancelledOrders: number;
+    installedProjects: number;
+    projectCommitments: number;
+  };
+  truncated: boolean;
   deliveredOrders: InventoryUsageOrder[];
   activeOrders: InventoryUsageOrder[];
   cancelledOrders: InventoryUsageOrder[];
@@ -273,20 +281,36 @@ export function buildInventoryUsageSnapshot(input: {
     .sort(byNewestOrder);
   const byNewestProject = (a: InventoryUsageProject, b: InventoryUsageProject) => projectTimestamp(b).localeCompare(projectTimestamp(a));
   const limit = Math.max(1, Math.min(20, Math.trunc(input.limit)));
+  const deliveredOrderRows = deliveredOrders.slice(0, limit);
+  const activeOrderRows = activeOrders.slice(0, limit);
+  const cancelledOrderRows = cancelledOrders.slice(0, limit);
+  const installedProjectRows = installedProjects.sort(byNewestProject).slice(0, limit);
+  const projectCommitmentRows = projectCommitments.sort(byNewestProject).slice(0, limit);
+  const returned = {
+    deliveredOrders: deliveredOrderRows.length,
+    activeOrders: activeOrderRows.length,
+    cancelledOrders: cancelledOrderRows.length,
+    installedProjects: installedProjectRows.length,
+    projectCommitments: projectCommitmentRows.length,
+  };
+  const totals = {
+    deliveredOrders: deliveredOrders.length,
+    activeOrders: activeOrders.length,
+    cancelledOrders: cancelledOrders.length,
+    installedProjects: installedProjects.length,
+    projectCommitments: projectCommitments.length,
+  };
   return {
     sku: displaySku || input.sku.trim(),
-    totals: {
-      deliveredOrders: deliveredOrders.length,
-      activeOrders: activeOrders.length,
-      cancelledOrders: cancelledOrders.length,
-      installedProjects: installedProjects.length,
-      projectCommitments: projectCommitments.length,
-    },
-    deliveredOrders: deliveredOrders.slice(0, limit),
-    activeOrders: activeOrders.slice(0, limit),
-    cancelledOrders: cancelledOrders.slice(0, limit),
-    installedProjects: installedProjects.sort(byNewestProject).slice(0, limit),
-    projectCommitments: projectCommitments.sort(byNewestProject).slice(0, limit),
+    totals,
+    returned,
+    truncated: (Object.keys(totals) as Array<keyof typeof totals>)
+      .some((key) => totals[key] > returned[key]),
+    deliveredOrders: deliveredOrderRows,
+    activeOrders: activeOrderRows,
+    cancelledOrders: cancelledOrderRows,
+    installedProjects: installedProjectRows,
+    projectCommitments: projectCommitmentRows,
   };
 }
 

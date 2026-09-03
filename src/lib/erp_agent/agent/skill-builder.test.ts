@@ -49,6 +49,7 @@ after(async () => {
 test("Skill Builder intent requires an explicit creation instruction", () => {
   for (const message of [
     "帮我设置一个 Skill，每周总结送货和库存。",
+    "帮我加一个 Skill，当我询问销售情况的时候，就找不同 Sales 上传的订单和明细。",
     "请创建一个skill，触发词是项目周报。",
     "新增一个技能来汇总本周安装情况",
     "我想设置一个 Skill 来汇总本周库存",
@@ -71,6 +72,11 @@ test("Skill Builder intent requires an explicit creation instruction", () => {
     "How to create a Skill?",
     "Can you explain how to create a Skill?",
     "不要创建 Skill。",
+    "不要加一个 Skill。",
+    "先别加 Skill。",
+    "我想加一个 Skill，但现在不要。",
+    "怎么加 Skill？",
+    "Project Track 里 Sales 加了几单？",
     "运行我的项目周报 Skill",
     "修改现有 Skill 的名字",
     "What is an Agent skill?",

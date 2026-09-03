@@ -16,6 +16,8 @@ const environmentKeys = [
   "KIMI_MODEL_NAME",
   "KIMI_MODEL_FAST",
   "KIMI_MODEL_COMPLEX",
+  "KIMI_PLANNER_MODEL_NAME",
+  "KIMI_EXECUTOR_MODEL_NAME",
 ] as const;
 const originalEnvironment = new Map(environmentKeys.map((key) => [key, mutableProcessEnv[key]]));
 
@@ -28,6 +30,8 @@ const {
   DEFAULT_KIMI_BASE_URL,
   DEFAULT_KIMI_REGION,
   DEFAULT_KIMI_MODEL,
+  DEFAULT_KIMI_PLANNER_MODEL,
+  DEFAULT_KIMI_EXECUTOR_MODEL,
   KIMI_BASE_URLS,
   clearAgentSettings,
   parseAgentSettingsInput,
@@ -39,7 +43,21 @@ const {
 
 const modelListFetch: typeof fetch = async () => Response.json({
   object: "list",
-  data: [{ id: DEFAULT_KIMI_MODEL, object: "model" }],
+  data: [
+    { id: DEFAULT_KIMI_PLANNER_MODEL, object: "model" },
+    { id: DEFAULT_KIMI_EXECUTOR_MODEL, object: "model" },
+  ],
+});
+const dualModelListFetch: typeof fetch = async () => Response.json({
+  object: "list",
+  data: [
+    { id: "kimi-k3", object: "model" },
+    { id: "kimi-k2.6", object: "model" },
+  ],
+});
+const executorOnlyModelListFetch: typeof fetch = async () => Response.json({
+  object: "list",
+  data: [{ id: DEFAULT_KIMI_EXECUTOR_MODEL, object: "model" }],
 });
 
 function saveSettings(
@@ -57,11 +75,13 @@ after(async () => {
   }
 });
 
-test("Kimi environment resolver defaults to the China endpoint and fixed model", () => {
+test("Kimi environment resolver defaults to K3 planning and K2.6 execution", () => {
   assert.deepEqual(resolveEnvironmentKimiSettings(), {
     apiKey: null,
     region: DEFAULT_KIMI_REGION,
     baseUrl: DEFAULT_KIMI_BASE_URL,
+    plannerModel: DEFAULT_KIMI_PLANNER_MODEL,
+    executorModel: DEFAULT_KIMI_EXECUTOR_MODEL,
     fastModel: DEFAULT_KIMI_MODEL,
     complexModel: DEFAULT_KIMI_MODEL,
     source: "default",
@@ -75,6 +95,8 @@ test("Kimi environment resolver defaults to the China endpoint and fixed model",
     apiKey: "environment-kimi-key",
     region: "international",
     baseUrl: KIMI_BASE_URLS.international,
+    plannerModel: DEFAULT_KIMI_MODEL,
+    executorModel: DEFAULT_KIMI_MODEL,
     fastModel: DEFAULT_KIMI_MODEL,
     complexModel: DEFAULT_KIMI_MODEL,
     source: "environment",
@@ -85,10 +107,17 @@ test("Kimi environment resolver defaults to the China endpoint and fixed model",
   delete mutableProcessEnv.KIMI_MODEL_NAME;
 });
 
-test("Agent settings input accepts only an optional string API key and trusted region", () => {
-  assert.deepEqual(parseAgentSettingsInput({ apiKey: "moonshot-test-key", region: "china" }), {
+test("Agent settings input accepts API, region and safe planner/executor model IDs only", () => {
+  assert.deepEqual(parseAgentSettingsInput({
     apiKey: "moonshot-test-key",
     region: "china",
+    plannerModel: "kimi-k3",
+    executorModel: "kimi-k2.6",
+  }), {
+    apiKey: "moonshot-test-key",
+    region: "china",
+    plannerModel: "kimi-k3",
+    executorModel: "kimi-k2.6",
   });
   assert.deepEqual(parseAgentSettingsInput({}), {});
   for (const value of [
@@ -98,6 +127,9 @@ test("Agent settings input accepts only an optional string API key and trusted r
     { apiKey: ["moonshot-test-key"] },
     { apiKey: "moonshot-test-key", baseUrl: DEFAULT_KIMI_BASE_URL },
     { apiKey: "moonshot-test-key", model: DEFAULT_KIMI_MODEL },
+    { apiKey: "moonshot-test-key", plannerModel: "https://evil.example/model" },
+    { apiKey: "moonshot-test-key", executorModel: "kimi k2.6" },
+    { apiKey: "moonshot-test-key", plannerModel: 3 },
     { apiKey: "moonshot-test-key", region: "australia" },
     { apiKey: "moonshot-test-key", provider: "kimi" },
   ]) {
@@ -113,6 +145,8 @@ test("fixed endpoint variables do not masquerade as an environment API key", () 
       apiKey: null,
       region: DEFAULT_KIMI_REGION,
       baseUrl: DEFAULT_KIMI_BASE_URL,
+      plannerModel: DEFAULT_KIMI_PLANNER_MODEL,
+      executorModel: DEFAULT_KIMI_EXECUTOR_MODEL,
       fastModel: DEFAULT_KIMI_MODEL,
       complexModel: DEFAULT_KIMI_MODEL,
       source: "default",
@@ -123,7 +157,7 @@ test("fixed endpoint variables do not masquerade as an environment API key", () 
   }
 });
 
-test("invalid endpoint and model variables can never replace the fixed Kimi values", () => {
+test("invalid endpoint and unsafe model variables fail closed", () => {
   mutableProcessEnv.MOONSHOT_API_KEY = "environment-kimi-key";
   mutableProcessEnv.KIMI_BASE_URL = "https://evil.example/v1";
   let resolved = resolveEnvironmentKimiSettings();
@@ -133,13 +167,24 @@ test("invalid endpoint and model variables can never replace the fixed Kimi valu
   assert.equal(resolved.fastModel, DEFAULT_KIMI_MODEL);
   delete mutableProcessEnv.KIMI_BASE_URL;
 
-  mutableProcessEnv.KIMI_MODEL_NAME = "kimi-other";
+  mutableProcessEnv.KIMI_MODEL_NAME = "https://evil.example/model";
   resolved = resolveEnvironmentKimiSettings();
   assert.equal(resolved.apiKey, null);
   assert.equal(resolved.source, "default");
   assert.equal(resolved.baseUrl, DEFAULT_KIMI_BASE_URL);
   assert.equal(resolved.fastModel, DEFAULT_KIMI_MODEL);
   delete mutableProcessEnv.KIMI_MODEL_NAME;
+
+  mutableProcessEnv.KIMI_PLANNER_MODEL_NAME = "kimi-k3";
+  mutableProcessEnv.KIMI_EXECUTOR_MODEL_NAME = "kimi-k2.6";
+  resolved = resolveEnvironmentKimiSettings();
+  assert.equal(resolved.apiKey, "environment-kimi-key");
+  assert.equal(resolved.plannerModel, "kimi-k3");
+  assert.equal(resolved.executorModel, "kimi-k2.6");
+  assert.equal(resolved.fastModel, "kimi-k2.6");
+  assert.equal(resolved.complexModel, "kimi-k2.6");
+  delete mutableProcessEnv.KIMI_PLANNER_MODEL_NAME;
+  delete mutableProcessEnv.KIMI_EXECUTOR_MODEL_NAME;
 
   mutableProcessEnv.KIMI_REGION = "invalid";
   resolved = resolveEnvironmentKimiSettings();
@@ -182,34 +227,76 @@ test("saved Kimi key is masked publicly, preserved by blank saves, and resolved 
   let validatedUrl = "";
   const validatingFetch: typeof fetch = async (input) => {
     validatedUrl = String(input);
-    return modelListFetch(input);
+    return dualModelListFetch(input);
   };
-  const saved = await saveSettings({ apiKey: secret, region: "international" }, validatingFetch);
+  const saved = await saveSettings({
+    apiKey: secret,
+    region: "international",
+    plannerModel: "kimi-k3",
+    executorModel: "kimi-k2.6",
+  }, validatingFetch);
   assert.equal(saved.configured, true);
   assert.equal(saved.region, "international");
   assert.equal(saved.baseUrl, KIMI_BASE_URLS.international);
+  assert.equal(saved.plannerModel, "kimi-k3");
+  assert.equal(saved.executorModel, "kimi-k2.6");
   assert.equal(validatedUrl, `${KIMI_BASE_URLS.international}/models`);
   assert.match(saved.maskedApiKey || "", /-key$/);
   assert.equal(JSON.stringify(saved).includes(secret), false);
 
-  await saveSettings({});
+  await saveSettings({}, dualModelListFetch);
   const resolved = await resolveKimiSettings();
   assert.equal(resolved.apiKey, secret);
   assert.equal(resolved.region, "international");
   assert.equal(resolved.baseUrl, KIMI_BASE_URLS.international);
+  assert.equal(resolved.plannerModel, "kimi-k3");
+  assert.equal(resolved.executorModel, "kimi-k2.6");
+  assert.equal(resolved.fastModel, "kimi-k2.6");
+  assert.equal(resolved.complexModel, "kimi-k2.6");
   assert.equal(resolved.source, "saved");
   assert.equal(JSON.stringify(await publicAgentSettings()).includes(secret), false);
   const canonical = JSON.parse(
     await readFile(path.join(testDataDirectory, "settings.json"), "utf8"),
   ) as Record<string, unknown>;
-  assert.deepEqual(Object.keys(canonical).sort(), ["apiKey", "region", "updatedAt"]);
+  assert.deepEqual(Object.keys(canonical).sort(), ["apiKey", "executorModel", "plannerModel", "region", "updatedAt"]);
   assert.equal(canonical.apiKey, secret);
   assert.equal(canonical.region, "international");
+  assert.equal(canonical.plannerModel, "kimi-k3");
+  assert.equal(canonical.executorModel, "kimi-k2.6");
   assert.equal(canonical.baseUrl, undefined);
   assert.equal(canonical.model, undefined);
 
   const cleared = await clearAgentSettings();
   assert.equal(cleared.configured, false);
+});
+
+test("saving model roles verifies both IDs against the selected Moonshot account", async () => {
+  await clearAgentSettings();
+  await assert.rejects(
+    saveSettings({
+      apiKey: "model-access-test-key",
+      region: "china",
+      plannerModel: "kimi-k3",
+      executorModel: "kimi-k2.6",
+    }, executorOnlyModelListFetch),
+    (error: unknown) => {
+      assert.ok(error instanceof AgentSettingsError);
+      assert.equal(error.code, "kimi_model_unavailable");
+      assert.match(error.message, /planner \(kimi-k3\)/u);
+      assert.equal(error.message.includes("model-access-test-key"), false);
+      return true;
+    },
+  );
+
+  const saved = await saveSettings({
+    apiKey: "model-access-test-key",
+    region: "china",
+    plannerModel: "kimi-k3",
+    executorModel: "kimi-k2.6",
+  }, dualModelListFetch);
+  assert.equal(saved.plannerModel, "kimi-k3");
+  assert.equal(saved.executorModel, "kimi-k2.6");
+  await clearAgentSettings();
 });
 
 test("legacy nested Kimi settings migrate without retaining the retired provider credential", async () => {
@@ -260,9 +347,11 @@ test("legacy top-level Kimi endpoint migrates to its trusted region", async () =
   assert.equal(legacyResolved.region, "international");
   await saveSettings({});
   const canonical = JSON.parse(await readFile(settingsPath, "utf8")) as Record<string, unknown>;
-  assert.deepEqual(Object.keys(canonical).sort(), ["apiKey", "region", "updatedAt"]);
+  assert.deepEqual(Object.keys(canonical).sort(), ["apiKey", "executorModel", "plannerModel", "region", "updatedAt"]);
   assert.equal(canonical.apiKey, kimiSecret);
   assert.equal(canonical.region, "international");
+  assert.equal(canonical.plannerModel, DEFAULT_KIMI_PLANNER_MODEL);
+  assert.equal(canonical.executorModel, DEFAULT_KIMI_MODEL);
   await clearAgentSettings();
 });
 

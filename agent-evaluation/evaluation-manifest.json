@@ -1,12 +1,12 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "name": "E3 Agent release evaluation",
   "datasets": [
     {
       "id": "main-agent-business",
       "path": "evals/agent-business.json",
       "endpoint": "/api/agent",
-      "purpose": "Deterministic ERP workflow, Skill and Toolset routing"
+      "purpose": "Deterministic ERP fallback and structured query-plan workflow, Skill, Toolset and safe trace-tool routing"
     },
     {
       "id": "business-agent-regression",
@@ -23,6 +23,11 @@
   ],
   "releaseGates": {
     "deterministicWorkflowAccuracy": 1,
+    "structuredQueryPlanAccuracy": 1,
+    "structuredPlanToolCoverageAccuracy": 1,
+    "structuredPlanTrajectoryAccuracy": 1,
+    "structuredPlanDimensionAccuracy": 1,
+    "crossDomainAnswerCoverageAccuracy": 1,
     "skillToolsetRoutingAccuracy": 0.98,
     "toolSelectionAccuracy": 0.95,
     "knowledgeRecallAt5": 0.9,
@@ -30,13 +35,18 @@
     "groundedFactAccuracy": 0.95,
     "correctAbstentionRate": 0.95,
     "permissionLeakRate": 0,
-    "writeOperationCount": 0
+    "writeOperationCount": 0,
+    "tracePrivacyLeakRate": 0
   },
   "privacy": {
     "storeRawPrompts": false,
     "storeRawAnswers": false,
     "storeToolArguments": false,
     "storeToolResults": false,
+    "storeTraceToolNames": true,
+    "storeTraceToolsets": true,
+    "storeDerivedPlanDimensionFlags": true,
+    "storeAnswerCoverageBooleans": true,
     "storeSecrets": false
   }
 }

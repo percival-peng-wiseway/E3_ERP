@@ -421,7 +421,7 @@ export function AgentTraceWorkspace({ compact = false }: { compact?: boolean }) 
                   <h3><Bot size={16} />Model rounds</h3>
                   {selected.modelRounds.length === 0 ? <p className={styles.muted}>No model round used.</p> : selected.modelRounds.map((round, index) => (
                     <div className={styles.compactRow} key={`${round.model}-${index}`}>
-                      <div><strong>{round.model}</strong><small>{round.status} · {round.toolCallCount} tool calls · {((round.inputTokens || 0) + (round.outputTokens || 0)).toLocaleString()} tokens</small></div>
+                      <div><strong>{round.model}</strong><small>{round.stage ? `${label(round.stage)} · ` : ""}{round.status} · {round.stage === "planner" ? `${round.plannedStepCount || 0} planned steps` : `${round.toolCallCount} tool calls`} · {((round.inputTokens || 0) + (round.outputTokens || 0)).toLocaleString()} tokens</small></div>
                       <span>{round.durationMs} ms</span>
                     </div>
                   ))}

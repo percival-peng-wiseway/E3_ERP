@@ -5,10 +5,12 @@ const viewModule = "./project-track-view.ts";
 const {
   agentDeliveryScheduleState,
   agentInstallationScheduleState,
+  agentProjectMatchesQueryFilters,
   agentQueryExplicitlyRequestsAssignee,
   agentProjectMatchesWorkflowFilter,
   agentProjectWorkModeFilter,
   agentProjectWorkflowStatus,
+  normalizedAgentProjectQueryFilters,
   projectTrackAgentSearchTerms,
   projectTrackAgentView,
   projectTrackScheduleSearchValues,
@@ -207,11 +209,76 @@ test("projects expose rebate receipts separately from customer payments", () => 
   });
 
   const view = projectTrackAgentView(value, privacy());
+  assert.equal(view.createdAt, "2026-08-01T00:00:00.000Z");
   assert.equal(view.rebateReceipts.solarStc.amount, 3100.25);
   assert.equal(view.rebateReceipts.batteryStc.amount, 1450.5);
   assert.equal(view.rebateReceipts.solarRebate.amount, 1400);
   assert.deepEqual(view.confirmedPayments, []);
   assert.equal(view.amountDue, 50);
+});
+
+test("normalizes optional Project Track field filters and rejects malformed ranges", () => {
+  assert.deepEqual(normalizedAgentProjectQueryFilters({}), {
+    createdFrom: null,
+    createdTo: null,
+    salesRepresentative: null,
+  });
+  assert.deepEqual(normalizedAgentProjectQueryFilters({
+    createdFrom: null,
+    createdTo: "",
+    salesRepresentative: "  Ruihan  ",
+  }), {
+    createdFrom: null,
+    createdTo: null,
+    salesRepresentative: "Ruihan",
+  });
+  assert.deepEqual(normalizedAgentProjectQueryFilters({
+    createdFrom: "2026-08-24",
+    createdTo: "2026-08-30",
+    salesRepresentative: "Ruihan",
+  }), {
+    createdFrom: "2026-08-24",
+    createdTo: "2026-08-30",
+    salesRepresentative: "Ruihan",
+  });
+  assert.equal(normalizedAgentProjectQueryFilters({ createdFrom: "2026-02-30" }), null);
+  assert.equal(normalizedAgentProjectQueryFilters({ createdFrom: "2026-09-02", createdTo: "2026-09-01" }), null);
+  assert.equal(normalizedAgentProjectQueryFilters({ salesRepresentative: false }), null);
+});
+
+test("composes inclusive created-date and Sales representative filters", () => {
+  const ruihan = project({
+    specialist: { name: "Ruihan Ma", phone: "private" },
+    createdAt: "2026-08-24T23:59:59.000Z",
+  });
+  const filters = normalizedAgentProjectQueryFilters({
+    createdFrom: "2026-08-24",
+    createdTo: "2026-08-30",
+    salesRepresentative: "Ruihan",
+  });
+  assert.ok(filters);
+  assert.equal(agentProjectMatchesQueryFilters(ruihan, filters), true);
+  assert.equal(agentProjectMatchesQueryFilters(project({
+    specialist: { name: "Ruihan Ma", phone: "" },
+    createdAt: "2026-08-31T00:00:00.000Z",
+  }), filters), false);
+  assert.equal(agentProjectMatchesQueryFilters(project({
+    specialist: { name: "Other Sales", phone: "" },
+    createdAt: "2026-08-25T00:00:00.000Z",
+  }), filters), false);
+
+  const upperBoundary = normalizedAgentProjectQueryFilters({
+    createdFrom: null,
+    createdTo: "2026-08-30",
+    salesRepresentative: null,
+  });
+  assert.ok(upperBoundary);
+  assert.equal(agentProjectMatchesQueryFilters(project({
+    createdAt: "2026-08-30T13:59:59.999Z",
+  }), upperBoundary), true);
+  assert.equal(agentProjectMatchesQueryFilters(project({
+    createdAt: "2026-08-30T14:00:00.000Z",
+  }), upperBoundary), false, "UTC instants are compared as Melbourne business dates");
 });
 
 test("projects expose assignee, location and customer contact details independently", () => {

@@ -7,6 +7,8 @@ MOONSHOT_API_KEY=replace-with-your-moonshot-api-key
 KIMI_REGION=china
 KIMI_BASE_URL=https://api.moonshot.cn/v1
 KIMI_MODEL_NAME=kimi-k2.6
+KIMI_PLANNER_MODEL_NAME=kimi-k3
+KIMI_EXECUTOR_MODEL_NAME=kimi-k2.6
 # Legacy external adapter only; normal retrieval uses Workers AI + Vectorize bindings.
 ERP_KNOWLEDGE_API_URL=
 ERP_PROJECT_API_URL=

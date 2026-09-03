@@ -54,6 +54,8 @@
     "QUOTEHELP_APP_URL": "https://quote.e3energy.com.au",
     "KIMI_REGION": "china",
     "KIMI_BASE_URL": "https://api.moonshot.cn/v1",
-    "KIMI_MODEL_NAME": "kimi-k2.6"
+    "KIMI_MODEL_NAME": "kimi-k2.6",
+    "KIMI_PLANNER_MODEL_NAME": "kimi-k3",
+    "KIMI_EXECUTOR_MODEL_NAME": "kimi-k2.6"
   }
 }

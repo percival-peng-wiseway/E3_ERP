@@ -240,6 +240,14 @@ export function buildProductActivitySnapshot(
   const projectCreated = projectRecords.filter((project) => inRange(project.createdAt, args.from, args.to));
   const projectDelivered = projectRecords.filter((project) => inRange(project.deliveredAt, args.from, args.to));
   const projectInstalled = projectRecords.filter((project) => inRange(project.installedAt, args.from, args.to));
+  const inventoryItems = stock.slice(0, args.limit);
+  const quotationItems = quotationRecords.slice(0, args.limit);
+  const inventoryOrderItems = orderRecords.slice(0, args.limit);
+  const projectItems = projectRecords.slice(0, args.limit);
+  const detailsTruncated = stock.length > inventoryItems.length
+    || quotationRecords.length > quotationItems.length
+    || orderRecords.length > inventoryOrderItems.length
+    || projectRecords.length > projectItems.length;
 
   const unavailableSources = [
     ...(sources.operations ? [] : ["inventory_orders"]),
@@ -254,6 +262,7 @@ export function buildProductActivitySnapshot(
     to: args.to,
     complete: unavailableSources.length === 0,
     found,
+    truncated: detailsTruncated,
     unavailableSources,
     matchedSkus: [...matchingSkus].filter(Boolean),
     metricDefinitions: {
@@ -267,39 +276,48 @@ export function buildProductActivitySnapshot(
     inventory: sources.operations ? {
       available: true,
       count: stock.length,
+      returned: inventoryItems.length,
+      truncated: stock.length > inventoryItems.length,
       onHand: sum(stock.map((item) => item.onHand)),
       reserved: sum(stock.map((item) => item.reserved)),
       availableQuantity: sum(stock.map((item) => item.available)),
-      items: stock.slice(0, args.limit),
+      items: inventoryItems,
     } : { available: false },
     quotations: sources.quotations ? {
       available: true,
       recordCount: quotationRecords.length,
+      returned: quotationItems.length,
+      truncated: quotationRecords.length > quotationItems.length,
       recordCountsByStatus: counts(quotationRecords.map((record) => record.status)),
       lineQuantityByStatus: quantitiesByStatus(quotationStatusLines),
       acceptedQuotationQuantity: sum(quotationRecords
         .filter((record) => record.status === "accepted")
         .map((record) => record.matchingQuantity)),
-      records: quotationRecords.slice(0, args.limit),
+      records: quotationItems,
     } : { available: false },
     inventoryOrders: sources.operations ? {
       available: true,
+      recordCount: orderRecords.length,
+      returned: inventoryOrderItems.length,
+      truncated: orderRecords.length > inventoryOrderItems.length,
       createdRecordCount: createdOrders.length,
       createdRecordCountsByStatus: counts(createdOrders.map((order) => order.status)),
       createdQuantityByStatus: quantitiesByStatus(createdOrders.map((order) => ({ status: order.status, quantity: order.quantity }))),
       createdOrderQuantity: sum(createdOrders.map((order) => order.quantity)),
       deliveredRecordCount: deliveredOrders.length,
       deliveredOrderQuantity: sum(deliveredOrders.map((order) => order.quantity)),
-      records: orderRecords.slice(0, args.limit),
+      records: inventoryOrderItems,
     } : { available: false },
     projectTrack: sources.projects ? {
       available: true,
       recordCount: projectRecords.length,
+      returned: projectItems.length,
+      truncated: projectRecords.length > projectItems.length,
       recordCountsByStage: counts(projectRecords.map((project) => project.stage)),
       createdProjectQuantity: sum(projectCreated.map((project) => project.matchingQuantity)),
       deliveredProjectQuantity: sum(projectDelivered.map((project) => project.matchingQuantity)),
       installedProjectQuantity: sum(projectInstalled.map((project) => project.matchingQuantity)),
-      records: projectRecords.slice(0, args.limit),
+      records: projectItems,
     } : { available: false },
   };
 }

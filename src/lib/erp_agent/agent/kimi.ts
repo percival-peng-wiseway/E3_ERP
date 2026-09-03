@@ -10,11 +10,26 @@ import {
   executeRegisteredAgentTool,
   registeredAgentTool,
   selectRegisteredAgentTools,
+  validateRegisteredAgentToolArguments,
 } from "./tool-registry";
 import { E3_BUSINESS_SKILLS, resolveAgentSkillPolicy, type BusinessSkillId } from "./skills";
 import { controlledMemoryFromConversation, type AgentControlledMemory } from "./memory";
 import { AGENT_PROMPT_VERSION, buildAgentSystemPrompt } from "./prompt-builder";
 import type { AgentTrace } from "./trace";
+import {
+  ABSOLUTE_AGENT_QUERY_PLAN_MAX_STEPS,
+  AGENT_QUERY_PLAN_VERSION,
+  DEFAULT_AGENT_QUERY_PLAN_MAX_STEPS,
+  buildAgentPlanResponseFormat,
+  parseAgentQueryPlan,
+  type AgentQueryPlan,
+} from "./query-plan";
+import {
+  agentQueryPlanDimensions,
+  clampAgentToolArgumentsToPrivacyConsent,
+  deriveAgentQueryPolicyRequirements,
+  validateAgentQueryPlanCoverage,
+} from "./query-policy";
 
 const RESPONSE_LIMIT = 2 * 1024 * 1024;
 const MAX_TOOL_ROUNDS = 4;
@@ -132,6 +147,10 @@ function toolOutputVerification(content: string): ToolVerification {
   if (containsUnavailableMarker(record)) return "unavailable";
   if (Array.isArray(record.sourceWarnings) && record.sourceWarnings.length > 0) return "unavailable";
   if (record.inventoryOrdersAvailable === false || record.projectTrackAvailable === false) return "unavailable";
+  // A zero-row page is not proof of an empty source when the tool says that
+  // the returned page itself was truncated.
+  if (record.truncated === true
+    && (record.count === 0 || record.found === false)) return "unavailable";
   if (record.found === false) return "empty";
   if (record.complete === true) return "verified";
   if (typeof record.count === "number") return record.count > 0 ? "verified" : "empty";
@@ -143,6 +162,20 @@ function toolOutputVerification(content: string): ToolVerification {
       ? "verified" : "empty";
   }
   return "unavailable";
+}
+
+function toolOutputLimitState(content: string) {
+  try {
+    const value: unknown = JSON.parse(content);
+    if (!value || typeof value !== "object" || Array.isArray(value)) return { truncated: false, lowerBound: false };
+    const record = value as Record<string, unknown>;
+    return {
+      truncated: record.truncated === true,
+      lowerBound: record.countIsLowerBound === true || record.totalAvailable === false,
+    };
+  } catch {
+    return { truncated: false, lowerBound: false };
+  }
 }
 
 function melbourneToday() {
@@ -256,17 +289,36 @@ async function createCompletion(options: {
   tools: readonly KimiToolDefinition[];
   forceToolName?: string;
   conversationId?: string;
+  thinking?: "enabled" | "disabled" | null;
+  reasoningEffort?: "low" | "high" | "max";
+  responseFormat?: unknown;
+  maxCompletionTokens?: number;
+  timeoutMs?: number;
 }) {
+  const isK3 = /^kimi-k3(?:$|[-_.])/iu.test(options.model.trim());
+  // K3 always reasons and uses the top-level reasoning_effort control. Sending
+  // the K2.6 `thinking` object to K3 is an invalid protocol combination.
+  const thinking = isK3
+    ? null
+    : options.thinking === undefined ? "disabled" : options.thinking;
+  const reasoningEffort = isK3 ? options.reasoningEffort || "high" : undefined;
+  const maxCompletionTokens = isK3
+    ? Math.max(options.maxCompletionTokens || 4_000, 4_000)
+    : options.maxCompletionTokens || 800;
   const body = JSON.stringify({
     model: options.model,
     messages: options.messages,
-    tools: options.tools,
-    tool_choice: options.forceToolName
-      ? { type: "function", function: { name: options.forceToolName } }
-      : "auto",
+    ...(options.tools.length ? {
+      tools: options.tools,
+      tool_choice: options.forceToolName
+        ? { type: "function", function: { name: options.forceToolName } }
+        : "auto",
+    } : {}),
     stream: false,
-    thinking: { type: "disabled" },
-    max_completion_tokens: 800,
+    ...(thinking ? { thinking: { type: thinking } } : {}),
+    ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+    ...(options.responseFormat ? { response_format: options.responseFormat } : {}),
+    max_completion_tokens: maxCompletionTokens,
     ...(options.conversationId ? {
       prompt_cache_key: `conv_${createHash("sha256").update(options.conversationId).digest("hex").slice(0, 32)}`,
     } : {}),
@@ -290,7 +342,7 @@ async function createCompletion(options: {
       // before the request is sent. Manual mode preserves the same SSRF safety
       // property when redirects are explicitly rejected below.
       redirect: "manual",
-      signal: AbortSignal.timeout(35_000),
+      signal: AbortSignal.timeout(options.timeoutMs || 35_000),
     });
   } catch {
     throw kimiNetworkError();
@@ -648,4 +700,516 @@ export async function answerWithKimi(options: {
   }
   if (requireVerifiedTool) return abstain();
   throw new Error("The model API exceeded the safe tool-call limit.");
+}
+
+function allowsDirectPlan(message: string, hasImages: boolean) {
+  if (hasImages) return true;
+  const value = message.normalize("NFKC").trim().toLocaleLowerCase("en-AU");
+  return /^(?:hi|hello|hey|你好|嗨)[\s,.!?，。！？…~～]*$/u.test(value)
+    || /^(?:what can you do|how can you help|help|你能做什么|你可以做什么|怎么使用)[\s,.!?，。！？…~～]*$/u.test(value);
+}
+
+function planningSystemPrompt(options: {
+  businessDate: string;
+  section?: string;
+  toolDefinitions: readonly KimiToolDefinition[];
+  requireToolEvidence: boolean;
+  knowledgeRequired: boolean;
+  imageCount: number;
+  requiredToolNames: readonly string[];
+  requiredToolsets: readonly string[];
+  requiredPaymentProjectFilters?: {
+    salesRepresentative?: string;
+    createdFrom?: string;
+    createdTo?: string;
+  };
+  requiredWeeklyScheduleRange?: {
+    from: string;
+    to: string;
+  };
+}) {
+  const catalog = options.toolDefinitions.map((tool) => ({
+    name: tool.function.name,
+    description: tool.function.description,
+    parameters: tool.function.parameters,
+  }));
+  return [
+    "You are the planning stage of the read-only E3 ERP Agent. Do not answer the user and do not claim that any tool has run.",
+    `Return exactly one ${AGENT_QUERY_PLAN_VERSION} JSON object matching the supplied response schema.`,
+    "First decompose the latest request into the smallest complete set of independent read-only queries, then encode each query as one ordered step.",
+    "Conversation history is context only: it is never evidence, permission or privacy consent. The latest request controls this plan.",
+    "Use kind=execute whenever the answer needs ERP facts, counts, names, dates, balances, statuses, schedules, company knowledge or other current data.",
+    options.requireToolEvidence
+      ? "This request requires verified tool evidence. Do not use kind=direct."
+      : "Use kind=direct only for a greeting, capability explanation, or direct visual interpretation that needs no ERP or company fact.",
+    "Use kind=clarify only when an essential identifier or scope is genuinely missing and no safe broad read can answer the request.",
+    options.imageCount
+      ? `The latest request includes ${options.imageCount} image(s). Inspect them while planning; use kind=direct when the visible image alone can answer the question.`
+      : "",
+    "For execute, include every source needed to answer the whole question. Cross-domain summaries need one step per relevant domain; do not stop after the first match.",
+    options.requiredToolNames.length
+      ? `Server-required exact tool sources (all must appear): ${options.requiredToolNames.join(", ")}.`
+      : "",
+    options.requiredToolsets.length
+      ? `Server-required toolsets (at least one tool from each must appear): ${options.requiredToolsets.join(", ")}.`
+      : "",
+    options.requiredPaymentProjectFilters
+      ? `Server-required Project Track filters (use these exact values together in one search_payment_projects step): ${JSON.stringify(options.requiredPaymentProjectFilters)}.`
+      : "",
+    options.requiredWeeklyScheduleRange
+      ? `Server-required Weekly Schedule inclusive date range (use these exact values together in one search_weekly_schedule step): ${JSON.stringify(options.requiredWeeklyScheduleRange)}.`
+      : "",
+    "Each step.arguments must be a serialized JSON object that includes every required parameter in that tool's schema. Use empty strings, null, false, or all only where the schema permits them.",
+    "Interpret relative dates from the Australia/Melbourne business date below and emit explicit inclusive YYYY-MM-DD ranges whenever a tool has date fields.",
+    "Treat Sales followed by a person's name, owner, uploader, creator, or Project Track context as a staff/field filter. Do not mistake it for product sales volume.",
+    "Use search_product_activity only for a product, model, category or SKU sold/usage question, never for a Sales representative's Project Track activity.",
+    "Set contact, location, assignee and notes flags true only when the user explicitly asks for that information.",
+    options.knowledgeRequired
+      ? "The request requires authorised knowledge evidence; include search_knowledge_base and no unrelated source."
+      : "Do not add knowledge search unless the question asks for company policy, procedure, documentation, manuals or warranty information.",
+    `Current Australia/Melbourne business date: ${options.businessDate}.`,
+    options.section ? `Current ERP section: ${options.section.slice(0, 80)}.` : "",
+    `Allowed read-only tool catalog: ${JSON.stringify(catalog)}`,
+  ].filter(Boolean).join("\n");
+}
+
+function synthesisSystemPrompt(
+  base: string,
+  incompleteData: boolean,
+  mixedEmptyEvidence: boolean,
+  crossDomain: boolean,
+  limitedDetails: boolean,
+  lowerBoundCount: boolean,
+) {
+  return [
+    base,
+    "A server-validated query plan has already been executed. Organize the final answer from the attached tool-result messages; do not request or imply additional tool calls.",
+    "Keep counts and field meanings exactly as returned. Never merge records from different sources unless the result explicitly provides a canonical aggregate.",
+    incompleteData
+      ? "At least one planned source was unavailable. Clearly label the answer as partial, identify the unavailable source by its tool label, and never describe the result as complete."
+      : "All executed source statuses are included in the evidence. Do not invent records that are absent from it.",
+    mixedEmptyEvidence
+      ? "One or more planned sources returned a verified zero-match result while another source returned records. Report each zero as zero/no matches and still synthesize the non-empty evidence; this is not a whole-answer abstention."
+      : "",
+    crossDomain
+      ? "For a cross-domain answer, create one clearly named section per requested business topic and put its canonical source label beside that section. Use these exact labels where applicable: Weekly Schedule, Inventory, Project Track, Project Management, Quotations, Site Visiting, Reimbursements, Reports, Knowledge Base, Announcements, Group Messages. If delivery/installation and Site Visiting both came from search_weekly_schedule, keep them as separate requested-topic sections and label both Source: Weekly Schedule."
+      : "",
+    limitedDetails
+      ? "At least one result is truncated. Preserve its total count when totalAvailable is not false, state returned versus total, and never claim that the displayed rows are the complete detail list."
+      : "",
+    lowerBoundCount
+      ? "At least one source exposes only a count lower bound. Describe that number as 'at least' and never as an exact total."
+      : "",
+  ].join("\n");
+}
+
+/**
+ * Universal plan -> authorise -> execute -> verify -> synthesize path.
+ * The planner never receives credentials and its output cannot bypass the
+ * existing Tool Registry, permission checks or tool argument validators.
+ */
+export async function answerWithPlannedKimi(options: {
+  provider: ERPProvider;
+  auth: AgentAuthContext;
+  message: string;
+  history?: AgentHistoryMessage[];
+  section?: string;
+  conversationId?: string;
+  apiKey: string;
+  baseUrl: string;
+  plannerModel: string;
+  executorModel: string;
+  attachmentDocuments?: readonly { documentId: string; name: string }[];
+  imageParts?: readonly KimiImagePart[];
+  enabledSkills?: ReadonlySet<BusinessSkillId>;
+  memory?: AgentControlledMemory;
+  trace?: AgentTrace;
+  traceSkillTags?: readonly string[];
+  requireVerifiedTool?: boolean;
+  privacyMessage?: string;
+  managedSkill?: {
+    id: string;
+    source: "built_in" | "custom";
+    capabilityIds: readonly BusinessSkillId[];
+  } | null;
+}): Promise<AgentAnswer> {
+  const {
+    provider,
+    auth,
+    message,
+    history = [],
+    section,
+    conversationId,
+    apiKey,
+    baseUrl,
+    plannerModel,
+    executorModel,
+    trace,
+  } = options;
+  const attachmentDocuments = (options.attachmentDocuments || []).slice(0, 4);
+  const imageParts = (options.imageParts || []).slice(0, 4);
+  const enabledSkills = options.enabledSkills || resolveAgentSkillPolicy().enabled;
+  const requireVerifiedTool = options.requireVerifiedTool === true;
+  const privacyMessage = options.privacyMessage ?? message;
+  const memory = options.memory || controlledMemoryFromConversation(message, history);
+  const knowledgeRequired = attachmentDocuments.length > 0
+    || shouldUseKnowledgeConversationIntent(
+      message,
+      history.slice(-2).map((item) => item.content),
+      {
+        hasImages: imageParts.length > 0,
+        hasAttachedKnowledgeDocuments: attachmentDocuments.length > 0,
+      },
+    );
+  const policyRequirements = deriveAgentQueryPolicyRequirements({
+    latestMessage: message,
+    knowledgeRequired,
+    managedSkill: options.managedSkill,
+  });
+  const strictHistoricalWeeklyRange = /\b(?:last|previous)\s+week\b|(?:上|前)(?:周|星期)/iu.test(message);
+  const knowledgeFocusedNames = [...new Set([
+    "search_knowledge_base" as const,
+    ...policyRequirements.requiredToolNames,
+  ])];
+  const selection = knowledgeRequired
+    ? selectRegisteredAgentTools({
+      enabledSkills,
+      // Pure knowledge questions retain the smallest possible catalog. When
+      // the current turn explicitly names an ERP domain, include only those
+      // additionally required sources. A managed Skill may require a choice
+      // within one or more toolsets, so its already capability-scoped catalog
+      // remains available for the planner to make that bounded choice.
+      ...(policyRequirements.requiredToolsets.length
+        ? {}
+        : { focusedNames: knowledgeFocusedNames }),
+      permissions: auth.permissions,
+    })
+    : selectRegisteredAgentTools({
+      enabledSkills,
+      ...(imageParts.length ? { excludeNames: ["search_knowledge_base"] as const } : {}),
+      permissions: auth.permissions,
+    });
+  const abstain = () => {
+    trace?.markAbstained();
+    return informationNotFound(message);
+  };
+  if (!selection.names.length
+    || (knowledgeRequired && !selection.names.includes("search_knowledge_base"))
+    || (requireVerifiedTool && selection.skills.length !== enabledSkills.size)
+    || policyRequirements.requiredToolNames.some((name) => !selection.names.includes(name))
+    || policyRequirements.requiredToolsets.some((toolset) => !selection.toolsets.includes(toolset))) {
+    return abstain();
+  }
+
+  const requireToolEvidence = knowledgeRequired
+    || requireVerifiedTool
+    || !allowsDirectPlan(message, imageParts.length > 0);
+  const plannerMessages: KimiMessage[] = [
+    {
+      role: "system",
+      content: planningSystemPrompt({
+        businessDate: melbourneToday(),
+        section,
+        toolDefinitions: selection.definitions,
+        requireToolEvidence,
+        knowledgeRequired,
+        imageCount: imageParts.length,
+        requiredToolNames: policyRequirements.requiredToolNames,
+        requiredToolsets: policyRequirements.requiredToolsets,
+        requiredPaymentProjectFilters: policyRequirements.argumentRequirements?.searchPaymentProjects,
+        requiredWeeklyScheduleRange: policyRequirements.argumentRequirements?.searchWeeklySchedule,
+      }),
+    },
+    ...history.slice(-8).map((item) => ({
+      role: item.role,
+      content: item.content.slice(0, 2_000),
+    } as KimiMessage)),
+    { role: "user", content: imageParts.length
+      ? [...imageParts, { type: "text", text: message }]
+      : message },
+  ];
+  const plannerMaximumSteps = Math.min(
+    ABSOLUTE_AGENT_QUERY_PLAN_MAX_STEPS,
+    Math.max(
+      DEFAULT_AGENT_QUERY_PLAN_MAX_STEPS,
+      policyRequirements.requiredToolNames.length + policyRequirements.requiredToolsets.length,
+    ),
+  );
+  const responseFormat = buildAgentPlanResponseFormat([...selection.names], plannerMaximumSteps);
+  const requestPlan = async (model: string): Promise<AgentQueryPlan> => {
+    const startedAt = Date.now();
+    try {
+      const completion = await createCompletion({
+        apiKey,
+        baseUrl,
+        model,
+        messages: plannerMessages,
+        tools: [],
+        conversationId,
+        reasoningEffort: "high",
+        responseFormat,
+        maxCompletionTokens: 4_000,
+        timeoutMs: model === "kimi-k3" ? 55_000 : 35_000,
+      });
+      const parsedPlan = parseAgentQueryPlan(
+        completion.message.content || "",
+        selection.names,
+        {
+          maximumSteps: plannerMaximumSteps,
+          allowDirect: !requireToolEvidence,
+          validateArguments: (toolName, args) => validateRegisteredAgentToolArguments(toolName, args),
+        },
+      );
+      if (!parsedPlan || (parsedPlan.kind !== "clarify"
+        && !validateAgentQueryPlanCoverage(parsedPlan, policyRequirements).ok)) {
+        throw new Error("The model returned an invalid query plan.");
+      }
+      const privacyClampedSteps = parsedPlan.steps.map((step) => {
+        const argumentsJson = clampAgentToolArgumentsToPrivacyConsent(
+          step.toolName,
+          step.arguments,
+          privacyMessage,
+        );
+        if (!argumentsJson) throw new Error("The model returned an invalid query plan.");
+        const parsedArguments = JSON.parse(argumentsJson) as Record<string, unknown>;
+        if (!validateRegisteredAgentToolArguments(step.toolName, parsedArguments)) {
+          throw new Error("The model returned an invalid query plan.");
+        }
+        return { ...step, arguments: argumentsJson };
+      });
+      const plan: AgentQueryPlan = { ...parsedPlan, steps: privacyClampedSteps };
+      const finalCoverage = validateAgentQueryPlanCoverage(plan, policyRequirements);
+      if (plan.kind !== "clarify" && !finalCoverage.ok) {
+        throw new Error("The model returned an invalid query plan.");
+      }
+      trace?.recordModelRound({
+        model,
+        stage: "planner",
+        status: "ok",
+        durationMs: Date.now() - startedAt,
+        toolCallCount: 0,
+        plannedStepCount: plan.steps.length,
+        planDimensions: agentQueryPlanDimensions(plan, policyRequirements),
+        ...(completion.usage.inputTokens !== undefined ? { inputTokens: completion.usage.inputTokens } : {}),
+        ...(completion.usage.outputTokens !== undefined ? { outputTokens: completion.usage.outputTokens } : {}),
+      });
+      return plan;
+    } catch (error) {
+      trace?.recordModelRound({
+        model,
+        stage: "planner",
+        status: "error",
+        durationMs: Date.now() - startedAt,
+        toolCallCount: 0,
+        plannedStepCount: 0,
+      });
+      throw error;
+    }
+  };
+  const planWork = async () => {
+    try {
+      return await requestPlan(plannerModel);
+    } catch (plannerError) {
+      if (plannerModel === executorModel) throw plannerError;
+      // A planner entitlement or transient failure must not take the whole
+      // Agent offline. The same validated boundary is reused with K2.6.
+      trace?.markOutcome("fallback");
+      return requestPlan(executorModel);
+    }
+  };
+  const plan = trace
+    ? await trace.step("planner.query_plan", "model", planWork)
+    : await planWork();
+  trace?.selectWorkflow(plan.kind === "execute" ? "structured_query_plan" : `structured_query_plan_${plan.kind}`);
+
+  const plannedRegistrations = plan.steps
+    .map((step) => registeredAgentTool(step.toolName))
+    .filter((registration): registration is NonNullable<typeof registration> => Boolean(registration));
+  trace?.selectRoute({
+    promptVersion: AGENT_PROMPT_VERSION,
+    skills: [
+      ...(options.traceSkillTags || []),
+      ...new Set(plannedRegistrations.map((registration) => registration.skill)),
+    ],
+    toolsets: [...new Set(plannedRegistrations.map((registration) => registration.toolset))],
+    memoryKeys: memory.keys,
+  });
+
+  if (plan.kind === "clarify") {
+    trace?.markAbstained();
+    return { mode: "kimi", answer: plan.clarification, suggestions: SUGGESTIONS };
+  }
+
+  const groundedCitationsByChunk = new Map<string, AgentCitation>();
+  let knowledgeSearchAttempted = false;
+  const outputs = plan.kind === "execute"
+    ? await Promise.all(plan.steps.map(async (step) => {
+      const toolStartedAt = Date.now();
+      let content: string;
+      try {
+        content = await executeRegisteredAgentTool(
+          provider,
+          { name: step.toolName, arguments: step.arguments },
+          auth,
+          enabledSkills,
+          {
+            knowledgeDocumentIds: attachmentDocuments.map((item) => item.documentId),
+            weeklyScheduleStrictDateRange: strictHistoricalWeeklyRange,
+          },
+        );
+      } catch {
+        // Keep independent sources independent: an unexpected failure becomes
+        // bounded unavailable evidence rather than rejecting every parallel
+        // result. No exception text or source payload enters diagnostics.
+        content = JSON.stringify({
+          error: {
+            code: "data_unavailable",
+            message: "This workspace data is temporarily unavailable.",
+          },
+        });
+      }
+      if (step.toolName === "search_knowledge_base") {
+        knowledgeSearchAttempted = true;
+        for (const citation of citationsFromKnowledgeToolOutput(content)) {
+          if (citation.chunkId) groundedCitationsByChunk.set(citation.chunkId, citation);
+        }
+      }
+      const verification = toolOutputVerification(content);
+      const limitState = toolOutputLimitState(content);
+      const registration = registeredAgentTool(step.toolName);
+      trace?.recordTool({
+        name: step.toolName,
+        status: verification,
+        durationMs: Date.now() - toolStartedAt,
+      });
+      return {
+        call: {
+          id: step.id,
+          type: "function" as const,
+          function: { name: step.toolName, arguments: step.arguments },
+        },
+        message: { role: "tool" as const, tool_call_id: step.id, content },
+        verification,
+        ...limitState,
+        toolset: registration?.toolset,
+      };
+    }))
+    : [];
+
+  const unavailableOutputs = outputs.filter((output) => output.verification === "unavailable");
+  const verifiedOutputs = outputs.filter((output) => output.verification === "verified");
+  const availableOutputs = outputs.filter((output) => output.verification !== "unavailable");
+  const observedToolsets = new Set(availableOutputs.flatMap((output) => output.toolset ? [output.toolset] : []));
+  const requiredToolsets = requireVerifiedTool
+    ? selection.toolsets
+    : policyRequirements.requiredToolsets;
+  if (plan.kind === "execute" && (
+    outputs.length === 0
+    || availableOutputs.length === 0
+    || outputs.every((output) => output.verification === "empty")
+    || (knowledgeRequired && (!knowledgeSearchAttempted || verifiedOutputs.length === 0))
+    || (requireVerifiedTool && (
+      unavailableOutputs.length > 0
+      || verifiedOutputs.length === 0
+      || [...requiredToolsets].some((toolset) => !observedToolsets.has(toolset))
+    ))
+  )) return abstain();
+
+  const incompleteData = unavailableOutputs.length > 0;
+  const mixedEmptyEvidence = outputs.some((output) => output.verification === "empty")
+    && verifiedOutputs.length > 0;
+  const crossDomain = new Set(outputs.flatMap((output) => output.toolset ? [output.toolset] : [])).size > 1;
+  const limitedDetails = outputs.some((output) => output.truncated);
+  const lowerBoundCount = outputs.some((output) => output.lowerBound);
+  const baseSystem = buildAgentSystemPrompt({
+    businessDate: melbourneToday(),
+    section,
+    knowledgeRequired,
+    imageCount: imageParts.length,
+    attachedKnowledgeDocumentCount: attachmentDocuments.length,
+    enabledSkills,
+    memory,
+  });
+  const synthesisMessages: KimiMessage[] = [
+    { role: "system", content: synthesisSystemPrompt(
+      baseSystem,
+      incompleteData,
+      mixedEmptyEvidence,
+      crossDomain,
+      limitedDetails,
+      lowerBoundCount,
+    ) },
+    ...history.slice(-12).map((item) => ({
+      role: item.role,
+      content: item.content.slice(0, 2_000),
+    } as KimiMessage)),
+    { role: "user", content: imageParts.length
+      ? [...imageParts, { type: "text", text: message }]
+      : message },
+    ...(outputs.length ? [{
+      role: "assistant" as const,
+      content: null,
+      tool_calls: outputs.map((output) => output.call),
+    } satisfies KimiAssistantMessage, ...outputs.map((output) => output.message)] : []),
+  ];
+  const synthesize = async () => {
+    const startedAt = Date.now();
+    try {
+      const completion = await createCompletion({
+        apiKey,
+        baseUrl,
+        model: executorModel,
+        messages: synthesisMessages,
+        tools: [],
+        conversationId,
+        thinking: "disabled",
+        maxCompletionTokens: 1_200,
+      });
+      trace?.recordModelRound({
+        model: executorModel,
+        stage: "executor",
+        status: "ok",
+        durationMs: Date.now() - startedAt,
+        toolCallCount: 0,
+        ...(completion.usage.inputTokens !== undefined ? { inputTokens: completion.usage.inputTokens } : {}),
+        ...(completion.usage.outputTokens !== undefined ? { outputTokens: completion.usage.outputTokens } : {}),
+      });
+      return completion.message;
+    } catch (error) {
+      trace?.recordModelRound({
+        model: executorModel,
+        stage: "executor",
+        status: "error",
+        durationMs: Date.now() - startedAt,
+        toolCallCount: 0,
+      });
+      throw error;
+    }
+  };
+  const assistant = trace
+    ? await trace.step("executor.evidence_synthesis", "model", synthesize)
+    : await synthesize();
+  const answer = assistant.content?.trim();
+  if (!answer) throw new Error("The model API did not return displayable text.");
+
+  if (knowledgeRequired) {
+    const selected = parseKnowledgeCitationSelection(answer);
+    const citations = selected
+      ? selected.chunkIds.map((chunkId) => groundedCitationsByChunk.get(chunkId))
+      : [];
+    if (!selected || citations.length === 0 || citations.some((citation) => !citation)) return abstain();
+    return {
+      mode: "kimi",
+      answer: selected.answer,
+      suggestions: SUGGESTIONS,
+      citations: citations.filter((citation): citation is AgentCitation => Boolean(citation)),
+      ...(incompleteData ? { incompleteData: true } : {}),
+    };
+  }
+  return {
+    mode: "kimi",
+    answer,
+    suggestions: SUGGESTIONS,
+    ...(incompleteData ? { incompleteData: true } : {}),
+  };
 }

@@ -57,7 +57,7 @@ export function personalSkillBuilderRequestIsComplete(rawMessage: string) {
   const englishDetail = englishTokens.filter((token) => !englishBoilerplate.has(token)).join("");
   const chineseDetail = normalized
     .replace(/e3\s*agent|agent|skills?|技能/giu, "")
-    .replace(/帮我|替我|麻烦|请|我想要|我想|我要|我需要|让|创建|新增|添加|新建|设置|配置|编写|写|做|保存|一个|新的|我的|个人|好的|现在|然后/gu, "")
+    .replace(/帮我|替我|麻烦|请|我想要|我想|我要|我需要|让|创建|新增|添加|加|新建|设置|配置|编写|写|做|保存|一个|新的|我的|个人|好的|现在|然后/gu, "")
     .replace(/[^\p{Script=Han}\p{N}]+/gu, "");
   const hasMeaningfulLength = englishDetail.length >= 5 || chineseDetail.length >= 4;
   if (!hasMeaningfulLength) return false;
@@ -88,13 +88,13 @@ function builderProposalIsUnsafe(skill: CreateManagedSkillInput) {
 export function isPersonalSkillBuilderIntent(rawMessage: string) {
   const message = rawMessage.normalize("NFKC").trim();
   if (!message) return false;
-  if (/\b(?:do\s+not|don't|dont|never|stop|avoid)\b.{0,30}\b(?:create|make|build|add|write|set(?:\s*up)?|configure|save)\b.{0,40}\bskills?\b|(?:不要|别|不用|禁止|停止).{0,24}(?:创建|新增|添加|新建|设置|配置|编写|写|做|保存).{0,20}(?:skills?|技能)/iu.test(message)) {
+  if (/\b(?:do\s+not|don't|dont|never|stop|avoid)\b.{0,30}\b(?:create|make|build|add|write|set(?:\s*up)?|configure|save)\b.{0,40}\bskills?\b|(?:不要|别|不用|禁止|停止).{0,24}(?:创建|新增|添加|加|新建|设置|配置|编写|写|做|保存).{0,20}(?:skills?|技能)/iu.test(message)) {
     return false;
   }
-  if (/\b(?:do\s+not|don't|dont|never|wait|hold\s+off|not\s+now)\b.{0,30}\b(?:create|make|build|add|write|set(?:\s*up)?|configure|save|it|that)\b|\b(?:create|make|build|add|write|set(?:\s*up)?|configure|save)\b.{0,30}\b(?:later|not\s+now|not\s+yet)\b|(?:不要|先别|暂时不要|现在不要|等一下|稍后再).{0,20}(?:创建|新增|添加|新建|设置|配置|编写|写|做|保存|它|这个)|(?:创建|新增|添加|新建|设置|配置|编写).{0,20}(?:以后再说|稍后再|暂时不要|先不要|现在不要)/iu.test(message)) {
+  if (/\b(?:do\s+not|don't|dont|never|wait|hold\s+off|not\s+now)\b.{0,30}\b(?:create|make|build|add|write|set(?:\s*up)?|configure|save|it|that)\b|\b(?:create|make|build|add|write|set(?:\s*up)?|configure|save)\b.{0,30}\b(?:later|not\s+now|not\s+yet)\b|(?:不要|先别|暂时不要|现在不要|等一下|稍后再).{0,20}(?:创建|新增|添加|加|新建|设置|配置|编写|写|做|保存|它|这个)|(?:创建|新增|添加|加|新建|设置|配置|编写).{0,20}(?:以后再说|稍后再|暂时不要|先不要|现在不要)/iu.test(message)) {
     return false;
   }
-  if (/\b(?:(?:how|where|when)\s+to|(?:how|what|where|when|why)\s+(?:do|can|should|would)\s+(?:i|we|you)|(?:can|could|would)\s+you\s+(?:explain|show|tell)(?:\s+me)?\s+how\s+to|(?:explain|show|tell)\s+me\s+how\s+to)\s+(?:create|make|build|add|write|set(?:\s*up)?|configure)\b.{0,40}\bskills?\b|(?:如何|怎么|怎样).{0,24}(?:创建|新增|添加|新建|设置|配置|编写).{0,20}(?:skills?|技能)/iu.test(message)) {
+  if (/\b(?:(?:how|where|when)\s+to|(?:how|what|where|when|why)\s+(?:do|can|should|would)\s+(?:i|we|you)|(?:can|could|would)\s+you\s+(?:explain|show|tell)(?:\s+me)?\s+how\s+to|(?:explain|show|tell)\s+me\s+how\s+to)\s+(?:create|make|build|add|write|set(?:\s*up)?|configure)\b.{0,40}\bskills?\b|(?:如何|怎么|怎样).{0,24}(?:创建|新增|添加|加|新建|设置|配置|编写).{0,20}(?:skills?|技能)/iu.test(message)) {
     return false;
   }
   if (/\bskills?\s+(?:permissions?|settings?|configuration|documentation|docs?|guide|manual)\b|(?:skills?|技能)\s*(?:权限|设置|配置|文档|说明|指南|手册)/iu.test(message)) {
@@ -114,7 +114,7 @@ export function isPersonalSkillBuilderIntent(rawMessage: string) {
     "iu",
   );
   const chineseMessage = withoutVocative.replace(/^(?:好的?|现在|然后)[，,\s]*/u, "");
-  const directChinese = /^(?:(?:(?:请|麻烦)(?:帮我|替我)?|帮我|替我|(?:可以|能|能不能)(?:请)?帮我)?(?:创建|新增|添加|新建|编写|写|做).{0,40}(?:一个|个|新的|新|我的|个人)?\s*(?:skills?|技能)|(?:(?:请|麻烦)(?:帮我|替我)?|帮我|替我|(?:可以|能|能不能)(?:请)?帮我)?(?:设置|配置)\s*(?:一个|个|新的|新|我的|个人)\s*(?:skills?|技能)|(?:我想要|我要|我需要).{0,24}(?:一个|个|新的|新|我的|个人)?\s*(?:skills?|技能)|我想(?:让\s*(?:e3\s*)?agent\s*(?:帮我)?|请|要)?\s*(?:创建|新增|添加|新建|设置|配置|编写|写|做).{0,40}(?:skills?|技能))/iu;
+  const directChinese = /^(?:(?:(?:请|麻烦)(?:帮我|替我)?|帮我|替我|(?:可以|能|能不能)(?:请)?帮我)?(?:创建|新增|添加|新建|编写|写|做).{0,40}(?:一个|个|新的|新|我的|个人)?\s*(?:skills?|技能)|(?:(?:请|麻烦)(?:帮我|替我)?|帮我|替我|(?:可以|能|能不能)(?:请)?帮我)?加\s*(?:一个|个|新的|新|我的|个人)\s*(?:skills?|技能)|(?:(?:请|麻烦)(?:帮我|替我)?|帮我|替我|(?:可以|能|能不能)(?:请)?帮我)?(?:设置|配置)\s*(?:一个|个|新的|新|我的|个人)\s*(?:skills?|技能)|(?:我想要|我要|我需要).{0,24}(?:一个|个|新的|新|我的|个人)?\s*(?:skills?|技能)|我想(?:让\s*(?:e3\s*)?agent\s*(?:帮我)?|请|要)?\s*(?:创建|新增|添加|加|新建|设置|配置|编写|写|做).{0,40}(?:skills?|技能))/iu;
   return directEnglish.test(withoutVocative) || directChinese.test(chineseMessage);
 }
 

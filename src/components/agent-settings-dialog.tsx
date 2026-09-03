@@ -21,6 +21,8 @@ type AgentSettings = {
   region: "china" | "international";
   baseUrl: string;
   model: string;
+  plannerModel: string;
+  executorModel: string;
 };
 
 type AgentSettingsResponse = {
@@ -35,6 +37,8 @@ const EMPTY_SETTINGS: AgentSettings = {
   region: "china",
   baseUrl: "https://api.moonshot.cn/v1",
   model: "kimi-k2.6",
+  plannerModel: "kimi-k3",
+  executorModel: "kimi-k2.6",
 };
 
 function responseError(body: AgentSettingsResponse, fallback: string) {
@@ -55,6 +59,8 @@ export function AgentSettingsDialog({
   const [settings, setSettings] = useState(EMPTY_SETTINGS);
   const [apiKey, setApiKey] = useState("");
   const [region, setRegion] = useState<AgentSettings["region"]>("china");
+  const [plannerModel, setPlannerModel] = useState(EMPTY_SETTINGS.plannerModel);
+  const [executorModel, setExecutorModel] = useState(EMPTY_SETTINGS.executorModel);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -84,6 +90,8 @@ export function AgentSettingsDialog({
         if (!active) return;
         setSettings(body.data);
         setRegion(body.data.region);
+        setPlannerModel(body.data.plannerModel || body.data.model);
+        setExecutorModel(body.data.executorModel || body.data.model);
       })
       .catch((loadError) => {
         if (active) setError(loadError instanceof Error ? loadError.message : "Unable to load Agent settings.");
@@ -148,16 +156,20 @@ export function AgentSettingsDialog({
         body: JSON.stringify({
           ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
           region,
+          plannerModel: plannerModel.trim(),
+          executorModel: executorModel.trim(),
         }),
       });
       const body = await readJsonResponse<AgentSettingsResponse>(response);
       if (!response.ok || !body.data) throw new Error(responseError(body, "Unable to save Agent settings."));
       setSettings(body.data);
       setRegion(body.data.region);
+      setPlannerModel(body.data.plannerModel);
+      setExecutorModel(body.data.executorModel);
       setApiKey("");
       setNotice(body.data.configured
-        ? `Moonshot API key verified for the ${body.data.region === "china" ? "China" : "International"} platform. Kimi K2.6 is ready.`
-        : "Add a Moonshot API key to enable Kimi K2.6.");
+        ? `Moonshot API key and both models verified for the ${body.data.region === "china" ? "China" : "International"} platform.`
+        : "Add a Moonshot API key to enable the E3 Agent models.");
       window.dispatchEvent(new CustomEvent("erp:agent-settings-updated"));
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Unable to save Agent settings.");
@@ -176,6 +188,8 @@ export function AgentSettingsDialog({
       if (!response.ok || !body.data) throw new Error(responseError(body, "Unable to clear saved Agent settings."));
       setSettings(body.data);
       setRegion(body.data.region);
+      setPlannerModel(body.data.plannerModel);
+      setExecutorModel(body.data.executorModel);
       setApiKey("");
       setNotice(body.data.source === "environment"
         ? "Saved settings removed. The environment Kimi configuration is now active."
@@ -213,8 +227,8 @@ export function AgentSettingsDialog({
                 <strong>{settings.configured ? "Model endpoint configured" : "Model endpoint unavailable"}</strong>
                 <small>
                   {settings.configured
-                    ? `${settings.model} · ${settings.region === "china" ? "China" : "International"} · ${settings.source === "saved" ? "saved settings" : "environment settings"}${settings.maskedApiKey ? ` · ${settings.maskedApiKey}` : ""}`
-                    : "Add a Moonshot API key to enable Kimi K2.6 answers and image understanding."}
+                    ? `Planner ${settings.plannerModel} · Executor ${settings.executorModel} · ${settings.region === "china" ? "China" : "International"} · ${settings.source === "saved" ? "saved settings" : "environment settings"}${settings.maskedApiKey ? ` · ${settings.maskedApiKey}` : ""}`
+                    : "Add a Moonshot API key to enable planning, answers and image understanding."}
                 </small>
               </div>
             </div>
@@ -225,8 +239,8 @@ export function AgentSettingsDialog({
             <section className={styles.providerSection} aria-labelledby="kimi-settings-title">
               <div className={styles.sectionHeading}>
                 <div>
-                  <h3 id="kimi-settings-title">Kimi K2.6 Agent</h3>
-                  <p>Primary model for E3 Agent answers, image understanding and strict read-only business tools.</p>
+                  <h3 id="kimi-settings-title">Kimi Agent Models</h3>
+                  <p>Use one model to decompose questions and another to compose answers from verified read-only tool results.</p>
                 </div>
                 <span className={settings.configured ? styles.providerReady : styles.providerMissing}>
                   {settings.configured ? "Configured" : "API key required"}
@@ -265,8 +279,44 @@ export function AgentSettingsDialog({
                 </label>
               </div>
 
+              <div className={styles.fieldGrid}>
+                <label>
+                  Planner model
+                  <input
+                    list="kimi-planner-model-options"
+                    required
+                    value={plannerModel}
+                    onChange={(event) => setPlannerModel(event.target.value)}
+                    placeholder="kimi-k3"
+                    spellCheck={false}
+                  />
+                  <small>Decomposes natural-language requests into a structured query plan.</small>
+                </label>
+
+                <label>
+                  Executor model
+                  <input
+                    list="kimi-executor-model-options"
+                    required
+                    value={executorModel}
+                    onChange={(event) => setExecutorModel(event.target.value)}
+                    placeholder="kimi-k2.6"
+                    spellCheck={false}
+                  />
+                  <small>Organizes the final answer from validated evidence.</small>
+                </label>
+                <datalist id="kimi-planner-model-options">
+                  <option value="kimi-k3" />
+                  <option value="kimi-k2.6" />
+                </datalist>
+                <datalist id="kimi-executor-model-options">
+                  <option value="kimi-k2.6" />
+                  <option value="kimi-k3" />
+                </datalist>
+              </div>
+
               <small className={styles.providerSource}>
-                Select the platform where the key was created. The server maps it to the fixed official endpoint: {region === settings.region ? settings.baseUrl : region === "china" ? "https://api.moonshot.cn/v1" : "https://api.moonshot.ai/v1"} · {settings.model}
+                Select the platform where the key was created. The server maps it to the fixed official endpoint: {region === settings.region ? settings.baseUrl : region === "china" ? "https://api.moonshot.cn/v1" : "https://api.moonshot.ai/v1"}
                 <br />
                 Active key source: {settings.source === "saved" ? "saved in ERP" : settings.source === "environment" ? "environment" : "not configured"}
               </small>
@@ -274,7 +324,7 @@ export function AgentSettingsDialog({
 
             <div className={styles.securityNote}>
               <ShieldCheck size={17} />
-              <p><strong>Server-side only.</strong> The raw key is never returned after saving. Region choices map only to official Moonshot endpoints; arbitrary URLs and model changes are rejected.</p>
+              <p><strong>Server-side only.</strong> The raw key is never returned after saving. Region choices map only to official Moonshot endpoints, and each selected model must be advertised by that API account.</p>
             </div>
 
             <footer>

@@ -134,3 +134,46 @@ test("customer names are returned only with explicit permission", () => {
   });
   assert.match(JSON.stringify(result), /Private Order Customer|Private Quote Customer|Private Project Customer/u);
 });
+
+test("cross-source activity reports exact counts, returned rows and limit truncation", () => {
+  const result = buildProductActivitySnapshot({
+    operations: {
+      inventory: [inventory, { ...inventory, sku: "BAT-TWO" }],
+      orders: [
+        deliveredOrder,
+        { ...deliveredOrder, id: 11, order_group: "group-11", sku: "BAT-TWO" },
+      ],
+      deliveryHistory: [],
+    },
+    erpInventory: [],
+    quotations: [quotation("accepted", 2, "Q-1"), quotation("accepted", 3, "Q-2")],
+    projects: [
+      project,
+      { ...project, reference: "PAY-11", quoteNumber: "QN-11" },
+    ],
+  }, {
+    query: "battery",
+    from: "2026-08-01",
+    to: "2026-08-31",
+    includeCustomerNames: false,
+    limit: 1,
+  });
+
+  assert.equal(result.truncated, true);
+  assert.deepEqual(
+    [result.inventory.count, result.inventory.returned, result.inventory.truncated],
+    [2, 1, true],
+  );
+  assert.deepEqual(
+    [result.quotations.recordCount, result.quotations.returned, result.quotations.truncated],
+    [2, 1, true],
+  );
+  assert.deepEqual(
+    [result.inventoryOrders.recordCount, result.inventoryOrders.returned, result.inventoryOrders.truncated],
+    [2, 1, true],
+  );
+  assert.deepEqual(
+    [result.projectTrack.recordCount, result.projectTrack.returned, result.projectTrack.truncated],
+    [2, 1, true],
+  );
+});

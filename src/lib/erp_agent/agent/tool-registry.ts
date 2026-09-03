@@ -1,6 +1,6 @@
 import type { ERPProvider } from "@/lib/erp";
 import type { AgentAuthContext, AgentPermission } from "@/lib/erp_agent/business-agent/contracts";
-import { KIMI_TOOLS, runAgentTool } from "./tools";
+import { KIMI_TOOLS, runAgentTool, validateAgentToolArguments } from "./tools";
 import type { BusinessSkillId } from "./skills";
 
 export type AgentToolDefinition = (typeof KIMI_TOOLS)[number];
@@ -67,6 +67,14 @@ export function registeredAgentTool(name: string): AgentToolRegistration | null 
   return REGISTRATION_BY_NAME.get(name as AgentToolName) || null;
 }
 
+/** Strict, read-free validation for model-produced tool arguments. */
+export function validateRegisteredAgentToolArguments(
+  name: AgentToolName,
+  args: Readonly<Record<string, unknown>>,
+) {
+  return Boolean(registeredAgentTool(name)) && validateAgentToolArguments(name, args);
+}
+
 export type AgentToolSelection = {
   definitions: readonly AgentToolDefinition[];
   names: readonly AgentToolName[];
@@ -101,7 +109,11 @@ export async function executeRegisteredAgentTool(
   call: { name: string; arguments: string },
   auth: AgentAuthContext,
   enabledSkills: ReadonlySet<BusinessSkillId>,
-  scope: { knowledgeDocumentIds?: readonly string[] } = {},
+  scope: {
+    knowledgeDocumentIds?: readonly string[];
+    /** Application-owned scope; model arguments cannot enable it. */
+    weeklyScheduleStrictDateRange?: boolean;
+  } = {},
 ): Promise<string> {
   const registration = registeredAgentTool(call.name);
   if (!registration || !enabledSkills.has(registration.skill)) {

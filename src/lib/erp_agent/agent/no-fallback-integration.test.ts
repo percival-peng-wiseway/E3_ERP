@@ -40,20 +40,32 @@ test("product activity is a controlled cross-source model tool", () => {
   assert.match(promptBuilder, /Never add its accepted quotation/u);
 });
 
-test("Kimi builds multimodal content arrays with thinking disabled", () => {
-  assert.match(modelOrchestrator, /thinking: \{ type: "disabled" \}/u);
-  assert.match(modelOrchestrator, /max_completion_tokens: 800/u);
+test("Kimi separates structured planning from evidence synthesis", () => {
+  assert.match(modelOrchestrator, /thinking: "disabled"/u);
+  assert.match(modelOrchestrator, /max_completion_tokens: maxCompletionTokens/u);
+  assert.match(modelOrchestrator, /reasoning_effort: reasoningEffort/u);
+  assert.match(modelOrchestrator, /buildAgentPlanResponseFormat/u);
+  assert.match(modelOrchestrator, /parseAgentQueryPlan/u);
+  assert.match(modelOrchestrator, /planner\.query_plan/u);
+  assert.match(modelOrchestrator, /executor\.evidence_synthesis/u);
+  assert.match(modelOrchestrator, /executeRegisteredAgentTool/u);
   assert.match(modelOrchestrator, /\[...imageParts, \{ type: "text", text: message \}\]/u);
   assert.match(modelOrchestrator, /prompt_cache_key/u);
   assert.match(modelOrchestrator, /mode: "kimi"/u);
+  assert.match(modelOrchestrator, /validateRegisteredAgentToolArguments/u);
+  assert.match(modelOrchestrator, /validateAgentQueryPlanCoverage/u);
+  assert.match(modelOrchestrator, /clampAgentToolArgumentsToPrivacyConsent/u);
+  assert.match(modelOrchestrator, /weeklyScheduleStrictDateRange: strictHistoricalWeeklyRange/u);
   assert.match(route, /const modelRequest = buildingPersonalSkill \|\| imageParts\.length > 0 \|\| requiresKnowledge/u);
   assert.match(route, /if \(modelRequest && !settings\.apiKey\)/u);
   assert.match(route, /kimiRequestWarning\(primaryError, settings\.region\)/u);
   assert.doesNotMatch(modelOrchestrator, /modelErrorDetail|error\?\.message/u);
-  assert.doesNotMatch(modelOrchestrator, /reasoning_effort/u);
+  assert.match(route, /structuredPlanFirst = Boolean\(settings\.apiKey\)/u);
+  assert.match(route, /workflowAnswer = structuredPlanFirst \? null/u);
+  assert.doesNotMatch(route, /preserveWeeklyKernel/u);
 });
 
-test("Agent settings accept only an API key and trusted region while the server owns endpoint and model", () => {
+test("Agent settings keep the endpoint fixed while validating configurable planner and executor models", () => {
   assert.match(settingsRoute, /parseAgentSettingsInput/u);
   assert.match(settingsRoute, /export async function GET\(request: Request\)/u);
   assert.match(settingsRoute, /Administrator access is required to view Agent settings/u);
@@ -62,5 +74,8 @@ test("Agent settings accept only an API key and trusted region while the server 
   assert.match(settingsDialog, /value="china"/u);
   assert.match(settingsDialog, /value="international"/u);
   assert.match(settingsDialog, /required=\{settings\.source !== "saved"\}/u);
-  assert.doesNotMatch(settingsDialog, /setBaseUrl|setModel|name="baseUrl"/u);
+  assert.match(settingsDialog, /Planner model/u);
+  assert.match(settingsDialog, /Executor model/u);
+  assert.match(settingsDialog, /advertised by that API account/u);
+  assert.doesNotMatch(settingsDialog, /setBaseUrl|name="baseUrl"/u);
 });

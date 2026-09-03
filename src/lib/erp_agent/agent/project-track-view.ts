@@ -30,6 +30,95 @@ export type AgentProjectPrivacyFlags = {
   includePmNotes: boolean;
 };
 
+export type AgentProjectQueryFilters = {
+  createdFrom: string | null;
+  createdTo: string | null;
+  salesRepresentative: string | null;
+};
+
+function exactCalendarDate(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function nullableFilterText(value: unknown, maximumLength: number) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string" || value.length > maximumLength) return undefined;
+  return value.trim() || null;
+}
+
+/**
+ * Normalises server-owned Project Track filters. Missing, null and empty filter
+ * values all mean "no filter" so older callers remain compatible, while an
+ * invalid date or field type fails closed instead of widening the query.
+ */
+export function normalizedAgentProjectQueryFilters(input: {
+  createdFrom?: unknown;
+  createdTo?: unknown;
+  salesRepresentative?: unknown;
+}): AgentProjectQueryFilters | null {
+  const createdFrom = nullableFilterText(input.createdFrom, 10);
+  const createdTo = nullableFilterText(input.createdTo, 10);
+  const salesRepresentative = nullableFilterText(input.salesRepresentative, 160);
+  if (createdFrom === undefined || createdTo === undefined || salesRepresentative === undefined
+    || (createdFrom !== null && !exactCalendarDate(createdFrom))
+    || (createdTo !== null && !exactCalendarDate(createdTo))
+    || (createdFrom !== null && createdTo !== null && createdFrom > createdTo)) {
+    return null;
+  }
+  return { createdFrom, createdTo, salesRepresentative };
+}
+
+function normalizedPersonName(value: string) {
+  return value.normalize("NFKC")
+    .trim()
+    .toLocaleLowerCase("en-AU")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(/\s+/gu, " ");
+}
+
+function melbourneCalendarDate(value: unknown) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  // A date-only value is already a business calendar date. Instants, however,
+  // must be compared in the same Australia/Melbourne calendar used by the
+  // planner for relative ranges such as "this week".
+  if (/^\d{4}-\d{2}-\d{2}$/u.test(value)) return exactCalendarDate(value) ? value : null;
+  const instant = new Date(value);
+  if (Number.isNaN(instant.getTime())) return null;
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Australia/Melbourne",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(instant);
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value;
+  const year = part("year");
+  const month = part("month");
+  const day = part("day");
+  return year && month && day ? `${year}-${month}-${day}` : null;
+}
+
+/** Apply dedicated, composable field filters independently of free-text search. */
+export function agentProjectMatchesQueryFilters(
+  project: PaymentTrackProject,
+  filters: AgentProjectQueryFilters,
+) {
+  const createdDate = melbourneCalendarDate(project.createdAt);
+  if (filters.createdFrom && (!createdDate || createdDate < filters.createdFrom)) return false;
+  if (filters.createdTo && (!createdDate || createdDate > filters.createdTo)) return false;
+  if (filters.salesRepresentative) {
+    const actual = normalizedPersonName(project.specialist.name);
+    const requested = normalizedPersonName(filters.salesRepresentative);
+    const actualTokens = new Set(actual.split(" ").filter(Boolean));
+    const requestedTokens = requested.split(" ").filter(Boolean);
+    if (!requested || (actual !== requested && !requestedTokens.every((token) => actualTokens.has(token)))) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function hasDeliverySchedule(project: PaymentTrackProject) {
   return Boolean(
     project.deliveryScheduledFor
@@ -161,6 +250,7 @@ export function projectTrackAgentView(
       } : {}),
     },
     salesRepresentative: project.specialist.name,
+    createdAt: project.createdAt,
     ...(privacy.includePmNotes ? {
       pmNotes: project.pmNotes || null,
       pmNotesUpdatedAt: project.pmNotesUpdatedAt,

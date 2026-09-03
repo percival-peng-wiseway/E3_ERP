@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { after } from "next/server";
-import { answerWithKimi, informationNotFound, proposePersonalSkillWithKimi } from "@/lib/erp_agent/agent/kimi";
+import { answerWithPlannedKimi, informationNotFound, proposePersonalSkillWithKimi } from "@/lib/erp_agent/agent/kimi";
 import { kimiRequestWarning, safeKimiErrorKind } from "@/lib/erp_agent/agent/kimi-error";
 import { shouldUseKnowledgeConversationIntent } from "@/lib/erp_agent/agent/tool-routing";
 import { resolveInventoryUsageMessage } from "@/lib/erp_agent/agent/inventory-usage";
@@ -412,7 +412,7 @@ async function processAgentRequest(request: Request) {
             message,
             apiKey: builderApiKey,
             baseUrl: settings.baseUrl,
-            model: settings.fastModel,
+            model: settings.executorModel,
             trace,
           });
           builderModelState.status = "available";
@@ -450,7 +450,7 @@ async function processAgentRequest(request: Request) {
         ? kimiRequestWarning(builderError, settings.region)
         : null;
       warnings.push(missingModel
-        ? "Kimi K2.6 must be configured before the Agent can draft a personal Skill. No Skill was created."
+        ? "Kimi must be configured before the Agent can draft a personal Skill. No Skill was created."
         : modelWarning
           ? `${modelWarning.message} No Skill was created.`
           : builderModelState.status === "unavailable"
@@ -486,14 +486,20 @@ async function processAgentRequest(request: Request) {
     data = informationNotFound(input.message);
   } else if (modelRequest && !settings.apiKey) {
     modelStatus = "unavailable";
-    warnings.push("Kimi K2.6 must be configured before the Agent can answer this request.");
+    warnings.push("Kimi must be configured before the Agent can answer this request.");
     issueCodes.add("model_unavailable");
     trace.markOutcome("error");
     trace.markAbstained();
     data = informationNotFound(input.message);
   } else {
     try {
-      const workflowAnswer = modelRequest || managedSkill?.source === "custom" ? null : await trace.step(
+      // With a configured model every ordinary turn crosses the universal K3
+      // planner boundary first, including single-domain questions with extra
+      // filters and the built-in weekly Skill. Server-owned policy still pins
+      // that Skill to its complete evidence floor. Local deterministic
+      // workflows remain available only when no model is configured.
+      const structuredPlanFirst = Boolean(settings.apiKey);
+      const workflowAnswer = structuredPlanFirst ? null : await trace.step(
         "harness.workflow",
         "workflow",
         () => runDeterministicWorkflow(
@@ -535,7 +541,7 @@ async function processAgentRequest(request: Request) {
         data = workflowAnswer;
       } else if (!settings.apiKey) {
         modelStatus = "unavailable";
-        warnings.push("Kimi K2.6 must be configured before the Agent can answer this request.");
+        warnings.push("Kimi must be configured before the Agent can answer this request.");
         issueCodes.add("model_unavailable");
         trace.markOutcome("error");
         trace.markAbstained();
@@ -543,16 +549,17 @@ async function processAgentRequest(request: Request) {
       } else {
         modelStatus = "unavailable";
         data = await trace.step("model.kimi", "model", async () => {
-          const answer = await answerWithKimi({
+          const answer = await answerWithPlannedKimi({
             provider,
             auth,
             message: workspaceMessage,
             history: input.history,
             section: input.section,
             conversationId: input.conversation_id,
-            apiKey: settings.apiKey,
+            apiKey: settings.apiKey!,
             baseUrl: settings.baseUrl,
-            model: settings.fastModel,
+            plannerModel: settings.plannerModel,
+            executorModel: settings.executorModel,
             attachmentDocuments,
             imageParts,
             enabledSkills,
@@ -560,7 +567,13 @@ async function processAgentRequest(request: Request) {
             trace,
             traceSkillTags: managedSkill ? [`managed:${managedSkill.id}@v${managedSkill.version}`] : [],
             requireVerifiedTool: managedSkill?.source === "custom",
+            privacyMessage: managedSkill?.source === "custom" ? managedSkill.prompt : input.message,
+            managedSkill,
           });
+          if (answer.incompleteData) {
+            trace.markOutcome("fallback");
+            issueCodes.add("tool_unavailable");
+          }
           modelStatus = "available";
           return answer;
         });
@@ -604,7 +617,8 @@ async function processAgentRequest(request: Request) {
       generatedAt: new Date().toISOString(),
       configured: Boolean(settings.apiKey),
       modelStatus,
-      model: settings.fastModel,
+      model: settings.executorModel,
+      plannerModel: settings.plannerModel,
       skillPolicy: skillPolicy.source,
       enabledSkillCount: enabledSkills.size,
       ...(managedSkill ? {

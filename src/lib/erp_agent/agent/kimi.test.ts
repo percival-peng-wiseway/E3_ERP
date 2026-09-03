@@ -21,6 +21,7 @@ const bundle = await build({
 const bundledModuleUrl = `data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString("base64")}`;
 const {
   answerWithKimi,
+  answerWithPlannedKimi,
   PERSONAL_SKILL_PROPOSAL_TOOL,
   proposePersonalSkillWithKimi,
 } = await import(bundledModuleUrl) as typeof import("./kimi");
@@ -452,4 +453,450 @@ test("Kimi classifies an authentication failure without reading or exposing its 
       return true;
     },
   );
+});
+
+const quotationFixture = {
+  id: "quote-1",
+  number: "QTN-1",
+  customer: "Test customer",
+  status: "accepted" as const,
+  subtotal: 100,
+  tax: 10,
+  total: 110,
+  currency: "AUD",
+  validUntil: "2026-09-30",
+  createdAt: "2026-09-01T00:00:00.000Z",
+  owner: "Ruihan",
+  items: [{
+    id: "line-1",
+    sku: "H3",
+    description: "H3 battery",
+    quantity: 1,
+    uom: "ea",
+    unitPrice: 100,
+    amount: 100,
+  }],
+};
+
+function plannedProvider(overrides: Partial<ERPProvider> = {}): ERPProvider {
+  return {
+    source: "http",
+    listInventory: async () => [{
+      id: "inventory-1",
+      sku: "H3",
+      name: "H3 battery",
+      category: "Battery",
+      warehouse: "Sydney",
+      onHand: 4,
+      reserved: 1,
+      available: 3,
+      reorderLevel: 2,
+      uom: "ea",
+      status: "in_stock",
+    }],
+    getInventoryItem: async () => null,
+    listQuotations: async () => [quotationFixture],
+    getQuotation: async () => null,
+    ...overrides,
+  };
+}
+
+function queryPlan(steps: Array<{ id: string; toolName: string; arguments: Record<string, unknown> }>, intent = "Read ERP data") {
+  return JSON.stringify({
+    version: "e3-agent-query-plan.v1",
+    kind: "execute",
+    intent,
+    responseLanguage: "auto",
+    steps: steps.map((step) => ({ ...step, arguments: JSON.stringify(step.arguments) })),
+    clarification: "",
+  });
+}
+
+function successfulModelResponse(content: string) {
+  return Response.json({
+    choices: [{ finish_reason: "stop", message: { role: "assistant", content } }],
+    usage: { prompt_tokens: 20, completion_tokens: 8 },
+  });
+}
+
+test("planned Kimi uses K3 JSON-schema planning before K2.6 evidence synthesis", async () => {
+  const requestBodies: Array<Record<string, unknown>> = [];
+  globalThis.fetch = (async (_input, init) => {
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    requestBodies.push(body);
+    return requestBodies.length === 1
+      ? successfulModelResponse(queryPlan([{
+        id: "step_1",
+        toolName: "search_quotations",
+        arguments: { query: "", status: "accepted", limit: 10 },
+      }], "Summarize accepted quotations"))
+      : successfulModelResponse("There is one accepted quotation worth AUD 110.");
+  }) as typeof fetch;
+
+  const answer = await answerWithPlannedKimi({
+    provider: plannedProvider(),
+    auth,
+    message: "Summarize accepted quotations.",
+    conversationId: "planned-conversation",
+    apiKey: "moonshot-test-key",
+    baseUrl: "https://api.moonshot.ai/v1",
+    plannerModel: "kimi-k3",
+    executorModel: "kimi-k2.6",
+    enabledSkills: new Set(["quotations"]),
+  });
+
+  assert.equal(answer.answer, "There is one accepted quotation worth AUD 110.");
+  assert.equal(requestBodies.length, 2);
+  assert.equal(requestBodies[0].model, "kimi-k3");
+  assert.equal(Object.hasOwn(requestBodies[0], "thinking"), false, "K3 planning must use the provider's native reasoning mode");
+  assert.equal(requestBodies[0].reasoning_effort, "high");
+  assert.equal(requestBodies[0].max_completion_tokens, 4_000);
+  assert.equal((requestBodies[0].response_format as { type?: string }).type, "json_schema");
+  assert.equal(Object.hasOwn(requestBodies[0], "tools"), false, "the planner emits data, not executable tool calls");
+
+  assert.equal(requestBodies[1].model, "kimi-k2.6");
+  assert.deepEqual(requestBodies[1].thinking, { type: "disabled" });
+  assert.equal(Object.hasOwn(requestBodies[1], "response_format"), false);
+  const synthesisMessages = requestBodies[1].messages as Array<{ role: string; content?: string; tool_calls?: unknown[] }>;
+  assert.equal(synthesisMessages.some((message) => message.role === "tool" && message.content?.includes('"count":1')), true);
+  assert.equal(synthesisMessages.some((message) => message.role === "assistant" && message.tool_calls?.length === 1), true);
+});
+
+test("planned knowledge questions add only explicitly required authorised ERP sources", async () => {
+  const requestBodies: Array<Record<string, unknown>> = [];
+  globalThis.fetch = (async (_input, init) => {
+    requestBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    return successfulModelResponse(JSON.stringify({
+      version: "e3-agent-query-plan.v1",
+      kind: "clarify",
+      intent: "Clarify the requested comparison",
+      responseLanguage: "auto",
+      steps: [],
+      clarification: "Which policy should I compare with current inventory?",
+    }));
+  }) as typeof fetch;
+
+  const answer = await answerWithPlannedKimi({
+    provider: plannedProvider(),
+    auth,
+    message: "Search the knowledge base and compare it with current inventory stock.",
+    apiKey: "moonshot-test-key",
+    baseUrl: "https://api.moonshot.ai/v1",
+    plannerModel: "kimi-k3",
+    executorModel: "kimi-k2.6",
+    enabledSkills: new Set(["knowledge", "inventory", "quotations"]),
+  });
+
+  assert.equal(answer.answer, "Which policy should I compare with current inventory?");
+  assert.equal(requestBodies.length, 1);
+  const responseFormat = JSON.stringify(requestBodies[0].response_format);
+  assert.match(responseFormat, /search_knowledge_base/u);
+  assert.match(responseFormat, /search_inventory/u);
+  assert.doesNotMatch(responseFormat, /search_quotations/u);
+});
+
+test("pure planned knowledge questions retain a knowledge-only tool catalog", async () => {
+  const requestBodies: Array<Record<string, unknown>> = [];
+  globalThis.fetch = (async (_input, init) => {
+    requestBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    return successfulModelResponse(JSON.stringify({
+      version: "e3-agent-query-plan.v1",
+      kind: "clarify",
+      intent: "Clarify the knowledge topic",
+      responseLanguage: "auto",
+      steps: [],
+      clarification: "Which warranty policy should I search?",
+    }));
+  }) as typeof fetch;
+
+  const answer = await answerWithPlannedKimi({
+    provider: plannedProvider(),
+    auth,
+    message: "Search the knowledge base for our warranty policy.",
+    apiKey: "moonshot-test-key",
+    baseUrl: "https://api.moonshot.ai/v1",
+    plannerModel: "kimi-k3",
+    executorModel: "kimi-k2.6",
+    enabledSkills: new Set(["knowledge", "inventory", "quotations"]),
+  });
+
+  assert.equal(answer.answer, "Which warranty policy should I search?");
+  assert.equal(requestBodies.length, 1);
+  const responseFormat = JSON.stringify(requestBodies[0].response_format);
+  assert.match(responseFormat, /search_knowledge_base/u);
+  assert.doesNotMatch(responseFormat, /search_inventory|search_quotations/u);
+});
+
+test("planned Kimi uses K3 reasoning controls when K3 is selected as executor", async () => {
+  const requestBodies: Array<Record<string, unknown>> = [];
+  globalThis.fetch = (async (_input, init) => {
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    requestBodies.push(body);
+    return requestBodies.length === 1
+      ? successfulModelResponse(queryPlan([{
+        id: "step_1",
+        toolName: "search_quotations",
+        arguments: { query: "", status: "accepted", limit: 10 },
+      }]))
+      : successfulModelResponse("One accepted quotation was found.");
+  }) as typeof fetch;
+
+  const answer = await answerWithPlannedKimi({
+    provider: plannedProvider(),
+    auth,
+    message: "Show accepted quotations.",
+    apiKey: "moonshot-test-key",
+    baseUrl: "https://api.moonshot.ai/v1",
+    plannerModel: "kimi-k3",
+    executorModel: "kimi-k3",
+    enabledSkills: new Set(["quotations"]),
+  });
+
+  assert.equal(answer.answer, "One accepted quotation was found.");
+  assert.equal(requestBodies.length, 2);
+  for (const body of requestBodies) {
+    assert.equal(body.model, "kimi-k3");
+    assert.equal(Object.hasOwn(body, "thinking"), false);
+    assert.equal(body.reasoning_effort, "high");
+    assert.equal(body.max_completion_tokens, 4_000);
+  }
+});
+
+test("planned Kimi abstains before planning when the required tool is not permitted", async () => {
+  let inventoryReads = 0;
+  let quotationReads = 0;
+  let modelCalls = 0;
+  globalThis.fetch = (async () => {
+    modelCalls += 1;
+    return successfulModelResponse(queryPlan([{
+      id: "step_1",
+      toolName: "search_payment_projects",
+      arguments: {
+        query: "",
+        stage: "all",
+        receipt: "all",
+        receipt_status: "all",
+        created_from: null,
+        created_to: null,
+        sales_representative: null,
+        limit: 20,
+        include_assignee: false,
+        include_location: false,
+        include_customer_contact_details: false,
+        include_pm_notes: false,
+      },
+    }]));
+  }) as typeof fetch;
+
+  const answer = await answerWithPlannedKimi({
+    provider: plannedProvider({
+      listInventory: async () => { inventoryReads += 1; return []; },
+      listQuotations: async () => { quotationReads += 1; return []; },
+    }),
+    auth,
+    message: "Show Project Track projects.",
+    apiKey: "moonshot-test-key",
+    baseUrl: "https://api.moonshot.ai/v1",
+    plannerModel: "kimi-k2.6",
+    executorModel: "kimi-k2.6",
+    enabledSkills: new Set(["inventory"]),
+  });
+
+  assert.match(answer.answer, /No matching information/u);
+  assert.equal(modelCalls, 0);
+  assert.equal(inventoryReads, 0);
+  assert.equal(quotationReads, 0);
+});
+
+test("planned Kimi rejects incomplete tool arguments before reading ERP data", async () => {
+  let quotationReads = 0;
+  globalThis.fetch = (async () => successfulModelResponse(queryPlan([{
+    id: "step_1",
+    toolName: "search_quotations",
+    arguments: { query: "", limit: 20 },
+  }]))) as typeof fetch;
+
+  await assert.rejects(answerWithPlannedKimi({
+    provider: plannedProvider({
+      listQuotations: async () => { quotationReads += 1; return []; },
+    }),
+    auth,
+    message: "Show quotations.",
+    apiKey: "moonshot-test-key",
+    baseUrl: "https://api.moonshot.ai/v1",
+    plannerModel: "kimi-k2.6",
+    executorModel: "kimi-k2.6",
+    enabledSkills: new Set(["quotations"]),
+  }), /invalid query plan/u);
+  assert.equal(quotationReads, 0);
+});
+
+test("planned Kimi falls back to K2.6 planning when K3 is unavailable", async () => {
+  const models: string[] = [];
+  globalThis.fetch = (async (_input, init) => {
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    models.push(String(body.model));
+    if (models.length === 1) return new Response(null, { status: 503 });
+    if (models.length === 2) {
+      return successfulModelResponse(JSON.stringify({
+        version: "e3-agent-query-plan.v1",
+        kind: "direct",
+        intent: "Greeting",
+        responseLanguage: "auto",
+        steps: [],
+        clarification: "",
+      }));
+    }
+    return successfulModelResponse("Hello! How can I help?");
+  }) as typeof fetch;
+
+  const answer = await answerWithPlannedKimi({
+    provider: plannedProvider(),
+    auth,
+    message: "Hello",
+    apiKey: "moonshot-test-key",
+    baseUrl: "https://api.moonshot.ai/v1",
+    plannerModel: "kimi-k3",
+    executorModel: "kimi-k2.6",
+  });
+
+  assert.equal(answer.answer, "Hello! How can I help?");
+  assert.deepEqual(models, ["kimi-k3", "kimi-k2.6", "kimi-k2.6"]);
+});
+
+test("planned Kimi synthesizes verified sources while labelling unavailable evidence as partial", async () => {
+  const modelBodies: Array<Record<string, unknown>> = [];
+  globalThis.fetch = (async (input, init) => {
+    if (!String(input).includes("api.moonshot.ai")) return new Response(null, { status: 503 });
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    modelBodies.push(body);
+    return modelBodies.length === 1
+      ? successfulModelResponse(queryPlan([{
+        id: "step_product",
+        toolName: "search_product_activity",
+        arguments: {
+          query: "H3",
+          from: "2026-08-31",
+          to: "2026-09-06",
+          include_customer_names: false,
+          limit: 20,
+        },
+      }, {
+        id: "step_quotes",
+        toolName: "search_quotations",
+        arguments: { query: "H3", status: "all", limit: 20 },
+      }], "Summarize H3 activity and quotations"))
+      : successfulModelResponse("Partial result: quotation data is available, but Inventory Orders is unavailable.");
+  }) as typeof fetch;
+
+  const answer = await answerWithPlannedKimi({
+    provider: plannedProvider(),
+    auth,
+    message: "Summarize H3 activity and quotations this week.",
+    apiKey: "moonshot-test-key",
+    baseUrl: "https://api.moonshot.ai/v1",
+    plannerModel: "kimi-k3",
+    executorModel: "kimi-k2.6",
+    enabledSkills: new Set(["inventory", "quotations"]),
+  });
+
+  assert.equal(answer.incompleteData, true);
+  assert.match(answer.answer, /^Partial result:/u);
+  assert.equal(modelBodies.length, 2);
+  const synthesisMessages = modelBodies[1].messages as Array<{ role: string; content?: string }>;
+  assert.match(synthesisMessages[0].content || "", /label the answer as partial/i);
+  assert.equal(synthesisMessages.filter((message) => message.role === "tool").length, 2);
+  assert.equal(synthesisMessages.some((message) => message.role === "tool" && message.content?.includes('"complete":false')), true);
+  assert.equal(synthesisMessages.some((message) => message.role === "tool" && message.content?.includes('"count":1')), true);
+});
+
+test("planned Kimi reports a zero-match source alongside another verified source", async () => {
+  const modelBodies: Array<Record<string, unknown>> = [];
+  globalThis.fetch = (async (_input, init) => {
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    modelBodies.push(body);
+    return modelBodies.length === 1
+      ? successfulModelResponse(queryPlan([{
+        id: "step_inventory",
+        toolName: "search_inventory",
+        arguments: { query: "H3", status: "all", limit: 20 },
+      }, {
+        id: "step_quotes",
+        toolName: "search_quotations",
+        arguments: { query: "H3", status: "all", limit: 20 },
+      }], "Compare H3 inventory with quotations"))
+      : successfulModelResponse("Inventory has one match; Quotations has zero matches.");
+  }) as typeof fetch;
+
+  const answer = await answerWithPlannedKimi({
+    provider: plannedProvider({ listQuotations: async () => [] }),
+    auth,
+    message: "Compare H3 inventory stock with quotations.",
+    apiKey: "moonshot-test-key",
+    baseUrl: "https://api.moonshot.ai/v1",
+    plannerModel: "kimi-k3",
+    executorModel: "kimi-k2.6",
+    enabledSkills: new Set(["inventory", "quotations"]),
+  });
+
+  assert.equal(answer.answer, "Inventory has one match; Quotations has zero matches.");
+  assert.equal(answer.incompleteData, undefined);
+  const synthesis = modelBodies[1].messages as Array<{ role: string; content?: string }>;
+  assert.match(synthesis[0].content || "", /verified zero-match result/i);
+  assert.match(synthesis[0].content || "", /not a whole-answer abstention/i);
+});
+
+test("planned Project Track queries carry Sales and created-date filters through to evidence synthesis", async () => {
+  const modelBodies: Array<Record<string, unknown>> = [];
+  const projectArguments = {
+    query: "",
+    stage: "all",
+    receipt: "all",
+    receipt_status: "all",
+    created_from: "2026-08-31",
+    created_to: "2026-09-06",
+    sales_representative: "Ruihan",
+    limit: 20,
+    include_assignee: false,
+    include_location: false,
+    include_customer_contact_details: false,
+    include_pm_notes: false,
+  };
+  globalThis.fetch = (async (_input, init) => {
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    modelBodies.push(body);
+    return modelBodies.length === 1
+      ? successfulModelResponse(queryPlan([{
+        id: "step_projects",
+        toolName: "search_payment_projects",
+        arguments: projectArguments,
+      }, {
+        id: "step_quotes",
+        toolName: "search_quotations",
+        arguments: { query: "Ruihan", status: "all", limit: 20 },
+      }], "Compare Ruihan's new projects with quotations"))
+      : successfulModelResponse("Project Track and quotation evidence checked.");
+  }) as typeof fetch;
+
+  const answer = await answerWithPlannedKimi({
+    provider: plannedProvider(),
+    auth,
+    message: "Compare Project Track projects added by Sales Ruihan this week with Ruihan's quotations.",
+    apiKey: "moonshot-test-key",
+    baseUrl: "https://api.moonshot.ai/v1",
+    plannerModel: "kimi-k3",
+    executorModel: "kimi-k2.6",
+    enabledSkills: new Set(["project_track", "quotations"]),
+  });
+
+  assert.equal(answer.answer, "Project Track and quotation evidence checked.");
+  assert.equal(modelBodies.length, 2);
+  const synthesisMessages = modelBodies[1].messages as Array<{
+    role: string;
+    tool_calls?: Array<{ function: { name: string; arguments: string } }>;
+  }>;
+  const plannedCalls = synthesisMessages.flatMap((message) => message.tool_calls || []);
+  const projectCall = plannedCalls.find((call) => call.function.name === "search_payment_projects");
+  assert.ok(projectCall);
+  assert.deepEqual(JSON.parse(projectCall.function.arguments), projectArguments);
 });

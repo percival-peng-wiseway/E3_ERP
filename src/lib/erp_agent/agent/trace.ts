@@ -13,9 +13,15 @@ export type AgentTraceToolCall = {
 
 export type AgentTraceModelRound = {
   model: string;
+  stage?: "planner" | "executor" | "legacy";
   status: "ok" | "error";
   durationMs: number;
   toolCallCount: number;
+  plannedStepCount?: number;
+  planDimensions?: {
+    hasSalesFilter: boolean;
+    hasCreatedRange: boolean;
+  };
   inputTokens?: number;
   outputTokens?: number;
 };

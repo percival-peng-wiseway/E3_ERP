@@ -11,6 +11,18 @@ test("Trace backend stores only the structured diagnostic allow-list", () => {
   trace.selectWorkflow("inventory_attention");
   trace.selectRoute({ skills: ["inventory"], toolsets: ["inventory"] });
   trace.recordTool({ name: "get_inventory_status", status: "verified", durationMs: 4 });
+  trace.recordModelRound({
+    model: "kimi-k3",
+    stage: "planner",
+    status: "ok",
+    durationMs: 12,
+    toolCallCount: 0,
+    plannedStepCount: 999,
+    planDimensions: {
+      hasSalesFilter: true,
+      hasCreatedRange: false,
+    },
+  });
   const snapshot = trace.snapshot() as typeof trace extends never ? never : ReturnType<typeof trace.snapshot> & {
     prompt?: string;
     answer?: string;
@@ -26,6 +38,18 @@ test("Trace backend stores only the structured diagnostic allow-list", () => {
   assert.equal(Object.hasOwn(stored, "prompt"), false);
   assert.equal(Object.hasOwn(stored, "answer"), false);
   assert.equal(Object.hasOwn(stored, "toolArguments"), false);
+  assert.deepEqual(safeSnapshot.modelRounds[0], {
+    model: "kimi-k3",
+    stage: "planner",
+    status: "ok",
+    durationMs: 12,
+    toolCallCount: 0,
+    plannedStepCount: 16,
+    planDimensions: {
+      hasSalesFilter: true,
+      hasCreatedRange: false,
+    },
+  });
 });
 
 test("all-user Trace records keep safe conversation metadata and derive problem codes", () => {
