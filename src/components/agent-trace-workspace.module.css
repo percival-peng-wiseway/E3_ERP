@@ -93,6 +93,22 @@
 .spinning { animation: spin 800ms linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+.compact .header { align-items: center; margin-bottom: 12px; }
+.compact .eyebrow { display: none; }
+.compact .header h1 { font-size: 22px; }
+.compact .header p { display: none; }
+.compact .privacyNote { align-items: flex-start; flex-wrap: wrap; }
+.compact .privacyNote small { width: 100%; padding-left: 27px; }
+.compact .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.compact .stats article { padding: 11px 12px; }
+.compact .filterBar { align-items: flex-start; flex-wrap: wrap; }
+.compact .filterBar small { width: 100%; margin-left: 0; }
+.compact .traceGrid { min-height: 0; grid-template-columns: 1fr; }
+.compact .traceList { max-height: 270px; border-right: 0; border-bottom: 1px solid #e1e6ea; }
+.compact .detailPanel { overflow: visible; }
+.compact .routeMeta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.compact .detailColumns { grid-template-columns: 1fr; gap: 0; }
+
 @media (max-width: 980px) {
   .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .traceGrid { grid-template-columns: 260px minmax(0, 1fr); }

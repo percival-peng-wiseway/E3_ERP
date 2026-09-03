@@ -18,7 +18,6 @@ import {
   LogOut,
   MapPin,
   Menu,
-  PanelLeftClose,
   Search,
   Settings,
   Users,
@@ -93,7 +92,7 @@ const UserManagementDialog = dynamic(
   { ssr: false, loading: WorkspaceLoading },
 );
 
-type ModuleId = "home" | "files" | "inventory" | "quotations" | "projects" | "site-visits" | "payments" | "reimbursements" | "reports" | "agent-traces" | "finance";
+type ModuleId = "home" | "files" | "inventory" | "quotations" | "projects" | "site-visits" | "payments" | "reimbursements" | "reports" | "finance";
 type EntityNavigationTarget = { module: ModuleId; entityId: string; requestId: number };
 
 const NAVIGATION: Array<{
@@ -131,7 +130,6 @@ const MODULE_LABELS: Record<ModuleId, string> = {
   payments: "Project Track",
   reimbursements: "Reimbursements",
   reports: "Reports",
-  "agent-traces": "Agent Trace",
   finance: "Finance & Accounting",
 };
 
@@ -140,6 +138,7 @@ const LEGACY_AGENT_CONVERSATION_KEY = "e3-agent-conversation:v1";
 export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
   const [activeModule, setActiveModule] = useState<ModuleId>("home");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [agentTraceSidebarOpen, setAgentTraceSidebarOpen] = useState(false);
   const [agentSettingsOpen, setAgentSettingsOpen] = useState(false);
   const [userManagementOpen, setUserManagementOpen] = useState(false);
   const [wipUnscheduledProjectCount, setWipUnscheduledProjectCount] = useState<number | null>(null);
@@ -186,6 +185,15 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, [userMenuOpen]);
+
+  useEffect(() => {
+    if (!agentTraceSidebarOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setAgentTraceSidebarOpen(false);
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [agentTraceSidebarOpen]);
 
   const signOut = async () => {
     setSigningOut(true);
@@ -457,7 +465,6 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
           {currentUser.role === "admin" ? (
             <>
               <button onClick={() => setAgentSettingsOpen(true)}><Settings size={16} /><span>Agent Settings</span></button>
-              <button className={activeModule === "agent-traces" ? "active" : ""} onClick={() => navigate("agent-traces")}><Activity size={16} /><span>Agent Trace</span></button>
               <button onClick={() => setUserManagementOpen(true)}><Users size={16} /><span>User Management</span></button>
             </>
           ) : null}
@@ -470,9 +477,21 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
       <div className="desk-main-shell">
         <div className="page-bar">
           <div className="page-breadcrumb"><span>E3 Energy</span><ChevronRight size={12} /><strong>{MODULE_LABELS[activeModule]}</strong></div>
-          <div className="page-bar-actions"><button><Activity size={15} />Activity</button><button><PanelLeftClose size={15} />Sidebar</button></div>
+          {currentUser.role === "admin" ? (
+            <div className="page-bar-actions">
+              <button
+                className={agentTraceSidebarOpen ? "active" : ""}
+                type="button"
+                aria-haspopup="dialog"
+                aria-expanded={agentTraceSidebarOpen}
+                onClick={() => setAgentTraceSidebarOpen(true)}
+              >
+                <Activity size={15} />Agent Trace
+              </button>
+            </div>
+          ) : null}
         </div>
-        <main className={`desk-main ${activeModule === "home" || activeModule === "files" || activeModule === "projects" || activeModule === "site-visits" || activeModule === "payments" || activeModule === "reimbursements" || activeModule === "agent-traces" ? "wide-workspace" : ""}`}>
+        <main className={`desk-main ${activeModule === "home" || activeModule === "files" || activeModule === "projects" || activeModule === "site-visits" || activeModule === "payments" || activeModule === "reimbursements" ? "wide-workspace" : ""}`}>
           <div className="persistent-home-workspace" hidden={activeModule !== "home"}>
             <HomeCollaborationWorkspace
               currentUser={currentUser}
@@ -494,10 +513,26 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
           {activeModule === "payments" && <PaymentTrackWorkspace authenticatedRole={currentUser.role} openEntityTarget={entityNavigationTarget?.module === "payments" ? entityNavigationTarget : undefined} />}
           {activeModule === "reimbursements" && <ReimbursementWorkspace authenticatedRole={currentUser.role} openEntityTarget={entityNavigationTarget?.module === "reimbursements" ? entityNavigationTarget : undefined} />}
           {activeModule === "reports" && <ReportsWorkspace />}
-          {activeModule === "agent-traces" && currentUser.role === "admin" && <AgentTraceWorkspace />}
           {activeModule === "finance" && <ComingSoon />}
         </main>
       </div>
+      {currentUser.role === "admin" && agentTraceSidebarOpen ? (
+        <>
+          <button
+            className="agent-trace-sidebar-scrim"
+            type="button"
+            aria-label="Close Agent Trace"
+            onClick={() => setAgentTraceSidebarOpen(false)}
+          />
+          <aside className="agent-trace-sidebar" role="dialog" aria-modal="true" aria-label="Agent Trace">
+            <div className="agent-trace-sidebar-heading">
+              <div><Activity size={17} /><strong>Agent Trace</strong><small>All users</small></div>
+              <button type="button" aria-label="Close Agent Trace" autoFocus onClick={() => setAgentTraceSidebarOpen(false)}><X size={18} /></button>
+            </div>
+            <div className="agent-trace-sidebar-content"><AgentTraceWorkspace compact /></div>
+          </aside>
+        </>
+      ) : null}
       {currentUser.role === "admin" ? (
         <>
           {agentSettingsOpen ? (

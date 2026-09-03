@@ -44,7 +44,7 @@ function totalTokens(trace: AgentTraceRecord) {
   return trace.modelRounds.reduce((sum, round) => sum + (round.inputTokens || 0) + (round.outputTokens || 0), 0);
 }
 
-export function AgentTraceWorkspace() {
+export function AgentTraceWorkspace({ compact = false }: { compact?: boolean }) {
   const [traces, setTraces] = useState<AgentTraceRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [storage, setStorage] = useState<"memory" | "d1">("memory");
@@ -121,7 +121,7 @@ export function AgentTraceWorkspace() {
   }, [traces]);
 
   return (
-    <section className={styles.workspace}>
+    <section className={`${styles.workspace} ${compact ? styles.compact : ""}`}>
       <header className={styles.header}>
         <div>
           <span className={styles.eyebrow}>E3 AGENT · OBSERVABILITY</span>
