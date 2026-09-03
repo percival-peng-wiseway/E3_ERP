@@ -1,7 +1,9 @@
 import { getErpSession } from "@/lib/auth/session";
+import { agentAuthContext } from "@/lib/erp_agent/business-agent/auth";
 import {
   deleteManagedAgentSkill,
   ManagedSkillError,
+  type ManagedSkillOwner,
   updateManagedAgentSkill,
 } from "@/lib/erp_agent/agent/managed-skills";
 import {
@@ -27,11 +29,21 @@ function error(status: number, code: string, message: string) {
   return json({ error: { code, message } }, { status });
 }
 
-function mutationSession(request: Request) {
+function skillOwner(request: Request): ManagedSkillOwner | null {
   const session = getErpSession(request);
-  if (session?.user.role !== "admin" || !isSameOriginRequest(request)) return null;
-  if (process.env.NODE_ENV !== "production" && process.env.ERP_REMOTE_DATA_READ_ONLY === "true") return null;
-  return session;
+  const auth = agentAuthContext(request);
+  return session && auth
+    ? { principalHash: auth.principalHash, username: session.user.username }
+    : null;
+}
+
+function mutationAuthorizationError(request: Request, owner: ManagedSkillOwner | null) {
+  if (!owner) return error(401, "authentication_required", "Sign in to manage your Agent Skills.");
+  if (!isSameOriginRequest(request)) return error(403, "origin_forbidden", "Only same-origin Skill changes are allowed.");
+  if (process.env.NODE_ENV !== "production" && process.env.ERP_REMOTE_DATA_READ_ONLY === "true") {
+    return error(403, "remote_read_only", "Skill changes are disabled while local development uses read-only cloud data.");
+  }
+  return null;
 }
 
 async function skillId(context: { params: Promise<{ id: string }> }) {
@@ -51,12 +63,13 @@ async function readBody(request: Request) {
 }
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
-  const session = mutationSession(request);
-  if (!session) return error(403, "forbidden", "Administrator access from the live application is required.");
+  const owner = skillOwner(request);
+  const authorizationError = mutationAuthorizationError(request, owner);
+  if (authorizationError) return authorizationError;
   const id = await skillId(context);
   if (!id) return error(400, "invalid_id", "The custom Skill ID is invalid.");
   try {
-    const skill = await updateManagedAgentSkill(id, await readBody(request), session.user.username);
+    const skill = await updateManagedAgentSkill(id, await readBody(request), owner!);
     return json({ data: { skill } });
   } catch (updateError) {
     if (updateError instanceof AgentRequestBodyTooLarge) return error(413, "request_too_large", "Agent Skill requests cannot exceed 16 KiB.");
@@ -69,8 +82,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
 }
 
 export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
-  const session = mutationSession(request);
-  if (!session) return error(403, "forbidden", "Administrator access from the live application is required.");
+  const owner = skillOwner(request);
+  const authorizationError = mutationAuthorizationError(request, owner);
+  if (authorizationError) return authorizationError;
   const id = await skillId(context);
   if (!id) return error(400, "invalid_id", "The custom Skill ID is invalid.");
   try {
@@ -79,7 +93,7 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
       || Object.keys(body).length !== 1 || !Object.hasOwn(body, "expectedVersion")) {
       return error(400, "invalid_request", "Refresh the Skill list and try again.");
     }
-    await deleteManagedAgentSkill(id, (body as Record<string, unknown>).expectedVersion);
+    await deleteManagedAgentSkill(id, (body as Record<string, unknown>).expectedVersion, owner!);
     return json({ data: { id } });
   } catch (deleteError) {
     if (deleteError instanceof AgentRequestBodyTooLarge) return error(413, "request_too_large", "Agent Skill requests cannot exceed 16 KiB.");

@@ -405,16 +405,16 @@ export function AgentSkillsDialog({
         <header className={styles.dialogHeader}>
           <span className={styles.headingIcon}><Blocks size={21} /></span>
           <div>
-            <h2 id="agent-skills-title">Agent Skill Management</h2>
-            <p id="agent-skills-description">Control reusable, read-only workflows for every E3 Agent user.</p>
+            <h2 id="agent-skills-title">My Agent Skills</h2>
+            <p id="agent-skills-description">Create and manage your reusable, read-only E3 Agent workflows.</p>
           </div>
-          <button type="button" aria-label="Close Agent Skill Management" disabled={saving} onClick={onClose}><X size={19} /></button>
+          <button type="button" aria-label="Close My Agent Skills" disabled={saving} onClick={onClose}><X size={19} /></button>
         </header>
 
         <div className={styles.toolbar}>
           <div>
             <strong>{enabledCount} active skills</strong>
-            <span>{builtInCount} built-in · {customCount} custom</span>
+            <span>{builtInCount} built-in · {customCount} personal</span>
           </div>
           <button type="button" disabled={loading || saving} onClick={startCreating}>
             <CirclePlus size={16} /> Add custom skill
@@ -430,7 +430,7 @@ export function AgentSkillsDialog({
         ) : null}
 
         <div className={styles.content} aria-busy={loading}>
-          <nav className={styles.skillList} aria-label="Available Agent skills">
+          <nav className={styles.skillList} aria-label="Built-in and your Agent skills">
             {loading ? <div className={styles.loading}><LoaderCircle className={styles.spinning} size={18} /> Loading skills…</div> : null}
             {!loading && !skills.length ? <div className={styles.loading}>No skills are available.</div> : null}
             {skills.map((skill) => (
@@ -562,12 +562,12 @@ export function AgentSkillsDialog({
                     type="checkbox"
                     disabled={saving || editor.source === "built_in"}
                     checked={editor.enabled}
-                    aria-describedby="agent-skill-global-impact"
+                    aria-describedby="agent-skill-account-impact"
                     onChange={(event) => setEditor({ ...editor, enabled: event.target.checked })}
                   />
                   <span>
-                    <strong>Enabled for E3 Agent</strong>
-                    <small id="agent-skill-global-impact">Changing this setting affects all users.</small>
+                    <strong>Enabled for my E3 Agent</strong>
+                    <small id="agent-skill-account-impact">Changing this setting affects only your account.</small>
                   </span>
                 </label>
 
@@ -619,7 +619,7 @@ export function AgentSkillsDialog({
               <div className={styles.emptyEditor}>
                 <Blocks size={30} />
                 <strong>Select a skill</strong>
-                <span>Review a built-in skill or add a custom workflow.</span>
+                <span>Review a built-in skill or add your own workflow.</span>
               </div>
             )}
           </div>

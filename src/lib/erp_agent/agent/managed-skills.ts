@@ -37,8 +37,20 @@ type StoredCustomSkill = AgentManagedSkill & {
 };
 
 type StoredSkillCatalog = {
+  schemaVersion: 2;
+  ownerPrincipalHash: string;
+  ownerUsername: string;
+  skills: StoredCustomSkill[];
+};
+
+type LegacyStoredSkillCatalog = {
   schemaVersion: 1;
   skills: StoredCustomSkill[];
+};
+
+export type ManagedSkillOwner = {
+  principalHash: string;
+  username: string;
 };
 
 export type CreateManagedSkillInput = {
@@ -93,12 +105,14 @@ const MAX_CUSTOM_SKILLS = 30;
 const MAXIMUM_STORAGE_RETRIES = 5;
 const ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ACTOR_PATTERN = /^[a-z0-9][a-z0-9._-]{2,39}$/;
-const CLOUDFLARE_DOCUMENT_KEY = "agent/managed-skills";
+const PRINCIPAL_HASH_PATTERN = /^[0-9a-f]{64}$/i;
+const LEGACY_CLOUDFLARE_DOCUMENT_KEY = "agent/managed-skills";
+const PERSONAL_CLOUDFLARE_DOCUMENT_PREFIX = "agent/managed-skills/v2";
 const dataRoot = path.resolve(
   /* turbopackIgnore: true */
   process.env.AGENT_SKILLS_DATA_DIR || path.join(process.cwd(), ".data", "agent"),
 );
-const skillsPath = path.join(/* turbopackIgnore: true */ dataRoot, "skills.json");
+const legacySkillsPath = path.join(/* turbopackIgnore: true */ dataRoot, "skills.json");
 let mutationQueue: Promise<void> = Promise.resolve();
 
 function controlCharacters(value: string, allowWhitespace = false) {
@@ -147,10 +161,27 @@ function normalizedCapabilities(value: unknown): BusinessSkillId[] {
   return capabilities;
 }
 
-function normalizedActor(value: string) {
-  const actor = value.trim().toLocaleLowerCase("en-AU");
-  if (!ACTOR_PATTERN.test(actor)) throw new ManagedSkillError("The administrator identity is invalid.", 403, "forbidden");
+function normalizedActor(value: unknown) {
+  const actor = typeof value === "string" ? value.trim().toLocaleLowerCase("en-AU") : "";
+  if (!ACTOR_PATTERN.test(actor)) throw new ManagedSkillError("The user identity is invalid.", 403, "forbidden");
   return actor;
+}
+
+function normalizedOwner(value: ManagedSkillOwner): ManagedSkillOwner {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ManagedSkillError("The user identity is invalid.", 403, "forbidden");
+  }
+  const record = value as unknown as Record<string, unknown>;
+  if (Object.keys(record).some((key) => !["principalHash", "username"].includes(key))
+    || Object.keys(record).length !== 2
+    || typeof record.principalHash !== "string"
+    || !PRINCIPAL_HASH_PATTERN.test(record.principalHash)) {
+    throw new ManagedSkillError("The user identity is invalid.", 403, "forbidden");
+  }
+  return {
+    principalHash: record.principalHash.toLocaleLowerCase("en-AU"),
+    username: normalizedActor(record.username),
+  };
 }
 
 function normalizedCreateInput(value: unknown): CreateManagedSkillInput {
@@ -239,17 +270,11 @@ function normalizedStoredSkill(value: unknown): StoredCustomSkill | null {
   }
 }
 
-function normalizedCatalog(value: unknown): StoredSkillCatalog {
-  if (value === null) return { schemaVersion: 1, skills: [] };
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+function normalizedCatalogSkills(value: unknown): StoredCustomSkill[] {
+  if (!Array.isArray(value) || value.length > MAX_CUSTOM_SKILLS) {
     throw new ManagedSkillError("The saved Skill catalog is invalid.", 500, "skills_corrupt");
   }
-  const record = value as Record<string, unknown>;
-  if (Object.keys(record).some((key) => !["schemaVersion", "skills"].includes(key))
-    || record.schemaVersion !== 1 || !Array.isArray(record.skills) || record.skills.length > MAX_CUSTOM_SKILLS) {
-    throw new ManagedSkillError("The saved Skill catalog is invalid.", 500, "skills_corrupt");
-  }
-  const skills = record.skills.map(normalizedStoredSkill);
+  const skills = value.map(normalizedStoredSkill);
   if (skills.some((skill) => !skill)) {
     throw new ManagedSkillError("The saved Skill catalog is invalid.", 500, "skills_corrupt");
   }
@@ -263,7 +288,64 @@ function normalizedCatalog(value: unknown): StoredSkillCatalog {
     ids.add(skill.id);
     triggers.add(trigger);
   }
-  return { schemaVersion: 1, skills: skills as StoredCustomSkill[] };
+  return skills as StoredCustomSkill[];
+}
+
+function normalizedLegacyCatalog(value: unknown): LegacyStoredSkillCatalog {
+  if (value === null) return { schemaVersion: 1, skills: [] };
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ManagedSkillError("The saved Skill catalog is invalid.", 500, "skills_corrupt");
+  }
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).some((key) => !["schemaVersion", "skills"].includes(key))
+    || record.schemaVersion !== 1) {
+    throw new ManagedSkillError("The saved Skill catalog is invalid.", 500, "skills_corrupt");
+  }
+  return { schemaVersion: 1, skills: normalizedCatalogSkills(record.skills) };
+}
+
+function emptyCatalog(owner: ManagedSkillOwner): StoredSkillCatalog {
+  return {
+    schemaVersion: 2,
+    ownerPrincipalHash: owner.principalHash,
+    ownerUsername: owner.username,
+    skills: [],
+  };
+}
+
+function normalizedPersonalCatalog(value: unknown, owner: ManagedSkillOwner): StoredSkillCatalog {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ManagedSkillError("The saved Skill catalog is invalid.", 500, "skills_corrupt");
+  }
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).some((key) => !["schemaVersion", "ownerPrincipalHash", "ownerUsername", "skills"].includes(key))
+    || Object.keys(record).length !== 4
+    || record.schemaVersion !== 2
+    || record.ownerPrincipalHash !== owner.principalHash
+    || record.ownerUsername !== owner.username) {
+    throw new ManagedSkillError("The saved Skill catalog is invalid.", 500, "skills_corrupt");
+  }
+  const skills = normalizedCatalogSkills(record.skills);
+  if (skills.some((skill) => skill.createdBy !== owner.username)) {
+    throw new ManagedSkillError("The saved Skill catalog owner is invalid.", 500, "skills_corrupt");
+  }
+  return { ...emptyCatalog(owner), skills };
+}
+
+function personalCatalogFromLegacy(catalog: LegacyStoredSkillCatalog, owner: ManagedSkillOwner): StoredSkillCatalog {
+  return {
+    ...emptyCatalog(owner),
+    skills: catalog.skills
+      .filter((skill) => skill.createdBy === owner.username)
+      .map((skill) => ({ ...skill })),
+  };
+}
+
+function personalStorage(owner: ManagedSkillOwner) {
+  return {
+    documentKey: `${PERSONAL_CLOUDFLARE_DOCUMENT_PREFIX}/${owner.principalHash}`,
+    localPath: path.join(/* turbopackIgnore: true */ dataRoot, `skills-${owner.principalHash}.json`),
+  };
 }
 
 async function ensureLocalStorage() {
@@ -271,52 +353,73 @@ async function ensureLocalStorage() {
   await chmod(dataRoot, 0o700);
 }
 
-async function readStoredCatalog(): Promise<{ catalog: StoredSkillCatalog; documentVersion: number | null }> {
-  const bindings = await erpCloudflareBindings();
-  if (bindings) {
-    if (!bindings.database) throw new CloudflareStorageConfigurationError("The ERP_DB binding is missing.");
-    const document = await readVersionedDocument<unknown>(bindings.database, CLOUDFLARE_DOCUMENT_KEY);
-    return { catalog: normalizedCatalog(document.value), documentVersion: document.version };
-  }
-  await ensureLocalStorage();
+async function readLocalDocument(filePath: string): Promise<{ exists: boolean; value: unknown }> {
   try {
-    const raw = await readFile(/* turbopackIgnore: true */ skillsPath, "utf8");
-    await chmod(skillsPath, 0o600);
-    return { catalog: normalizedCatalog(JSON.parse(raw) as unknown), documentVersion: null };
+    const raw = await readFile(/* turbopackIgnore: true */ filePath, "utf8");
+    await chmod(filePath, 0o600);
+    return { exists: true, value: JSON.parse(raw) as unknown };
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
-      return { catalog: { schemaVersion: 1, skills: [] }, documentVersion: null };
+      return { exists: false, value: null };
     }
     throw error;
   }
 }
 
-async function writeStoredCatalog(catalog: StoredSkillCatalog, documentVersion: number | null) {
+async function readStoredCatalog(owner: ManagedSkillOwner): Promise<{ catalog: StoredSkillCatalog; documentVersion: number | null }> {
+  const bindings = await erpCloudflareBindings();
+  if (bindings) {
+    if (!bindings.database) throw new CloudflareStorageConfigurationError("The ERP_DB binding is missing.");
+    const storage = personalStorage(owner);
+    const document = await readVersionedDocument<unknown>(bindings.database, storage.documentKey);
+    if (document.value !== null) {
+      return { catalog: normalizedPersonalCatalog(document.value, owner), documentVersion: document.version };
+    }
+    const legacyDocument = await readVersionedDocument<unknown>(bindings.database, LEGACY_CLOUDFLARE_DOCUMENT_KEY);
+    return {
+      catalog: personalCatalogFromLegacy(normalizedLegacyCatalog(legacyDocument.value), owner),
+      documentVersion: document.version,
+    };
+  }
+  await ensureLocalStorage();
+  const personalDocument = await readLocalDocument(personalStorage(owner).localPath);
+  if (personalDocument.exists) {
+    return { catalog: normalizedPersonalCatalog(personalDocument.value, owner), documentVersion: null };
+  }
+  const legacyDocument = await readLocalDocument(legacySkillsPath);
+  return {
+    catalog: personalCatalogFromLegacy(normalizedLegacyCatalog(legacyDocument.value), owner),
+    documentVersion: null,
+  };
+}
+
+async function writeStoredCatalog(owner: ManagedSkillOwner, catalog: StoredSkillCatalog, documentVersion: number | null) {
   const bindings = await erpCloudflareBindings();
   if (bindings) {
     if (!bindings.database || documentVersion === null) throw new CloudflareStorageConfigurationError("The ERP_DB binding is missing.");
-    await writeVersionedDocument(bindings.database, CLOUDFLARE_DOCUMENT_KEY, catalog, documentVersion);
+    await writeVersionedDocument(bindings.database, personalStorage(owner).documentKey, catalog, documentVersion);
     return;
   }
   await ensureLocalStorage();
-  const temporaryPath = path.join(/* turbopackIgnore: true */ dataRoot, `.skills-${randomUUID()}.tmp`);
+  const storage = personalStorage(owner);
+  const temporaryPath = path.join(/* turbopackIgnore: true */ dataRoot, `.skills-${owner.principalHash}-${randomUUID()}.tmp`);
   try {
     await writeFile(temporaryPath, `${JSON.stringify(catalog, null, 2)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
-    await rename(temporaryPath, skillsPath);
-    await chmod(skillsPath, 0o600);
+    await rename(temporaryPath, storage.localPath);
+    await chmod(storage.localPath, 0o600);
   } catch (error) {
     await unlink(temporaryPath).catch(() => undefined);
     throw error;
   }
 }
 
-function withCatalogMutation<T>(work: (catalog: StoredSkillCatalog) => Promise<T>): Promise<T> {
+function withCatalogMutation<T>(owner: ManagedSkillOwner, work: (catalog: StoredSkillCatalog) => Promise<T>): Promise<T> {
   const retryingWork = async () => {
     for (let attempt = 0; attempt < MAXIMUM_STORAGE_RETRIES; attempt += 1) {
-      const { catalog, documentVersion } = await readStoredCatalog();
+      const { catalog, documentVersion } = await readStoredCatalog(owner);
       try {
         const result = await work(catalog);
-        await writeStoredCatalog(catalog, documentVersion);
+        await writeStoredCatalog(owner, catalog, documentVersion);
         return result;
       } catch (error) {
         if (!(error instanceof CloudflareDocumentConflictError)) throw error;
@@ -345,9 +448,13 @@ export function parseUpdateManagedSkillInput(value: unknown) {
   return normalizedUpdateInput(value);
 }
 
-export async function listManagedAgentSkills(options: { includeDisabled?: boolean } = {}): Promise<AgentManagedSkill[]> {
+export async function listManagedAgentSkills(
+  ownerValue: ManagedSkillOwner,
+  options: { includeDisabled?: boolean } = {},
+): Promise<AgentManagedSkill[]> {
+  const owner = normalizedOwner(ownerValue);
   await mutationQueue;
-  const { catalog } = await readStoredCatalog();
+  const { catalog } = await readStoredCatalog(owner);
   const custom = catalog.skills
     .filter((skill) => options.includeDisabled || skill.enabled)
     .map(({ createdAt: _createdAt, createdBy: _createdBy, ...skill }) => skill)
@@ -355,10 +462,10 @@ export async function listManagedAgentSkills(options: { includeDisabled?: boolea
   return [BUILT_IN_WEEKLY_SUMMARY, ...custom];
 }
 
-export async function createManagedAgentSkill(value: unknown, actorValue: string): Promise<AgentManagedSkill> {
+export async function createManagedAgentSkill(value: unknown, ownerValue: ManagedSkillOwner): Promise<AgentManagedSkill> {
   const input = normalizedCreateInput(value);
-  const actor = normalizedActor(actorValue);
-  return withCatalogMutation(async (catalog) => {
+  const owner = normalizedOwner(ownerValue);
+  return withCatalogMutation(owner, async (catalog) => {
     if (catalog.skills.length >= MAX_CUSTOM_SKILLS) {
       throw new ManagedSkillError("The custom Skill limit has been reached.", 409, "skill_limit");
     }
@@ -370,9 +477,9 @@ export async function createManagedAgentSkill(value: unknown, actorValue: string
       source: "custom",
       version: 1,
       createdAt: timestamp,
-      createdBy: actor,
+      createdBy: owner.username,
       updatedAt: timestamp,
-      updatedBy: actor,
+      updatedBy: owner.username,
     };
     catalog.skills.push(skill);
     const { createdAt: _createdAt, createdBy: _createdBy, ...publicSkill } = skill;
@@ -380,12 +487,16 @@ export async function createManagedAgentSkill(value: unknown, actorValue: string
   });
 }
 
-export async function updateManagedAgentSkill(idValue: string, value: unknown, actorValue: string): Promise<AgentManagedSkill> {
+export async function updateManagedAgentSkill(
+  idValue: string,
+  value: unknown,
+  ownerValue: ManagedSkillOwner,
+): Promise<AgentManagedSkill> {
   const id = idValue.toLocaleLowerCase("en-AU");
   if (!ID_PATTERN.test(id)) throw new ManagedSkillError("The custom Skill ID is invalid.");
   const input = normalizedUpdateInput(value);
-  const actor = normalizedActor(actorValue);
-  return withCatalogMutation(async (catalog) => {
+  const owner = normalizedOwner(ownerValue);
+  return withCatalogMutation(owner, async (catalog) => {
     const index = catalog.skills.findIndex((skill) => skill.id === id);
     if (index < 0) throw new ManagedSkillError("The custom Skill was not found.", 404, "skill_not_found");
     const current = catalog.skills[index];
@@ -401,7 +512,7 @@ export async function updateManagedAgentSkill(idValue: string, value: unknown, a
       trigger: nextTrigger,
       version: current.version + 1,
       updatedAt: new Date().toISOString(),
-      updatedBy: actor,
+      updatedBy: owner.username,
     };
     catalog.skills[index] = next;
     const { createdAt: _createdAt, createdBy: _createdBy, ...publicSkill } = next;
@@ -409,13 +520,18 @@ export async function updateManagedAgentSkill(idValue: string, value: unknown, a
   });
 }
 
-export async function deleteManagedAgentSkill(idValue: string, expectedVersion: unknown): Promise<string> {
+export async function deleteManagedAgentSkill(
+  idValue: string,
+  expectedVersion: unknown,
+  ownerValue: ManagedSkillOwner,
+): Promise<string> {
   const id = idValue.toLocaleLowerCase("en-AU");
   if (!ID_PATTERN.test(id)) throw new ManagedSkillError("The custom Skill ID is invalid.");
   if (!Number.isSafeInteger(expectedVersion) || (expectedVersion as number) < 1) {
     throw new ManagedSkillError("Refresh the Skill list and try again.", 409, "skill_version_required");
   }
-  return withCatalogMutation(async (catalog) => {
+  const owner = normalizedOwner(ownerValue);
+  return withCatalogMutation(owner, async (catalog) => {
     const index = catalog.skills.findIndex((skill) => skill.id === id);
     if (index < 0) throw new ManagedSkillError("The custom Skill was not found.", 404, "skill_not_found");
     if (catalog.skills[index].version !== expectedVersion) {
@@ -426,14 +542,19 @@ export async function deleteManagedAgentSkill(idValue: string, expectedVersion: 
   });
 }
 
-export async function resolveInvokedManagedSkill(input: { skillId?: string; message: string }) {
+export async function resolveInvokedManagedSkill(input: {
+  skillId?: string;
+  message: string;
+  owner: ManagedSkillOwner;
+}) {
+  const owner = normalizedOwner(input.owner);
   const requestedId = input.skillId?.toLocaleLowerCase("en-AU");
   const trigger = normalizeManagedSkillTrigger(input.message);
   if (requestedId === WEEKLY_BUSINESS_SUMMARY_SKILL_ID
     || (!requestedId && BUILT_IN_TRIGGER_ALIASES.some((value) => normalizeManagedSkillTrigger(value) === trigger))) {
     return BUILT_IN_WEEKLY_SUMMARY;
   }
-  const skills = await listManagedAgentSkills({ includeDisabled: true });
+  const skills = await listManagedAgentSkills(owner, { includeDisabled: true });
   if (requestedId) {
     const skill = skills.find((candidate) => candidate.id === requestedId);
     if (!skill) throw new ManagedSkillError("The selected Skill was not found.", 404, "skill_not_found");

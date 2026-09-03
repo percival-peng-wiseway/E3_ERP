@@ -1,8 +1,10 @@
 import { getErpSession } from "@/lib/auth/session";
+import { agentAuthContext } from "@/lib/erp_agent/business-agent/auth";
 import {
   createManagedAgentSkill,
   listManagedAgentSkills,
   ManagedSkillError,
+  type ManagedSkillOwner,
 } from "@/lib/erp_agent/agent/managed-skills";
 import {
   AgentRequestBodyTooLarge,
@@ -26,14 +28,16 @@ function error(status: number, code: string, message: string) {
   return json({ error: { code, message } }, { status });
 }
 
-function adminSession(request: Request) {
+function skillOwner(request: Request): ManagedSkillOwner | null {
   const session = getErpSession(request);
-  return session?.user.role === "admin" ? session : null;
+  const auth = agentAuthContext(request);
+  return session && auth
+    ? { principalHash: auth.principalHash, username: session.user.username }
+    : null;
 }
 
-function mutationAuthorizationError(request: Request) {
-  const session = adminSession(request);
-  if (!session) return error(403, "forbidden", "Administrator access is required to manage Agent Skills.");
+function mutationAuthorizationError(request: Request, owner: ManagedSkillOwner | null) {
+  if (!owner) return error(401, "authentication_required", "Sign in to manage your Agent Skills.");
   if (!isSameOriginRequest(request)) return error(403, "origin_forbidden", "Only same-origin Skill changes are allowed.");
   if (process.env.NODE_ENV !== "production" && process.env.ERP_REMOTE_DATA_READ_ONLY === "true") {
     return error(403, "remote_read_only", "Skill changes are disabled while local development uses read-only cloud data.");
@@ -48,9 +52,10 @@ function repositoryError(value: unknown) {
 }
 
 export async function GET(request: Request) {
-  if (!adminSession(request)) return error(403, "forbidden", "Administrator access is required to view Agent Skills.");
+  const owner = skillOwner(request);
+  if (!owner) return error(401, "authentication_required", "Sign in to view your Agent Skills.");
   try {
-    return json({ data: { skills: await listManagedAgentSkills({ includeDisabled: true }) } });
+    return json({ data: { skills: await listManagedAgentSkills(owner, { includeDisabled: true }) } });
   } catch (loadError) {
     const known = repositoryError(loadError);
     if (known) return known;
@@ -60,13 +65,13 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const authorizationError = mutationAuthorizationError(request);
+  const owner = skillOwner(request);
+  const authorizationError = mutationAuthorizationError(request, owner);
   if (authorizationError) return authorizationError;
   if (!requestHasJsonContentType(request)) return error(415, "json_required", "Agent Skill requests accept JSON only.");
-  const session = adminSession(request)!;
   try {
     const body = await readLimitedAgentJson(request, MAX_BODY);
-    const skill = await createManagedAgentSkill(body, session.user.username);
+    const skill = await createManagedAgentSkill(body, owner!);
     return json({ data: { skill } }, { status: 201 });
   } catch (createError) {
     if (createError instanceof AgentRequestBodyTooLarge) return error(413, "request_too_large", "Agent Skill requests cannot exceed 16 KiB.");

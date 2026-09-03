@@ -268,7 +268,11 @@ async function processAgentRequest(request: Request) {
   const skillPolicy = resolveAgentSkillPolicy();
   let managedSkill: Awaited<ReturnType<typeof resolveInvokedManagedSkill>> = null;
   try {
-    managedSkill = await resolveInvokedManagedSkill({ skillId: input.skill_id, message: input.message });
+    managedSkill = await resolveInvokedManagedSkill({
+      skillId: input.skill_id,
+      message: input.message,
+      owner: { principalHash: auth.principalHash, username: session.user.username },
+    });
   } catch (skillError) {
     if (skillError instanceof ManagedSkillError) {
       trace.markOutcome("error");

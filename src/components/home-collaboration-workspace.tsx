@@ -1431,13 +1431,13 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSkills, onOpenSe
                 <i />{agentKnowledgeStatus.label}
               </span>
             )}
-            {isAdmin && onOpenSkills ? (
+            {onOpenSkills ? (
               <button
                 className={`${styles.iconButton} ${styles.skillManageButton}`}
                 type="button"
                 onClick={onOpenSkills}
-                title="Manage Agent skills"
-                aria-label="Manage Agent skills"
+                title="Manage your Agent skills"
+                aria-label="Manage your Agent skills"
                 aria-haspopup="dialog"
               >
                 <Blocks size={15} />

@@ -491,7 +491,7 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
           <div className="persistent-home-workspace" hidden={activeModule !== "home"}>
             <HomeCollaborationWorkspace
               currentUser={currentUser}
-              onOpenSkills={currentUser.role === "admin" ? () => setAgentSkillsOpen(true) : undefined}
+              onOpenSkills={() => setAgentSkillsOpen(true)}
               onOpenSettings={currentUser.role === "admin" ? () => setAgentSettingsOpen(true) : undefined}
               onNavigate={(module, entityId) => navigate(module, true, entityId)}
             />
@@ -529,11 +529,11 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
           </aside>
         </>
       ) : null}
+      {agentSkillsOpen ? (
+        <AgentSkillsDialog open onClose={() => setAgentSkillsOpen(false)} />
+      ) : null}
       {currentUser.role === "admin" ? (
         <>
-          {agentSkillsOpen ? (
-            <AgentSkillsDialog open onClose={() => setAgentSkillsOpen(false)} />
-          ) : null}
           {agentSettingsOpen ? (
             <AgentSettingsDialog open onClose={() => setAgentSettingsOpen(false)} />
           ) : null}
