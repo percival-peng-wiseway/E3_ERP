@@ -865,6 +865,18 @@
   filter: none;
 }
 
+.conversationAuditDisclosure {
+  display: flex;
+  align-items: flex-start;
+  margin: 7px 2px 0;
+  gap: 5px;
+  color: #89949c;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.conversationAuditDisclosure svg { flex: 0 0 auto; margin-top: 1px; color: #43876f; }
+
 .inlineError,
 .inlineNotice {
   display: flex;

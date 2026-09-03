@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { after } from "next/server";
 import { agentAuthContext } from "@/lib/erp_agent/business-agent/auth";
 import { LiveBusinessDataProvider } from "@/lib/erp_agent/business-agent/data-provider";
 import { chatWithBusinessAgent } from "@/lib/erp_agent/business-agent/service";
@@ -7,6 +9,8 @@ import { AgentRequestBodyTooLarge, readLimitedAgentJson, requestHasJsonContentTy
 import { getERPProvider } from "@/lib/erp";
 import { searchKnowledgeBase } from "@/lib/knowledge/search-service";
 import { isAuthorizedMutationRequest } from "@/lib/server/proxy-security";
+import { getErpSession } from "@/lib/auth/session";
+import { recordAgentConversationAudit } from "@/lib/erp_agent/agent/conversation-store";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -15,6 +19,25 @@ const MAX_BODY = 16 * 1024;
 
 function json(data: unknown, status = 200) {
   return Response.json(data, { status, headers: { "cache-control": "no-store" } });
+}
+
+function safeErrorKind(value: unknown) {
+  return safeKimiErrorKind(value) || (value instanceof Error ? value.name : "UnknownError");
+}
+
+function conversationKey(username: string, conversationId?: string) {
+  if (!conversationId) return null;
+  return createHash("sha256").update(`${username}:${conversationId}`).digest("hex").slice(0, 24);
+}
+
+function scheduleConversationAudit(input: Parameters<typeof recordAgentConversationAudit>[0]) {
+  after(async () => {
+    try {
+      await recordAgentConversationAudit(input);
+    } catch (auditError) {
+      console.error("Business Agent Conversation Audit persistence failed", safeErrorKind(auditError));
+    }
+  });
 }
 
 function cleanInput(value: unknown): { message: string; conversation_id?: string } | null {
@@ -30,8 +53,9 @@ function cleanInput(value: unknown): { message: string; conversation_id?: string
 export async function POST(request: Request) {
   if (!isAuthorizedMutationRequest(request)) return json({ error: { code: "forbidden", message: "Same-origin request required." } }, 403);
   if (!requestHasJsonContentType(request)) return json({ error: { code: "json_required", message: "JSON body required." } }, 415);
+  const session = getErpSession(request);
   const auth = agentAuthContext(request);
-  if (!auth) return json({ error: { code: "authentication_required", message: "Authentication required." } }, 401);
+  if (!session || !auth) return json({ error: { code: "authentication_required", message: "Authentication required." } }, 401);
   let raw: unknown;
   try { raw = await readLimitedAgentJson(request, MAX_BODY); }
   catch (error) {
@@ -54,16 +78,35 @@ export async function POST(request: Request) {
         complexModel: kimi.complexModel,
       } : null,
     });
+    scheduleConversationAudit({
+      actorUsername: session.user.username,
+      actorRole: session.user.role,
+      conversationKey: conversationKey(session.user.username, input.conversation_id),
+      // This legacy endpoint emits Business Agent diagnostics but does not
+      // create an application AgentTrace row, so there is no trace to link.
+      traceId: null,
+      question: input.message,
+      visibleAnswer: response.answer,
+    });
     return json(response);
   } catch (error) {
     console.error(
       "Business Agent unavailable",
-      safeKimiErrorKind(error) || (error instanceof Error ? error.name : "UnknownError"),
+      safeErrorKind(error),
     );
     const modelWarning = kimiRequestWarning(error, kimiRegion);
+    const visibleError = modelWarning?.message || "The Agent cannot process this request right now.";
+    scheduleConversationAudit({
+      actorUsername: session.user.username,
+      actorRole: session.user.role,
+      conversationKey: conversationKey(session.user.username, input.conversation_id),
+      traceId: null,
+      question: input.message,
+      visibleAnswer: visibleError,
+    });
     return json({ error: {
       code: modelWarning?.code || "agent_unavailable",
-      message: modelWarning?.message || "The Agent cannot process this request right now.",
+      message: visibleError,
     } }, 502);
   }
 }

@@ -14,6 +14,7 @@ import {
   RefreshCw,
   Send,
   Settings2,
+  ShieldCheck,
   Sparkles,
   Trash2,
   X,
@@ -1643,6 +1644,9 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
                 {agentLoading ? <LoaderCircle className={styles.spinning} size={17} /> : <Send size={17} />}
               </button>
             </div>
+            <p className={styles.conversationAuditDisclosure}>
+              <ShieldCheck size={12} aria-hidden="true" /> Visible messages are redacted and retained for 30 days in the administrator Agent Trace. Original attachment content and hidden reasoning are not stored; visible answers may contain derived business information. Clearing this panel starts a new chat but does not delete the audit copy.
+            </p>
           </div>
         </article>
       </div>

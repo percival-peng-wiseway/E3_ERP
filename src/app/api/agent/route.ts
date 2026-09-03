@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { after } from "next/server";
 import { answerWithKimi, informationNotFound } from "@/lib/erp_agent/agent/kimi";
 import { kimiRequestWarning, safeKimiErrorKind } from "@/lib/erp_agent/agent/kimi-error";
 import { shouldUseKnowledgeConversationIntent } from "@/lib/erp_agent/agent/tool-routing";
@@ -35,6 +36,7 @@ import {
   resolveKimiImageParts,
 } from "@/lib/erp_agent/agent/attachments";
 import { isAuthorizedMutationRequest } from "@/lib/server/proxy-security";
+import { recordAgentConversationAudit } from "@/lib/erp_agent/agent/conversation-store";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -79,6 +81,28 @@ async function persistTrace(trace: AgentTrace, context: AgentTraceContext) {
     console.error("Agent Trace persistence failed", safeErrorKind(traceError));
   }
   return snapshot;
+}
+
+async function persistConversationAudit(input: Parameters<typeof recordAgentConversationAudit>[0]) {
+  try {
+    await recordAgentConversationAudit(input);
+  } catch (auditError) {
+    // Conversation audit is best effort. Never expose storage errors or prevent
+    // a valid Agent answer because audit storage is unavailable.
+    console.error("Agent Conversation Audit persistence failed", safeErrorKind(auditError));
+  }
+}
+
+function scheduleConversationAudit(input: Parameters<typeof recordAgentConversationAudit>[0]) {
+  // OpenNext maps Next's after() lifecycle to the Worker execution context, so
+  // a slow D1 audit write cannot delay the user-visible Agent response.
+  after(() => persistConversationAudit(input));
+}
+
+function visibleConversationAnswer(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const answer = (value as Record<string, unknown>).answer;
+  return typeof answer === "string" && answer.trim() ? answer.trim() : null;
 }
 
 function cleanHistory(value: unknown): AgentHistoryMessage[] | null {
@@ -157,10 +181,11 @@ async function processAgentRequest(request: Request) {
   const issueCodes = new Set<AgentTraceIssueCode>();
   let modelStatus: AgentTraceContext["modelStatus"] = "not_checked";
   let traceDataSource = "unresolved";
+  const hashedConversationKey = conversationKey(session.user.username, input.conversation_id);
   const traceContext = (): AgentTraceContext => ({
     actorUsername: session.user.username,
     actorRole: session.user.role,
-    conversationKey: conversationKey(session.user.username, input.conversation_id),
+    conversationKey: hashedConversationKey,
     messageLength: input.message.length,
     historyMessageCount: input.history.length,
     attachmentCount: input.attachment_ids.length,
@@ -169,6 +194,18 @@ async function processAgentRequest(request: Request) {
     modelStatus,
     issueCodes: [...issueCodes],
   });
+  const tracedError = async (status: number, code: string, message: string) => {
+    const traceSnapshot = await persistTrace(trace, traceContext());
+    scheduleConversationAudit({
+      actorUsername: session.user.username,
+      actorRole: session.user.role,
+      conversationKey: hashedConversationKey,
+      traceId: traceSnapshot.id,
+      question: input.message,
+      visibleAnswer: message,
+    });
+    return error(status, code, message);
+  };
 
   let attachments;
   try {
@@ -178,30 +215,26 @@ async function processAgentRequest(request: Request) {
       trace.markOutcome("error");
       trace.markAbstained();
       issueCodes.add("attachment_failed");
-      await persistTrace(trace, traceContext());
-      return error(attachmentError.status, attachmentError.code, attachmentError.message);
+      return tracedError(attachmentError.status, attachmentError.code, attachmentError.message);
     }
     trace.markOutcome("error");
     trace.markAbstained();
     issueCodes.add("attachment_failed");
-    await persistTrace(trace, traceContext());
-    return error(503, "attachment_unavailable", "The attached files are temporarily unavailable.");
+    return tracedError(503, "attachment_unavailable", "The attached files are temporarily unavailable.");
   }
   const pendingAttachment = attachments.find((attachment) => attachment.status === "processing");
   if (pendingAttachment) {
     trace.markOutcome("error");
     trace.markAbstained();
     issueCodes.add("attachment_processing");
-    await persistTrace(trace, traceContext());
-    return error(409, "attachment_processing", `“${pendingAttachment.name}” is still being prepared for Agent search.`);
+    return tracedError(409, "attachment_processing", `“${pendingAttachment.name}” is still being prepared for Agent search.`);
   }
   const failedAttachment = attachments.find((attachment) => attachment.status === "failed");
   if (failedAttachment) {
     trace.markOutcome("error");
     trace.markAbstained();
     issueCodes.add("attachment_failed");
-    await persistTrace(trace, traceContext());
-    return error(409, "attachment_failed", `“${failedAttachment.name}” could not be prepared for Agent search.`);
+    return tracedError(409, "attachment_failed", `“${failedAttachment.name}” could not be prepared for Agent search.`);
   }
   const attachmentDocuments = attachments.flatMap((attachment) => attachment.knowledgeDocumentId
     ? [{ documentId: attachment.knowledgeDocumentId, name: attachment.name }]
@@ -214,14 +247,12 @@ async function processAgentRequest(request: Request) {
       trace.markOutcome("error");
       trace.markAbstained();
       issueCodes.add("attachment_failed");
-      await persistTrace(trace, traceContext());
-      return error(attachmentError.status, attachmentError.code, attachmentError.message);
+      return tracedError(attachmentError.status, attachmentError.code, attachmentError.message);
     }
     trace.markOutcome("error");
     trace.markAbstained();
     issueCodes.add("attachment_failed");
-    await persistTrace(trace, traceContext());
-    return error(503, "attachment_unavailable", "The attached images are temporarily unavailable.");
+    return tracedError(503, "attachment_unavailable", "The attached images are temporarily unavailable.");
   }
 
   const provider = getERPProvider(request);
@@ -351,6 +382,17 @@ async function processAgentRequest(request: Request) {
   }
 
   const traceSnapshot = await persistTrace(trace, traceContext());
+  const visibleAnswer = visibleConversationAnswer(data);
+  if (visibleAnswer) {
+    scheduleConversationAudit({
+      actorUsername: session.user.username,
+      actorRole: session.user.role,
+      conversationKey: hashedConversationKey,
+      traceId: traceSnapshot.id,
+      question: input.message,
+      visibleAnswer,
+    });
+  }
 
   return json({
     data,
