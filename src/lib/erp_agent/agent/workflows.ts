@@ -26,7 +26,7 @@ export type DeterministicWorkflowDependencies = {
   fastWeeklyBusinessSummaryAnswer: (
     provider: ERPProvider,
     message: string,
-    options: { includeFinance: boolean },
+    options: { includePayments: boolean },
   ) => Promise<AgentAnswer>;
   fastWorkspaceOverviewAnswer: (provider: ERPProvider, message: string) => Promise<AgentAnswer | null>;
   fastInventoryAnswer: (message: string) => Promise<AgentAnswer | null>;
@@ -79,18 +79,6 @@ function money(value: number) {
 
 function answer(workflow: DeterministicWorkflowName, text: string): DeterministicWorkflowResult {
   return { workflow, mode: "local", answer: text, suggestions };
-}
-
-function financeRestrictedAnswer(
-  workflow: DeterministicWorkflowName,
-  rawMessage: string,
-): DeterministicWorkflowResult {
-  return answer(
-    workflow,
-    isChinese(rawMessage)
-      ? "此信息包含财务数据，需要财务读取权限。你仍然可以查询排期、Site Visiting 和库存信息。"
-      : "This information includes financial data and requires finance read access. You can still ask about schedules, Site Visiting and inventory.",
-  );
 }
 
 function greetingAnswer(rawMessage: string): DeterministicWorkflowResult | null {
@@ -157,7 +145,6 @@ export async function runDeterministicWorkflow(
   options: {
     enabledSkills?: ReadonlySet<BusinessSkillId>;
     managedSkillId?: string;
-    includeFinance?: boolean;
   } = {},
 ): Promise<DeterministicWorkflowResult | null> {
   const message = rawMessage.trim().toLocaleLowerCase("en-AU");
@@ -174,7 +161,7 @@ export async function runDeterministicWorkflow(
     }
     const result = await trace.step("weekly_business_summary.read", "tool", () => (
       dependencies.fastWeeklyBusinessSummaryAnswer(provider, rawMessage, {
-        includeFinance: Boolean(options.includeFinance && enabled("project_track")),
+        includePayments: enabled("project_track"),
       })
     ));
     return { ...result, workflow: "weekly_business_summary" };
@@ -188,9 +175,6 @@ export async function runDeterministicWorkflow(
 
   if (enabled("workspace") && hasWorkspaceOverviewIntent(rawMessage)) {
     trace.selectWorkflow("workspace_overview");
-    if (options.includeFinance === false) {
-      return financeRestrictedAnswer("workspace_overview", rawMessage);
-    }
     const workspaceOverview = await trace.step("workspace.overview", "tool", () => (
       dependencies.fastWorkspaceOverviewAnswer(provider, rawMessage)
     ));
@@ -210,9 +194,6 @@ export async function runDeterministicWorkflow(
 
   if (enabled("project_track") && /outstanding|unpaid|amount\s+due|balance\s+due|receivable|尾款|未收(?:款)?|欠款|应收(?:款)?/u.test(message)) {
     trace.selectWorkflow("outstanding_payments");
-    if (options.includeFinance === false) {
-      return financeRestrictedAnswer("outstanding_payments", rawMessage);
-    }
     const result = await trace.step("project_track.outstanding", "tool", () => dependencies.fastPaymentTrackAnswer(rawMessage));
     return result ? { ...result, workflow: "outstanding_payments" } : null;
   }
@@ -278,9 +259,6 @@ export async function runDeterministicWorkflow(
 
   if (enabled("reimbursements") && /(?:reimburse|expense|报销).*(?:summary|pending|payment|概况|待处理|付款)/u.test(message)) {
     trace.selectWorkflow("reimbursement_summary");
-    if (options.includeFinance === false) {
-      return financeRestrictedAnswer("reimbursement_summary", rawMessage);
-    }
     const claims = await trace.step("reimbursements.list", "tool", () => dependencies.listReimbursements({ includeAll: true }));
     const submitted = claims.filter((item) => item.status === "submitted").length;
     const pending = claims.filter((item) => item.status === "pending_payment");
@@ -298,9 +276,6 @@ export async function runDeterministicWorkflow(
 
   if (enabled("project_track") && hasProjectTrackIntent(message)) {
     trace.selectWorkflow("project_track_query");
-    if (options.includeFinance === false) {
-      return financeRestrictedAnswer("project_track_query", rawMessage);
-    }
     const result = await trace.step("project_track.live_query", "tool", () => dependencies.fastPaymentTrackAnswer(rawMessage));
     return result ? { ...result, workflow: "project_track_query" } : null;
   }

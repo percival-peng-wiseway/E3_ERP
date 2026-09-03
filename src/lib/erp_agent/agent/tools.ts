@@ -1621,7 +1621,7 @@ function weeklyWorkCounts(
 export async function fastWeeklyBusinessSummaryAnswer(
   provider: ERPProvider,
   rawMessage: string,
-  options: { includeFinance: boolean },
+  options: { includePayments: boolean },
 ) {
   void provider;
   const range = melbourneWeekRange();
@@ -1640,18 +1640,16 @@ export async function fastWeeklyBusinessSummaryAnswer(
   const [scheduleResult, inventoryResult, paymentResult] = await Promise.allSettled([
     weeklyScheduleSources(scheduleArgs),
     inventoryOperationsState(),
-    options.includeFinance ? listPaymentTrackProjects() : Promise.resolve(null),
+    options.includePayments ? listPaymentTrackProjects() : Promise.resolve(null),
   ]);
 
   const schedule = scheduleResult.status === "fulfilled" ? scheduleResult.value : null;
   const inventory = inventoryResult.status === "fulfilled"
     ? inventoryResult.value.inventory.map(safeOperationsInventory)
     : null;
-  const payments = !options.includeFinance
-    ? "restricted" as const
-    : paymentResult.status === "fulfilled" && paymentResult.value
-      ? summarizeConfirmedPayments(paymentResult.value, range.from, range.to)
-      : null;
+  const payments = paymentResult.status === "fulfilled" && paymentResult.value
+    ? summarizeConfirmedPayments(paymentResult.value, range.from, range.to)
+    : null;
   const answer = formatWeeklyBusinessSummary({
     ...range,
     work: schedule ? {

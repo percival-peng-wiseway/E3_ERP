@@ -27,7 +27,7 @@ export type WeeklyBusinessSummarySnapshot = {
     confirmedWithoutAmount: number;
     outstandingProjectCount: number;
     outstandingAmountCents: number;
-  } | "restricted" | null;
+  } | null;
   scheduleWarningCount: number;
 };
 
@@ -149,11 +149,7 @@ export function formatWeeklyBusinessSummary(snapshot: WeeklyBusinessSummarySnaps
 
   const paymentsHeading = chinese ? "### 收款状况" : "### Payment collection";
   let paymentsText: string;
-  if (snapshot.payments === "restricted") {
-    paymentsText = chinese
-      ? "收款金额仅限管理员查看；本次汇总未读取财务数据。"
-      : "Payment amounts are restricted to administrators; this summary did not read finance data.";
-  } else if (!snapshot.payments) {
+  if (!snapshot.payments) {
     paymentsText = chinese ? "收款数据暂时无法核实。" : "Payment data is currently unavailable.";
   } else {
     const missing = snapshot.payments.confirmedWithoutAmount

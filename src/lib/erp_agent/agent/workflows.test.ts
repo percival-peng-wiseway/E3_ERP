@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const skillsModule = "./skills.ts";
@@ -7,6 +8,7 @@ const workflowsModule = "./workflows.ts";
 const { runDeterministicWorkflow } = await import(workflowsModule) as typeof import("./workflows");
 const traceModule = "./trace.ts";
 const { AgentTrace } = await import(traceModule) as typeof import("./trace");
+const toolRegistrySource = await readFile(new URL("./tool-registry.ts", import.meta.url), "utf8");
 import type { ERPProvider } from "../../erp/provider";
 import type { DeterministicWorkflowDependencies } from "./workflows";
 
@@ -69,9 +71,9 @@ test("exact short greetings use a deterministic same-language fast path", async 
   }
 });
 
-test("managed weekly summary uses the deterministic composite and preserves finance gating", async () => {
-  for (const includeFinance of [true, false]) {
-    let receivedFinance: boolean | null = null;
+test("managed weekly summary uses the deterministic composite and honours the Project Track capability", async () => {
+  for (const includePayments of [true, false]) {
+    let receivedPayments: boolean | null = null;
     const trace = new AgentTrace();
     const result = await runDeterministicWorkflow(
       provider(),
@@ -79,57 +81,35 @@ test("managed weekly summary uses the deterministic composite and preserves fina
       trace,
       dependencies({
         fastWeeklyBusinessSummaryAnswer: async (_provider, _message, options) => {
-          receivedFinance = options.includeFinance;
+          receivedPayments = options.includePayments;
           return { mode: "local", answer: "Verified weekly summary", suggestions: [] };
         },
       }),
       {
         managedSkillId: "weekly-business-summary",
-        includeFinance,
+        enabledSkills: new Set([
+          "weekly_schedule",
+          "site_visits",
+          "inventory",
+          ...(includePayments ? ["project_track" as const] : []),
+        ]),
       },
     );
     assert.equal(result?.workflow, "weekly_business_summary");
     assert.equal(result?.answer, "Verified weekly summary");
-    assert.equal(receivedFinance, includeFinance);
+    assert.equal(receivedPayments, includePayments);
     assert.equal(trace.snapshot().workflow, "weekly_business_summary");
   }
 });
 
-test("deterministic finance workflows do not read their data sources without finance permission", async () => {
-  const cases = [
-    { message: "Give me a workspace overview", workflow: "workspace_overview" },
-    { message: "Show outstanding payments", workflow: "outstanding_payments" },
-    { message: "Show the projects in Project Track", workflow: "project_track_query" },
-    { message: "Show the reimbursement payment summary", workflow: "reimbursement_summary" },
-  ] as const;
-
-  for (const item of cases) {
-    let protectedReads = 0;
-    const result = await runDeterministicWorkflow(
-      provider(),
-      item.message,
-      new AgentTrace(),
-      dependencies({
-        fastWorkspaceOverviewAnswer: async () => {
-          protectedReads += 1;
-          return { mode: "local", answer: "Protected workspace data", suggestions: [] };
-        },
-        fastPaymentTrackAnswer: async () => {
-          protectedReads += 1;
-          return { mode: "local", answer: "Protected Project Track data", suggestions: [] };
-        },
-        listReimbursements: async () => {
-          protectedReads += 1;
-          return [];
-        },
-      }),
-      { includeFinance: false },
-    );
-
-    assert.equal(result?.workflow, item.workflow, item.message);
-    assert.match(result?.answer || "", /requires finance read access/u, item.message);
-    assert.equal(protectedReads, 0, item.message);
-  }
+test("workspace, Project Track payments and reimbursements do not require finance.read", () => {
+  assert.match(toolRegistrySource, /get_workspace_overview:[^\r\n]+requiredPermissions: \[\]/u);
+  assert.match(toolRegistrySource, /search_payment_projects:[^\r\n]+requiredPermissions: \["project\.read"\]/u);
+  assert.match(toolRegistrySource, /search_reimbursements:[^\r\n]+requiredPermissions: \[\]/u);
+  assert.doesNotMatch(
+    toolRegistrySource,
+    /(?:get_workspace_overview|search_payment_projects|search_reimbursements):[^\r\n]+finance\.read/u,
+  );
 });
 
 test("greeting matching is anchored and preserves business intent", async () => {

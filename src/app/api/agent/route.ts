@@ -289,11 +289,6 @@ async function processAgentRequest(request: Request) {
   const enabledSkills = new Set([...skillPolicy.enabled].filter((skill) => (
     !managedSkill || managedSkill.capabilityIds.includes(skill)
   )));
-  if (managedSkill?.source === "custom" && !auth.permissions.has("finance.read")) {
-    enabledSkills.delete("project_track");
-    enabledSkills.delete("workspace");
-    enabledSkills.delete("reimbursements");
-  }
   const memory = controlledMemoryFromConversation(input.message, input.history);
   const requiresKnowledge = attachmentDocuments.length > 0 || shouldUseKnowledgeConversationIntent(
     workspaceMessage,
@@ -358,7 +353,6 @@ async function processAgentRequest(request: Request) {
           {
             enabledSkills,
             managedSkillId: managedSkill?.id,
-            includeFinance: auth.permissions.has("finance.read"),
           },
         ),
       );

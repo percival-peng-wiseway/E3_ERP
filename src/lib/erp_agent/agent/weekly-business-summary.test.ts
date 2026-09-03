@@ -60,12 +60,12 @@ test("weekly summary keeps combined work separate and never treats unavailable s
       siteVisits: { ...counts, total: 5 },
     },
     inventory: null,
-    payments: "restricted",
+    payments: null,
     scheduleWarningCount: 1,
   }, "english");
   assert.match(answer, /\| Delivery & installation \| 2 \|/u);
   assert.match(answer, /Inventory data is currently unavailable/u);
-  assert.match(answer, /restricted to administrators/u);
+  assert.match(answer, /Payment data is currently unavailable/u);
   assert.match(answer, /1 schedule source\(s\) were unavailable/u);
   assert.doesNotMatch(answer, /customer|phone|email|address|notes?/iu);
 });

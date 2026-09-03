@@ -28,17 +28,17 @@ export type AgentToolRegistration = {
 };
 
 const TOOL_METADATA = {
-  get_workspace_overview: { skill: "workspace", toolset: "workspace", dataClassification: "internal", requiredPermissions: ["finance.read"] },
+  get_workspace_overview: { skill: "workspace", toolset: "workspace", dataClassification: "internal", requiredPermissions: [] },
   search_knowledge_base: { skill: "knowledge", toolset: "knowledge", dataClassification: "confidential", requiredPermissions: ["knowledge.read"] },
   search_inventory: { skill: "inventory", toolset: "inventory", dataClassification: "internal", requiredPermissions: ["inventory.read"] },
   search_inventory_usage: { skill: "inventory", toolset: "inventory", dataClassification: "confidential", requiredPermissions: ["inventory.read", "project.read"] },
   search_product_activity: { skill: "inventory", toolset: "inventory", dataClassification: "confidential", requiredPermissions: ["inventory.read", "project.read", "order.read"] },
   search_quotations: { skill: "quotations", toolset: "quotations", dataClassification: "confidential", requiredPermissions: ["order.read"] },
   search_delivery_orders: { skill: "project_management", toolset: "project_management", dataClassification: "confidential", requiredPermissions: ["order.read"] },
-  search_payment_projects: { skill: "project_track", toolset: "project_track", dataClassification: "confidential", requiredPermissions: ["project.read", "finance.read"] },
+  search_payment_projects: { skill: "project_track", toolset: "project_track", dataClassification: "confidential", requiredPermissions: ["project.read"] },
   search_weekly_schedule: { skill: "weekly_schedule", toolset: "weekly_schedule", dataClassification: "confidential", requiredPermissions: ["project.read", "order.read"] },
   search_project_schedule: { skill: "weekly_schedule", toolset: "weekly_schedule", dataClassification: "confidential", requiredPermissions: ["project.read"] },
-  search_reimbursements: { skill: "reimbursements", toolset: "reimbursements", dataClassification: "confidential", requiredPermissions: ["finance.read"] },
+  search_reimbursements: { skill: "reimbursements", toolset: "reimbursements", dataClassification: "confidential", requiredPermissions: [] },
   read_reports_notes: { skill: "reports", toolset: "reports", dataClassification: "confidential", requiredPermissions: ["project.read"] },
   search_announcements: { skill: "communications", toolset: "communications", dataClassification: "internal", requiredPermissions: [] },
   search_group_messages: { skill: "communications", toolset: "communications", dataClassification: "confidential", requiredPermissions: ["project.read"] },
