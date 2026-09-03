@@ -23,6 +23,10 @@ import type {
 } from "@/lib/erp_agent/agent/trace-record";
 import { controlledMemoryFromConversation } from "@/lib/erp_agent/agent/memory";
 import { resolveAgentSkillPolicy, skillForWorkflow } from "@/lib/erp_agent/agent/skills";
+import {
+  ManagedSkillError,
+  resolveInvokedManagedSkill,
+} from "@/lib/erp_agent/agent/managed-skills";
 import { deterministicWorkflowDependencies } from "@/lib/erp_agent/agent/workflow-dependencies";
 import { runDeterministicWorkflow } from "@/lib/erp_agent/agent/workflows";
 import { getERPProvider, type AgentHistoryMessage } from "@/lib/erp";
@@ -125,17 +129,20 @@ function cleanRequest(value: unknown): {
   section?: string;
   history: AgentHistoryMessage[];
   conversation_id?: string;
+  skill_id?: string;
   attachment_ids: string[];
 } | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const body = value as Record<string, unknown>;
-  const allowed = new Set(["message", "section", "history", "conversation_id", "attachments"]);
+  const allowed = new Set(["message", "section", "history", "conversation_id", "skill_id", "attachments"]);
   if (Object.keys(body).some((key) => !allowed.has(key)) || typeof body.message !== "string") return null;
   const message = body.message.trim();
   if (!message || message.length > 2_000) return null;
   if (body.section !== undefined && (typeof body.section !== "string" || body.section.length > 80)) return null;
   if (body.conversation_id !== undefined && (typeof body.conversation_id !== "string"
     || !/^[a-zA-Z0-9_-]{1,128}$/.test(body.conversation_id))) return null;
+  if (body.skill_id !== undefined && (typeof body.skill_id !== "string"
+    || !/^(?:weekly-business-summary|[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i.test(body.skill_id))) return null;
   const history = cleanHistory(body.history);
   const attachmentIds = cleanAgentAttachmentIds(body.attachments);
   if (!history || !attachmentIds) return null;
@@ -143,6 +150,7 @@ function cleanRequest(value: unknown): {
     message,
     ...(typeof body.section === "string" && body.section.trim() ? { section: body.section.trim() } : {}),
     ...(typeof body.conversation_id === "string" ? { conversation_id: body.conversation_id } : {}),
+    ...(typeof body.skill_id === "string" ? { skill_id: body.skill_id.toLocaleLowerCase("en-AU") } : {}),
     history,
     attachment_ids: attachmentIds,
   };
@@ -257,8 +265,35 @@ async function processAgentRequest(request: Request) {
 
   const provider = getERPProvider(request);
   traceDataSource = provider.source;
-  const workspaceMessage = resolveInventoryUsageMessage(input.message, input.history);
   const skillPolicy = resolveAgentSkillPolicy();
+  let managedSkill: Awaited<ReturnType<typeof resolveInvokedManagedSkill>> = null;
+  try {
+    managedSkill = await resolveInvokedManagedSkill({ skillId: input.skill_id, message: input.message });
+  } catch (skillError) {
+    if (skillError instanceof ManagedSkillError) {
+      trace.markOutcome("error");
+      trace.markAbstained();
+      issueCodes.add("skill_unavailable");
+      return tracedError(skillError.status, skillError.code, skillError.message);
+    }
+    if (input.skill_id) {
+      trace.markOutcome("error");
+      trace.markAbstained();
+      issueCodes.add("skill_unavailable");
+      return tracedError(503, "skill_unavailable", "The selected Skill is temporarily unavailable.");
+    }
+    console.error("Agent managed Skill lookup failed", safeErrorKind(skillError));
+  }
+  const executionMessage = managedSkill?.source === "custom" ? managedSkill.prompt : input.message;
+  const workspaceMessage = resolveInventoryUsageMessage(executionMessage, input.history);
+  const enabledSkills = new Set([...skillPolicy.enabled].filter((skill) => (
+    !managedSkill || managedSkill.capabilityIds.includes(skill)
+  )));
+  if (managedSkill?.source === "custom" && !auth.permissions.has("finance.read")) {
+    enabledSkills.delete("project_track");
+    enabledSkills.delete("workspace");
+    enabledSkills.delete("reimbursements");
+  }
   const memory = controlledMemoryFromConversation(input.message, input.history);
   const requiresKnowledge = attachmentDocuments.length > 0 || shouldUseKnowledgeConversationIntent(
     workspaceMessage,
@@ -296,7 +331,7 @@ async function processAgentRequest(request: Request) {
     issueCodes.add("settings_unavailable");
   }
   let data;
-  if (requiresKnowledge && !skillPolicy.enabled.has("knowledge")) {
+  if (requiresKnowledge && !enabledSkills.has("knowledge")) {
     modelStatus = "not_checked";
     warnings.push("The knowledge capability is not enabled for this Agent environment.");
     issueCodes.add("knowledge_disabled");
@@ -312,7 +347,7 @@ async function processAgentRequest(request: Request) {
     data = informationNotFound(input.message);
   } else {
     try {
-      const workflowAnswer = modelRequest ? null : await trace.step(
+      const workflowAnswer = modelRequest || managedSkill?.source === "custom" ? null : await trace.step(
         "harness.workflow",
         "workflow",
         () => runDeterministicWorkflow(
@@ -320,15 +355,21 @@ async function processAgentRequest(request: Request) {
           workspaceMessage,
           trace,
           deterministicWorkflowDependencies,
-          { enabledSkills: skillPolicy.enabled },
+          {
+            enabledSkills,
+            managedSkillId: managedSkill?.id,
+            includeFinance: auth.permissions.has("finance.read"),
+          },
         ),
       );
       if (workflowAnswer) {
         const workflow = trace.snapshot().workflow;
         const workflowSkill = workflow ? skillForWorkflow(workflow) : null;
         trace.selectRoute({
-          skills: workflowSkill ? [workflowSkill] : [],
-          toolsets: workflowSkill ? [workflowSkill] : [],
+          skills: managedSkill
+            ? [`managed:${managedSkill.id}@v${managedSkill.version}`, ...enabledSkills]
+            : workflowSkill ? [workflowSkill] : [],
+          toolsets: managedSkill ? [...enabledSkills] : workflowSkill ? [workflowSkill] : [],
           memoryKeys: memory.keys,
         });
         data = workflowAnswer;
@@ -345,7 +386,7 @@ async function processAgentRequest(request: Request) {
           const answer = await answerWithKimi({
             provider,
             auth,
-            message: input.message,
+            message: workspaceMessage,
             history: input.history,
             section: input.section,
             conversationId: input.conversation_id,
@@ -354,9 +395,10 @@ async function processAgentRequest(request: Request) {
             model: settings.fastModel,
             attachmentDocuments,
             imageParts,
-            enabledSkills: skillPolicy.enabled,
+            enabledSkills,
             memory,
             trace,
+            traceSkillTags: managedSkill ? [`managed:${managedSkill.id}@v${managedSkill.version}`] : [],
           });
           modelStatus = "available";
           return answer;
@@ -403,7 +445,10 @@ async function processAgentRequest(request: Request) {
       modelStatus,
       model: settings.fastModel,
       skillPolicy: skillPolicy.source,
-      enabledSkillCount: skillPolicy.enabled.size,
+      enabledSkillCount: enabledSkills.size,
+      ...(managedSkill ? {
+        managedSkill: { id: managedSkill.id, name: managedSkill.name, version: managedSkill.version },
+      } : {}),
       trace: traceSnapshot,
       ...(warnings.length ? { warning: warnings.join(" ") } : {}),
     },

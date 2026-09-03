@@ -45,6 +45,10 @@ const AgentSettingsDialog = dynamic(
   () => import("./agent-settings-dialog").then((module) => module.AgentSettingsDialog),
   { ssr: false, loading: WorkspaceLoading },
 );
+const AgentSkillsDialog = dynamic(
+  () => import("./agent-skills-dialog").then((module) => module.AgentSkillsDialog),
+  { ssr: false, loading: WorkspaceLoading },
+);
 const AgentTraceWorkspace = dynamic(
   () => import("./agent-trace-workspace").then((module) => module.AgentTraceWorkspace),
   { ssr: false, loading: WorkspaceLoading },
@@ -130,6 +134,7 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
   const [activeModule, setActiveModule] = useState<ModuleId>("home");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [agentTraceSidebarOpen, setAgentTraceSidebarOpen] = useState(false);
+  const [agentSkillsOpen, setAgentSkillsOpen] = useState(false);
   const [agentSettingsOpen, setAgentSettingsOpen] = useState(false);
   const [userManagementOpen, setUserManagementOpen] = useState(false);
   const [wipUnscheduledProjectCount, setWipUnscheduledProjectCount] = useState<number | null>(null);
@@ -486,6 +491,7 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
           <div className="persistent-home-workspace" hidden={activeModule !== "home"}>
             <HomeCollaborationWorkspace
               currentUser={currentUser}
+              onOpenSkills={currentUser.role === "admin" ? () => setAgentSkillsOpen(true) : undefined}
               onOpenSettings={currentUser.role === "admin" ? () => setAgentSettingsOpen(true) : undefined}
               onNavigate={(module, entityId) => navigate(module, true, entityId)}
             />
@@ -525,6 +531,9 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
       ) : null}
       {currentUser.role === "admin" ? (
         <>
+          {agentSkillsOpen ? (
+            <AgentSkillsDialog open onClose={() => setAgentSkillsOpen(false)} />
+          ) : null}
           {agentSettingsOpen ? (
             <AgentSettingsDialog open onClose={() => setAgentSettingsOpen(false)} />
           ) : null}

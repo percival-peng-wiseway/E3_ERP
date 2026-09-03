@@ -335,6 +335,7 @@ export async function answerWithKimi(options: {
   enabledSkills?: ReadonlySet<BusinessSkillId>;
   memory?: AgentControlledMemory;
   trace?: AgentTrace;
+  traceSkillTags?: readonly string[];
 }): Promise<AgentAnswer> {
   const { provider, auth, message, history = [], section, apiKey, baseUrl, model, trace } = options;
   const attachmentDocuments = (options.attachmentDocuments || []).slice(0, 4);
@@ -373,14 +374,14 @@ export async function answerWithKimi(options: {
       ? null
       : focusedAgentToolNames(message);
   const selection = knowledgeRequired
-    ? selectRegisteredAgentTools({ enabledSkills, focusedNames })
+    ? selectRegisteredAgentTools({ enabledSkills, focusedNames, permissions: auth.permissions })
     : imageParts.length > 0
-      ? selectRegisteredAgentTools({ enabledSkills, excludeNames: ["search_knowledge_base"] })
-      : selectRegisteredAgentTools({ enabledSkills, focusedNames: focusedAgentToolNames(message) });
+      ? selectRegisteredAgentTools({ enabledSkills, excludeNames: ["search_knowledge_base"], permissions: auth.permissions })
+      : selectRegisteredAgentTools({ enabledSkills, focusedNames: focusedAgentToolNames(message), permissions: auth.permissions });
   const tools = selection.definitions;
   trace?.selectRoute({
     promptVersion: AGENT_PROMPT_VERSION,
-    skills: selection.skills,
+    skills: [...(options.traceSkillTags || []), ...selection.skills],
     toolsets: selection.toolsets,
     memoryKeys: memory.keys,
   });

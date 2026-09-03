@@ -25,6 +25,7 @@ function dependencies(
   overrides: Partial<DeterministicWorkflowDependencies> = {},
 ): DeterministicWorkflowDependencies {
   return {
+    fastWeeklyBusinessSummaryAnswer: async () => ({ mode: "local", answer: "", suggestions: [] }),
     fastWorkspaceOverviewAnswer: async () => null,
     fastInventoryAnswer: async () => null,
     fastPaymentTrackAnswer: async () => null,
@@ -65,6 +66,32 @@ test("exact short greetings use a deterministic same-language fast path", async 
     assert.match(result?.answer || "", answer, message);
     assert.equal(dependencyCalls, 0, message);
     assert.equal(trace.snapshot().workflow, "greeting", message);
+  }
+});
+
+test("managed weekly summary uses the deterministic composite and preserves finance gating", async () => {
+  for (const includeFinance of [true, false]) {
+    let receivedFinance: boolean | null = null;
+    const trace = new AgentTrace();
+    const result = await runDeterministicWorkflow(
+      provider(),
+      "Summarize this week",
+      trace,
+      dependencies({
+        fastWeeklyBusinessSummaryAnswer: async (_provider, _message, options) => {
+          receivedFinance = options.includeFinance;
+          return { mode: "local", answer: "Verified weekly summary", suggestions: [] };
+        },
+      }),
+      {
+        managedSkillId: "weekly-business-summary",
+        includeFinance,
+      },
+    );
+    assert.equal(result?.workflow, "weekly_business_summary");
+    assert.equal(result?.answer, "Verified weekly summary");
+    assert.equal(receivedFinance, includeFinance);
+    assert.equal(trace.snapshot().workflow, "weekly_business_summary");
   }
 });
 

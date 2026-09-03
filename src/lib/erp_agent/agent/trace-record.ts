@@ -7,6 +7,7 @@ export const AGENT_TRACE_ISSUE_CODES = [
   "knowledge_disabled",
   "model_error",
   "model_unavailable",
+  "skill_unavailable",
   "settings_unavailable",
   "tool_empty",
   "tool_error",

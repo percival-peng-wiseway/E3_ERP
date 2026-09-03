@@ -3,6 +3,7 @@
 import {
   AlertCircle,
   BellRing,
+  Blocks,
   Bot,
   Download,
   Eye,
@@ -94,6 +95,7 @@ type Announcement = {
 
 type HomeCollaborationWorkspaceProps = {
   currentUser: ErpUser;
+  onOpenSkills?: () => void;
   onOpenSettings?: () => void;
   onNavigate?: (module: NotificationModule, entityId?: string) => void;
 };
@@ -525,7 +527,7 @@ function readNotificationResponse(value: unknown) {
   };
 }
 
-export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavigate }: HomeCollaborationWorkspaceProps) {
+export function HomeCollaborationWorkspace({ currentUser, onOpenSkills, onOpenSettings, onNavigate }: HomeCollaborationWorkspaceProps) {
   const [agentMessages, setAgentMessages] = useState<AgentMessage[]>([]);
   const [agentHistoryHydrated, setAgentHistoryHydrated] = useState(false);
   const [agentHydratedStorageKey, setAgentHydratedStorageKey] = useState("");
@@ -1429,6 +1431,19 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSettings, onNavi
                 <i />{agentKnowledgeStatus.label}
               </span>
             )}
+            {isAdmin && onOpenSkills ? (
+              <button
+                className={`${styles.iconButton} ${styles.skillManageButton}`}
+                type="button"
+                onClick={onOpenSkills}
+                title="Manage Agent skills"
+                aria-label="Manage Agent skills"
+                aria-haspopup="dialog"
+              >
+                <Blocks size={15} />
+                <span>Skills</span>
+              </button>
+            ) : null}
             <button className={styles.iconButton} type="button" onClick={onOpenSettings} disabled={!onOpenSettings} title="Open Agent settings" aria-label="Open Agent settings">
               <Settings2 size={16} />
             </button>

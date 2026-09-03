@@ -53,6 +53,11 @@ import {
   type WeeklyScheduleSearchResult,
   type WeeklyScheduleSources,
 } from "./weekly-schedule";
+import {
+  formatWeeklyBusinessSummary,
+  summarizeConfirmedPayments,
+  type WeeklyWorkCounts,
+} from "./weekly-business-summary";
 import { assertKimiStrictToolSchemas } from "./strict-tool-schema";
 
 export { normalizedInventoryArgs } from "./tool-input";
@@ -1592,6 +1597,88 @@ export async function fastWeeklyScheduleAnswer(provider: ERPProvider, rawMessage
   } catch {
     return null;
   }
+}
+
+function weeklyWorkCounts(
+  sources: WeeklyScheduleSources,
+  baseArgs: WeeklyScheduleArgs,
+  kind: WeeklyScheduleArgs["kind"],
+): WeeklyWorkCounts {
+  const result = aggregateWeeklySchedule(sources, { ...baseArgs, kind });
+  return {
+    total: result.count,
+    completed: result.statusCounts.completed,
+    scheduled: result.statusCounts.scheduled,
+    pending: result.statusCounts.unscheduled + result.statusCounts.pre_scheduled,
+    cancelled: result.statusCounts.cancelled,
+  };
+}
+
+/**
+ * Source-controlled composite Skill. Each source is isolated so an outage is
+ * reported as unavailable rather than converted into a false zero.
+ */
+export async function fastWeeklyBusinessSummaryAnswer(
+  provider: ERPProvider,
+  rawMessage: string,
+  options: { includeFinance: boolean },
+) {
+  void provider;
+  const range = melbourneWeekRange();
+  const scheduleArgs: WeeklyScheduleArgs = {
+    query: "",
+    source: "all",
+    kind: "all",
+    status: "all",
+    ...range,
+    limit: 1,
+    includeAssignee: false,
+    includeLocation: false,
+    includeCustomerContactDetails: false,
+    includeNotes: false,
+  };
+  const [scheduleResult, inventoryResult, paymentResult] = await Promise.allSettled([
+    weeklyScheduleSources(scheduleArgs),
+    inventoryOperationsState(),
+    options.includeFinance ? listPaymentTrackProjects() : Promise.resolve(null),
+  ]);
+
+  const schedule = scheduleResult.status === "fulfilled" ? scheduleResult.value : null;
+  const inventory = inventoryResult.status === "fulfilled"
+    ? inventoryResult.value.inventory.map(safeOperationsInventory)
+    : null;
+  const payments = !options.includeFinance
+    ? "restricted" as const
+    : paymentResult.status === "fulfilled" && paymentResult.value
+      ? summarizeConfirmedPayments(paymentResult.value, range.from, range.to)
+      : null;
+  const answer = formatWeeklyBusinessSummary({
+    ...range,
+    work: schedule ? {
+      delivery: weeklyWorkCounts(schedule.sources, scheduleArgs, "material_delivery"),
+      installation: weeklyWorkCounts(schedule.sources, scheduleArgs, "installment"),
+      combined: weeklyWorkCounts(schedule.sources, scheduleArgs, "deliver_and_install"),
+      siteVisits: weeklyWorkCounts(schedule.sources, scheduleArgs, "site_visit"),
+    } : null,
+    inventory: inventory ? {
+      itemCount: inventory.length,
+      onHand: inventory.reduce((sum, item) => sum + item.onHand, 0),
+      available: inventory.reduce((sum, item) => sum + item.available, 0),
+      attentionItems: inventory
+        .filter((item) => item.status !== "sufficient")
+        .sort((left, right) => left.available - right.available || left.sku.localeCompare(right.sku, "en-AU"))
+        .map((item) => ({ sku: item.sku, available: item.available })),
+    } : null,
+    payments,
+    scheduleWarningCount: schedule?.sourceWarnings.length || (schedule ? 0 : 1),
+  }, /[\u3400-\u9fff]/u.test(rawMessage) ? "chinese" : "english");
+  return {
+    mode: "local" as const,
+    answer,
+    suggestions: /[\u3400-\u9fff]/u.test(rawMessage)
+      ? ["显示本周未排期任务", "哪些库存需要关注？", "显示所有未收尾款"]
+      : ["Show unscheduled work this week", "Which stock items need attention?", "Show all outstanding balances"],
+  };
 }
 
 function asksForProjectTrack(rawMessage: string) {

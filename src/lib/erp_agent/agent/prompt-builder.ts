@@ -1,7 +1,7 @@
 import { getBusinessSkill, type BusinessSkillId } from "./skills";
 import { controlledMemoryPrompt, type AgentControlledMemory } from "./memory";
 
-export const AGENT_PROMPT_VERSION = "e3-agent-v2.1";
+export const AGENT_PROMPT_VERSION = "e3-agent-v2.2";
 
 export type AgentPromptContext = {
   businessDate: string;

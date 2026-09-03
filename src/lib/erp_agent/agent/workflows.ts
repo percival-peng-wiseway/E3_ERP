@@ -8,6 +8,7 @@ import type { BusinessSkillId } from "./skills";
 
 export type DeterministicWorkflowName =
   | "greeting"
+  | "weekly_business_summary"
   | "workspace_overview"
   | "inventory_query"
   | "outstanding_payments"
@@ -22,6 +23,11 @@ export type DeterministicWorkflowName =
 export type DeterministicWorkflowResult = AgentAnswer & { workflow: DeterministicWorkflowName };
 
 export type DeterministicWorkflowDependencies = {
+  fastWeeklyBusinessSummaryAnswer: (
+    provider: ERPProvider,
+    message: string,
+    options: { includeFinance: boolean },
+  ) => Promise<AgentAnswer>;
   fastWorkspaceOverviewAnswer: (provider: ERPProvider, message: string) => Promise<AgentAnswer | null>;
   fastInventoryAnswer: (message: string) => Promise<AgentAnswer | null>;
   fastPaymentTrackAnswer: (message: string) => Promise<AgentAnswer | null>;
@@ -136,11 +142,31 @@ export async function runDeterministicWorkflow(
   rawMessage: string,
   trace: AgentTrace,
   dependencies: DeterministicWorkflowDependencies,
-  options: { enabledSkills?: ReadonlySet<BusinessSkillId> } = {},
+  options: {
+    enabledSkills?: ReadonlySet<BusinessSkillId>;
+    managedSkillId?: string;
+    includeFinance?: boolean;
+  } = {},
 ): Promise<DeterministicWorkflowResult | null> {
   const message = rawMessage.trim().toLocaleLowerCase("en-AU");
   const enabledSkills = options.enabledSkills || DEFAULT_ENABLED_SKILLS;
   const enabled = (skill: BusinessSkillId) => enabledSkills.has(skill);
+
+  if (options.managedSkillId === "weekly-business-summary") {
+    trace.selectWorkflow("weekly_business_summary");
+    if (!enabled("weekly_schedule") || !enabled("site_visits") || !enabled("inventory")) {
+      const text = isChinese(rawMessage)
+        ? "本周业务汇总所需的排期、Site Visiting 或库存能力当前未启用。"
+        : "A schedule, Site Visiting or inventory capability required by this weekly summary is not enabled.";
+      return answer("weekly_business_summary", text);
+    }
+    const result = await trace.step("weekly_business_summary.read", "tool", () => (
+      dependencies.fastWeeklyBusinessSummaryAnswer(provider, rawMessage, {
+        includeFinance: Boolean(options.includeFinance && enabled("project_track")),
+      })
+    ));
+    return { ...result, workflow: "weekly_business_summary" };
+  }
 
   const greeting = greetingAnswer(rawMessage);
   if (greeting) {

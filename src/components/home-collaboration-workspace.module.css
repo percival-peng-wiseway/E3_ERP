@@ -201,9 +201,27 @@
   background: #f2f5f6;
 }
 
+.iconButton:focus-visible {
+  outline: 2px solid #5f6fd1;
+  outline-offset: 2px;
+}
+
 .iconButton:disabled {
   cursor: not-allowed;
   opacity: .42;
+}
+
+.skillManageButton {
+  display: inline-flex;
+  width: auto;
+  padding: 0 9px;
+  gap: 5px;
+  color: #5363c9;
+  background: #f8f8ff;
+  border-color: #d8ddf5;
+  font-size: 11px;
+  font-weight: 730;
+  white-space: nowrap;
 }
 
 .setupNotice {
@@ -1403,6 +1421,8 @@
   .panelTitle { min-width: calc(100% - 50px); }
   .statusBadge { margin-left: 47px; }
   .rolePill { margin-left: 47px; }
+  .skillManageButton { width: 31px; padding: 0; }
+  .skillManageButton span { display: none; }
   .reminderPanel .statusBadge { margin-left: 0; }
   .agentFeed,
   .notificationFeed { padding-right: 10px; padding-left: 10px; }
