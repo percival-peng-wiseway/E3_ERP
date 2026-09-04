@@ -1288,18 +1288,20 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSkills, onOpenSe
               <div className={styles.panelTitle}>
                 <h2>My Action Reminders</h2>
               </div>
-              <span className={styles.rolePill}>{currentRoleLabel}</span>
-              <span className={`${styles.statusBadge} ${notificationsError ? styles.errorBadge : ""}`}><i />{notificationSyncLabel}</span>
-              <button
-                className={styles.iconButton}
-                type="button"
-                onClick={() => void loadNotifications(notificationRole, true)}
-                disabled={notificationsLoading}
-                title="Refresh reminders"
-                aria-label="Refresh my action reminders"
-              >
-                <RefreshCw className={notificationsLoading ? styles.spinning : undefined} size={16} />
-              </button>
+              <div className={styles.panelActions}>
+                <span className={styles.rolePill}>{currentRoleLabel}</span>
+                <span className={`${styles.statusBadge} ${notificationsError ? styles.errorBadge : ""}`}><i />{notificationSyncLabel}</span>
+                <button
+                  className={styles.iconButton}
+                  type="button"
+                  onClick={() => void loadNotifications(notificationRole, true)}
+                  disabled={notificationsLoading}
+                  title="Refresh reminders"
+                  aria-label="Refresh my action reminders"
+                >
+                  <RefreshCw className={notificationsLoading ? styles.spinning : undefined} size={16} />
+                </button>
+              </div>
             </header>
 
             <div
@@ -1386,21 +1388,23 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSkills, onOpenSe
             </div>
           </article>
 
-          <article className={styles.panel} aria-label="Public announcements">
+          <article className={`${styles.panel} ${styles.announcementPanel}`} aria-label="Public announcements">
             <header className={styles.panelHeader}>
               <span className={`${styles.panelIcon} ${styles.announcementIcon}`}><Megaphone size={18} /></span>
               <div className={styles.panelTitle}><h2>Public Announcements</h2></div>
-              <span className={styles.rolePill}>{isAdmin ? "Admin controls" : "Read only"}</span>
-              <button
-                className={styles.iconButton}
-                type="button"
-                onClick={() => void loadAnnouncements(true)}
-                disabled={announcementsLoading || announcementSubmitting || Boolean(announcementDeletingId)}
-                title="Refresh announcements"
-                aria-label="Refresh public announcements"
-              >
-                <RefreshCw className={announcementsLoading ? styles.spinning : undefined} size={16} />
-              </button>
+              <div className={styles.panelActions}>
+                <span className={styles.rolePill}>{isAdmin ? "Admin controls" : "Read only"}</span>
+                <button
+                  className={styles.iconButton}
+                  type="button"
+                  onClick={() => void loadAnnouncements(true)}
+                  disabled={announcementsLoading || announcementSubmitting || Boolean(announcementDeletingId)}
+                  title="Refresh announcements"
+                  aria-label="Refresh public announcements"
+                >
+                  <RefreshCw className={announcementsLoading ? styles.spinning : undefined} size={16} />
+                </button>
+              </div>
             </header>
 
             {isAdmin && (
@@ -1491,40 +1495,42 @@ export function HomeCollaborationWorkspace({ currentUser, onOpenSkills, onOpenSe
             <div className={styles.panelTitle}>
               <h2>E3 Agent</h2>
             </div>
-            <span
-              className={`${styles.statusBadge} ${agentModelUnavailable ? styles.localBadge : ""}`}
-              title="Language model status only"
-            >
-              <i />{agentStatusLabel}
-            </span>
-            {isAdmin && (
+            <div className={styles.panelActions}>
               <span
-                className={`${styles.statusBadge} ${agentKnowledgeStatus.tone === "error" ? styles.errorBadge : agentKnowledgeStatus.tone === "warning" ? styles.localBadge : ""}`}
-                title={agentKnowledgeStatus.title}
-                aria-label={agentKnowledgeStatus.title}
+                className={`${styles.statusBadge} ${agentModelUnavailable ? styles.localBadge : ""}`}
+                title="Language model status only"
               >
-                <i />{agentKnowledgeStatus.label}
+                <i />{agentStatusLabel}
               </span>
-            )}
-            {onOpenSkills ? (
-              <button
-                className={`${styles.iconButton} ${styles.skillManageButton}`}
-                type="button"
-                onClick={() => onOpenSkills()}
-                title="Manage your Agent skills"
-                aria-label="Manage your Agent skills"
-                aria-haspopup="dialog"
-              >
-                <Blocks size={15} />
-                <span>Skills</span>
+              {isAdmin && (
+                <span
+                  className={`${styles.statusBadge} ${agentKnowledgeStatus.tone === "error" ? styles.errorBadge : agentKnowledgeStatus.tone === "warning" ? styles.localBadge : ""}`}
+                  title={agentKnowledgeStatus.title}
+                  aria-label={agentKnowledgeStatus.title}
+                >
+                  <i />{agentKnowledgeStatus.label}
+                </span>
+              )}
+              {onOpenSkills ? (
+                <button
+                  className={`${styles.iconButton} ${styles.skillManageButton}`}
+                  type="button"
+                  onClick={() => onOpenSkills()}
+                  title="Manage your Agent skills"
+                  aria-label="Manage your Agent skills"
+                  aria-haspopup="dialog"
+                >
+                  <Blocks size={15} />
+                  <span>Skills</span>
+                </button>
+              ) : null}
+              <button className={styles.iconButton} type="button" onClick={onOpenSettings} disabled={!onOpenSettings} title="Open Agent settings" aria-label="Open Agent settings">
+                <Settings2 size={16} />
               </button>
-            ) : null}
-            <button className={styles.iconButton} type="button" onClick={onOpenSettings} disabled={!onOpenSettings} title="Open Agent settings" aria-label="Open Agent settings">
-              <Settings2 size={16} />
-            </button>
-            <button className={styles.iconButton} type="button" onClick={clearAgentConversation} disabled={!agentMessages.length && !agentLoading} title="Clear conversation" aria-label="Clear Agent conversation">
-              <Trash2 size={16} />
-            </button>
+              <button className={styles.iconButton} type="button" onClick={clearAgentConversation} disabled={!agentMessages.length && !agentLoading} title="Clear conversation" aria-label="Clear Agent conversation">
+                <Trash2 size={16} />
+              </button>
+            </div>
           </header>
 
           {agentConfigured === false && (

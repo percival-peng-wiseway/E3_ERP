@@ -2,7 +2,6 @@
 
 import {
   Activity,
-  Bell,
   ChevronDown,
   ChevronRight,
   ClipboardList,
@@ -10,13 +9,12 @@ import {
   FileBarChart,
   FileText,
   FolderOpen,
-  HelpCircle,
   Home,
   LockKeyhole,
   LogOut,
+  LoaderCircle,
   MapPin,
   Menu,
-  Search,
   Settings,
   Users,
   ReceiptText,
@@ -345,20 +343,21 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
   return (
     <div className="erpnext-app">
       <header className="desk-navbar">
-        <button className="mobile-nav-trigger" onClick={() => setSidebarOpen(true)} aria-label="Open navigation">
+        <button
+          className="mobile-nav-trigger"
+          type="button"
+          aria-label="Open navigation"
+          aria-controls="erp-sidebar"
+          aria-expanded={sidebarOpen}
+          onClick={() => setSidebarOpen(true)}
+        >
           <Menu size={19} />
         </button>
         <button className="desk-brand" type="button" onClick={() => navigate("home")} aria-label="Go to E3 ERP home">
           <Image className="desk-logo" src={e3EnergyMark} alt="" aria-hidden="true" priority sizes="29px" />
           <strong>E3 ERP</strong>
         </button>
-        <div className="desk-search">
-          <Search size={15} />
-          <input placeholder="Search items, quotations, customers or projects (⌘ K)" aria-label="Global search" />
-        </div>
         <div className="desk-actions">
-          <button aria-label="Help"><HelpCircle size={18} /></button>
-          <button className="notification" aria-label="Notifications"><Bell size={18} /><i /></button>
           <div className="user-account" ref={userMenuRef}>
             <button
               className="user-menu"
@@ -383,7 +382,7 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
         </div>
       </header>
 
-      <aside className={`desk-sidebar ${sidebarOpen ? "open" : ""}`}>
+      <aside id="erp-sidebar" className={`desk-sidebar ${sidebarOpen ? "open" : ""}`}>
         <div className="sidebar-mobile-heading">
           <div><Image className="sidebar-mobile-logo" src={e3EnergyMark} alt="" aria-hidden="true" sizes="28px" /><strong>E3 ERP</strong></div>
           <button onClick={() => setSidebarOpen(false)} aria-label="Close navigation"><X size={19} /></button>
@@ -391,7 +390,6 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
         <div className="company-switcher">
           <span><Image className="company-logo" src={e3EnergyMark} alt="" aria-hidden="true" sizes="25px" /></span>
           <div><small>Company</small><strong>E3 Energy Pty Ltd</strong></div>
-          <ChevronDown size={14} />
         </div>
         <nav aria-label="ERP module navigation">
           {NAVIGATION.map((section) => (
@@ -412,6 +410,7 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
                   <button
                     key={item.id}
                     className={`${activeModule === item.id ? "active" : ""} ${!item.enabled ? "disabled" : ""}`}
+                    aria-current={activeModule === item.id ? "page" : undefined}
                     onClick={() => navigate(item.id, item.enabled)}
                     title={!item.enabled
                       ? "Not available yet"
@@ -465,7 +464,6 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
               <button onClick={() => setUserManagementOpen(true)}><Users size={16} /><span>User Management</span></button>
             </>
           ) : null}
-          <div><i /><span>Business services operational</span></div>
         </div>
       </aside>
 
@@ -558,5 +556,11 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
 }
 
 function WorkspaceLoading() {
-  return <section className="module-placeholder" role="status" aria-label="Loading workspace" />;
+  return (
+    <section className="module-placeholder" role="status" aria-label="Loading workspace">
+      <span aria-hidden="true"><LoaderCircle className="module-loading-icon" size={24} /></span>
+      <strong>Loading workspace</strong>
+      <p>Preparing the latest business data</p>
+    </section>
+  );
 }

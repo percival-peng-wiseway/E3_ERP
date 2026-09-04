@@ -6,8 +6,8 @@
   place-items: center;
   overflow: hidden;
   padding: 24px 16px;
-  color: #24313b;
-  background: #eef3f7;
+  color: var(--erp-text);
+  background: var(--erp-bg);
 }
 
 .backdrop {
@@ -22,7 +22,7 @@
   position: absolute;
   display: block;
   border-radius: 999px;
-  filter: blur(1px);
+  opacity: .55;
 }
 
 .glowOne {
@@ -30,7 +30,7 @@
   right: -190px;
   width: 430px;
   height: 430px;
-  background: radial-gradient(circle, rgba(36, 144, 239, .2), rgba(36, 144, 239, 0) 69%);
+  background: radial-gradient(circle, rgba(63, 92, 197, .14), rgba(63, 92, 197, 0) 69%);
 }
 
 .glowTwo {
@@ -38,14 +38,14 @@
   left: -210px;
   width: 470px;
   height: 470px;
-  background: radial-gradient(circle, rgba(31, 128, 185, .13), rgba(31, 128, 185, 0) 70%);
+  background: radial-gradient(circle, rgba(91, 111, 151, .1), rgba(91, 111, 151, 0) 70%);
 }
 
 .grid {
   position: absolute;
   inset: 0;
   display: block;
-  opacity: .36;
+  opacity: .24;
   background-image:
     linear-gradient(rgba(104, 133, 153, .07) 1px, transparent 1px),
     linear-gradient(90deg, rgba(104, 133, 153, .07) 1px, transparent 1px);
@@ -57,12 +57,12 @@
   position: relative;
   z-index: 1;
   width: 100%;
-  max-width: 430px;
-  padding: 26px 22px 20px;
-  background: rgba(255, 255, 255, .97);
-  border: 1px solid rgba(211, 221, 227, .96);
-  border-radius: 16px;
-  box-shadow: 0 22px 60px rgba(38, 60, 76, .12), 0 3px 12px rgba(38, 60, 76, .05);
+  max-width: 420px;
+  padding: 25px 22px 20px;
+  background: rgba(255, 255, 255, .98);
+  border: 1px solid var(--erp-border);
+  border-radius: 12px;
+  box-shadow: 0 18px 48px rgba(31, 42, 51, .1), 0 2px 7px rgba(31, 42, 51, .04);
 }
 
 .header {
@@ -76,19 +76,19 @@
 
 .brandLogo {
   display: block;
-  width: 112px;
+  width: 92px;
   height: auto;
   flex: 0 0 auto;
 }
 
 .heading {
-  margin-top: 24px;
+  margin-top: 21px;
 }
 
 .eyebrow {
   margin: 0 0 8px;
-  color: #1675c5 !important;
-  font-size: 12px !important;
+  color: var(--erp-accent) !important;
+  font-size: 11px !important;
   font-weight: 750;
   letter-spacing: .08em;
   text-transform: uppercase;
@@ -96,10 +96,10 @@
 
 .heading h1 {
   margin: 0;
-  color: #202b34;
-  font-size: clamp(28px, 8vw, 34px);
-  font-weight: 700;
-  letter-spacing: -.035em;
+  color: var(--erp-text);
+  font-size: clamp(28px, 8vw, 32px);
+  font-weight: 720;
+  letter-spacing: -.03em;
   line-height: 1.08;
 }
 
@@ -121,28 +121,28 @@
 
 .inputShell {
   display: flex;
-  min-height: 50px;
+  min-height: 48px;
   align-items: center;
   gap: 10px;
   padding: 0 13px;
   color: #86939d;
   background: #fbfcfd;
-  border: 1px solid #d9e0e5;
-  border-radius: 9px;
+  border: 1px solid var(--erp-border-strong);
+  border-radius: 8px;
   transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
 }
 
 .inputShell:focus-within {
-  color: #2182d2;
+  color: var(--erp-accent);
   background: #fff;
-  border-color: #5aa9e9;
-  box-shadow: 0 0 0 3px rgba(36, 144, 239, .12);
+  border-color: var(--erp-accent);
+  box-shadow: 0 0 0 3px var(--erp-focus);
 }
 
 .inputShell input {
   width: 100%;
   min-width: 0;
-  height: 48px;
+  height: 46px;
   padding: 0;
   color: #26343e;
   background: transparent;
@@ -200,17 +200,17 @@
 .submitButton {
   display: inline-flex;
   width: 100%;
-  min-height: 50px;
+  min-height: 48px;
   align-items: center;
   justify-content: center;
   gap: 8px;
   margin-top: -3px;
   padding: 0 18px;
   color: #fff;
-  background: #2490ef;
-  border: 1px solid #2490ef;
-  border-radius: 9px;
-  box-shadow: 0 7px 17px rgba(36, 144, 239, .2);
+  background: var(--erp-accent);
+  border: 1px solid var(--erp-accent);
+  border-radius: 8px;
+  box-shadow: 0 5px 14px rgba(63, 92, 197, .18);
   font-size: 15px;
   font-weight: 700;
   cursor: pointer;
@@ -218,9 +218,9 @@
 }
 
 .submitButton:hover:not(:disabled) {
-  background: #1675c5;
-  border-color: #1675c5;
-  box-shadow: 0 8px 20px rgba(22, 117, 197, .24);
+  background: var(--erp-accent-hover);
+  border-color: var(--erp-accent-hover);
+  box-shadow: 0 7px 18px rgba(63, 92, 197, .22);
   transform: translateY(-1px);
 }
 
@@ -249,7 +249,7 @@
 
   .card {
     padding: 32px 34px 24px;
-    border-radius: 18px;
+    border-radius: 12px;
   }
 
   .header {

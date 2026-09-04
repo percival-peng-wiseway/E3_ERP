@@ -1,53 +1,56 @@
 .workspace {
   display: flex;
+  width: 100%;
   min-width: 0;
-  max-width: 1680px;
+  max-width: 1880px;
   margin: 0 auto;
   flex-direction: column;
-  gap: 18px;
-  color: #28343d;
+  gap: 14px;
+  color: var(--erp-text);
   font-size: 14px;
 }
 
 .workspaceHeader {
   display: flex;
-  align-items: flex-end;
+  min-height: 42px;
+  align-items: center;
   justify-content: space-between;
-  gap: 22px;
+  gap: 18px;
 }
 
 .eyebrow {
   display: block;
-  margin-bottom: 7px;
-  color: #6574d9;
-  font-size: 12px;
-  font-weight: 750;
-  letter-spacing: .12em;
+  margin-bottom: 3px;
+  color: var(--erp-accent);
+  font-size: 10px;
+  font-weight: 780;
+  letter-spacing: .14em;
 }
 
 .workspaceHeader h1 {
   margin: 0;
-  color: #202a33;
-  font-size: 31px;
-  line-height: 1.12;
-  letter-spacing: -.025em;
+  color: var(--erp-text);
+  font-size: clamp(24px, 2vw, 27px);
+  font-weight: 720;
+  line-height: 1.15;
+  letter-spacing: -.022em;
 }
 
 .columns {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, .96fr) minmax(0, 1.04fr);
-  gap: 16px;
+  grid-template-columns: minmax(0, .88fr) minmax(0, 1.12fr);
+  gap: 14px;
 }
 
 .leftStack {
   display: grid;
-  height: calc(100vh - 220px);
+  height: clamp(560px, 72vh, 800px);
+  height: clamp(560px, 72dvh, 800px);
   min-width: 0;
-  min-height: 500px;
-  max-height: 900px;
-  grid-template-rows: minmax(0, 1.08fr) minmax(0, .92fr);
-  gap: 16px;
+  min-height: 560px;
+  grid-template-rows: minmax(0, 1fr) clamp(280px, 38%, 330px);
+  gap: 14px;
 }
 
 .leftStack .panel {
@@ -58,40 +61,40 @@
 
 .panel {
   display: flex;
-  height: calc(100vh - 220px);
+  height: clamp(560px, 72vh, 800px);
+  height: clamp(560px, 72dvh, 800px);
   min-width: 0;
-  min-height: 500px;
-  max-height: 900px;
+  min-height: 560px;
   overflow: hidden;
   flex-direction: column;
-  background: #fff;
-  border: 1px solid #dce3e7;
-  border-radius: 9px;
-  box-shadow: 0 2px 8px rgba(29, 47, 60, .035);
+  background: var(--erp-surface);
+  border: 1px solid var(--erp-border);
+  border-radius: var(--erp-radius-card);
+  box-shadow: 0 1px 2px rgba(30, 42, 52, .025);
 }
 
 .panelHeader {
   display: flex;
-  min-height: 69px;
+  min-height: 57px;
   align-items: center;
-  padding: 11px 13px;
-  gap: 9px;
-  background: #fbfcfc;
-  border-bottom: 1px solid #e2e7ea;
+  padding: 9px 11px;
+  gap: 8px;
+  background: var(--erp-surface);
+  border-bottom: 1px solid var(--erp-border);
 }
 
 .panelIcon {
   display: grid;
-  width: 38px;
-  height: 38px;
+  width: 34px;
+  height: 34px;
   flex: 0 0 auto;
   place-items: center;
-  border-radius: 7px;
+  border-radius: var(--erp-radius-control);
 }
 
 .agentIcon {
-  color: #5b69d1;
-  background: #eef0ff;
+  color: var(--erp-accent);
+  background: var(--erp-accent-soft);
 }
 
 .notificationIcon {
@@ -109,9 +112,9 @@
   min-height: 27px;
   align-items: center;
   padding: 0 9px;
-  color: #4f5fc3;
-  background: #f1f3ff;
-  border: 1px solid #dce0f8;
+  color: var(--erp-accent-hover);
+  background: var(--erp-accent-soft);
+  border: 1px solid #d7def5;
   border-radius: 14px;
   font-size: 12px;
   font-weight: 750;
@@ -125,8 +128,9 @@
 
 .panelTitle h2 {
   margin: 0;
-  color: #2b353d;
-  font-size: 16px;
+  color: var(--erp-text);
+  font-size: 15px;
+  font-weight: 720;
   line-height: 1.3;
 }
 
@@ -145,9 +149,9 @@
   align-items: center;
   padding: 0 8px;
   gap: 5px;
-  color: #5c6a74;
-  background: #fff;
-  border: 1px solid #e0e5e8;
+  color: var(--erp-text-soft);
+  background: var(--erp-surface-subtle);
+  border: 1px solid var(--erp-border);
   border-radius: 13px;
   font-size: 12px;
   white-space: nowrap;
@@ -189,20 +193,21 @@
   height: 31px;
   flex: 0 0 auto;
   place-items: center;
-  color: #6d7982;
-  background: #fff;
-  border: 1px solid #dde3e7;
-  border-radius: 6px;
+  color: #64727d;
+  background: var(--erp-surface);
+  border: 1px solid var(--erp-border);
+  border-radius: var(--erp-radius-control);
   cursor: pointer;
 }
 
 .iconButton:hover:not(:disabled) {
-  color: #35424c;
-  background: #f2f5f6;
+  color: var(--erp-accent-hover);
+  background: var(--erp-accent-soft);
+  border-color: #cbd3f1;
 }
 
 .iconButton:focus-visible {
-  outline: 2px solid #5f6fd1;
+  outline: 2px solid var(--erp-accent);
   outline-offset: 2px;
 }
 
@@ -216,12 +221,21 @@
   width: auto;
   padding: 0 9px;
   gap: 5px;
-  color: #5363c9;
-  background: #f8f8ff;
+  color: var(--erp-accent-hover);
+  background: var(--erp-accent-soft);
   border-color: #d8ddf5;
   font-size: 11px;
   font-weight: 730;
   white-space: nowrap;
+}
+
+.panelActions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  margin-left: auto;
+  gap: 6px;
 }
 
 .setupNotice {
@@ -264,8 +278,8 @@
 }
 
 .agentFeed {
-  padding: 18px 16px;
-  background: #fafbfc;
+  padding: 17px 16px;
+  background: var(--erp-surface-subtle);
 }
 
 .agentWelcome {
@@ -283,8 +297,8 @@
   width: 51px;
   height: 51px;
   place-items: center;
-  color: #5c69d2;
-  background: #eef0ff;
+  color: var(--erp-accent);
+  background: var(--erp-accent-soft);
   border: 1px solid #dfe2fa;
   border-radius: 12px;
 }
@@ -301,6 +315,10 @@
   align-items: flex-start;
   margin-bottom: 15px;
   gap: 8px;
+}
+
+.assistantMessage {
+  max-width: 100%;
 }
 
 .agentMessage > div {
@@ -395,7 +413,7 @@
   padding: 7px 10px;
   color: #596873;
   background: #f6f7fb;
-  border-left: 3px solid #8190df;
+  border-left: 3px solid var(--erp-accent);
   border-radius: 0 5px 5px 0;
 }
 
@@ -435,7 +453,7 @@
 }
 
 .assistantBubble a {
-  color: #5262c8;
+  color: var(--erp-accent-hover);
   font-weight: 650;
   text-decoration: underline;
   text-decoration-thickness: 1px;
@@ -465,7 +483,7 @@
 }
 
 .markdownTable:focus-visible {
-  outline: 2px solid #7180dd;
+  outline: 2px solid var(--erp-accent);
   outline-offset: 2px;
 }
 
@@ -501,7 +519,7 @@
   width: 13px;
   height: 13px;
   margin: 0 6px 0 -19px;
-  accent-color: #6372d7;
+  accent-color: var(--erp-accent);
 }
 
 .removedLink {
@@ -592,7 +610,7 @@
   align-items: center;
   padding: 0 6px;
   gap: 3px;
-  color: #5262c8;
+  color: var(--erp-accent-hover);
   background: #fff;
   border: 1px solid #d8def1;
   border-radius: 5px;
@@ -697,8 +715,8 @@
   height: 28px;
   flex: 0 0 auto;
   place-items: center;
-  color: #5b69d1;
-  background: #eef0ff;
+  color: var(--erp-accent);
+  background: var(--erp-accent-soft);
   border: 1px solid #dfe3f8;
   border-radius: 50%;
   font-size: 12px;
@@ -716,8 +734,8 @@
 
 .userMessage .userBubble {
   color: #fff;
-  background: #5f6dd4;
-  border-color: #5f6dd4;
+  background: var(--erp-accent);
+  border-color: var(--erp-accent);
   border-radius: 9px 4px 9px 9px;
   text-align: left;
 }
@@ -794,7 +812,7 @@
 .thinking i {
   width: 5px;
   height: 5px;
-  background: #7885df;
+  background: var(--erp-accent);
   border-radius: 50%;
   animation: pulse 1s ease-in-out infinite;
 }
@@ -821,8 +839,8 @@
 
 .suggestions button {
   padding: 6px 8px;
-  color: #5966c4;
-  background: #f4f5ff;
+  color: var(--erp-accent-hover);
+  background: var(--erp-accent-soft);
   border: 1px solid #dfe2fa;
   border-radius: 6px;
   font: inherit;
@@ -867,8 +885,8 @@
   width: 28px;
   height: 28px;
   place-items: center;
-  color: #5968cb;
-  background: #eceeff;
+  color: var(--erp-accent);
+  background: var(--erp-accent-soft);
   border-radius: 6px;
 }
 
@@ -918,8 +936,8 @@
 
 .composer:focus-within {
   background: #fff;
-  border-color: #7180dd;
-  box-shadow: 0 0 0 3px rgba(98, 113, 215, .11);
+  border-color: var(--erp-accent);
+  box-shadow: 0 0 0 3px var(--erp-focus);
 }
 
 .composer textarea {
@@ -945,7 +963,7 @@
   height: 37px;
   place-items: center;
   color: #fff;
-  background: #5f6dd4;
+  background: var(--erp-accent);
   border: 0;
   border-radius: 7px;
   cursor: pointer;
@@ -972,8 +990,8 @@
   align-items: flex-start;
   margin: 7px 2px 0;
   gap: 5px;
-  color: #89949c;
-  font-size: 10px;
+  color: #667581;
+  font-size: 11px;
   line-height: 1.35;
 }
 
@@ -1045,7 +1063,7 @@
 .notificationFilters button:focus-visible,
 .notificationCard:focus-visible,
 .feedState button:focus-visible {
-  outline: 2px solid #6574d9;
+  outline: 2px solid var(--erp-accent);
   outline-offset: 2px;
 }
 
@@ -1064,14 +1082,14 @@
 
 .notificationFilters .activeNotificationFilter {
   color: #fff;
-  background: #5f6dd4;
-  border-color: #5f6dd4;
+  background: var(--erp-accent);
+  border-color: var(--erp-accent);
 }
 
 .notificationFilters .activeNotificationFilter:hover {
   color: #fff;
-  background: #5361c6;
-  border-color: #5361c6;
+  background: var(--erp-accent-hover);
+  border-color: var(--erp-accent-hover);
 }
 
 .notificationFilters .activeNotificationFilter b {
@@ -1091,9 +1109,9 @@
 .reminderPanel .notificationList {
   overflow: hidden;
   gap: 0;
-  background: #fff;
-  border: 1px solid #dce3e7;
-  border-radius: 8px;
+  background: var(--erp-surface);
+  border: 1px solid var(--erp-border);
+  border-radius: var(--erp-radius-control);
 }
 
 .announcementComposer {
@@ -1120,8 +1138,8 @@
 
 .announcementComposer input:focus,
 .announcementComposer textarea:focus {
-  border-color: #7180dd;
-  box-shadow: 0 0 0 3px rgba(98, 113, 215, .1);
+  border-color: var(--erp-accent);
+  box-shadow: 0 0 0 3px var(--erp-focus);
 }
 
 .announcementComposer input::placeholder,
@@ -1152,7 +1170,7 @@
   padding: 0 12px;
   gap: 6px;
   color: #fff;
-  background: #5f6dd4;
+  background: var(--erp-accent);
   border: 0;
   border-radius: 7px;
   font: inherit;
@@ -1309,7 +1327,7 @@
 
 .feedState > svg {
   margin-bottom: 12px;
-  color: #6674d7;
+  color: var(--erp-accent);
 }
 
 .feedState strong {
@@ -1329,7 +1347,7 @@
   margin-top: 14px;
   padding: 0 13px;
   color: #fff;
-  background: #5f6dd4;
+  background: var(--erp-accent);
   border: 0;
   border-radius: 7px;
   font: inherit;
@@ -1504,34 +1522,66 @@
   50% { opacity: 1; transform: translateY(-2px); }
 }
 
-@media (max-width: 1060px) {
-  .columns { grid-template-columns: 1fr; }
-  .panel { height: auto; min-height: 620px; max-height: none; }
-  .leftStack {
-    height: auto;
-    min-height: 0;
-    max-height: none;
-    grid-template-rows: none;
+@media (max-width: 1260px) {
+  .columns { display: flex; flex-direction: column; }
+  .leftStack { display: contents; }
+  .panel { min-height: 0; }
+  .reminderPanel {
+    order: 1;
+    height: clamp(380px, 56vh, 460px);
+    height: clamp(380px, 56dvh, 460px);
+    min-height: 380px;
   }
-  .leftStack .panel { min-height: 420px; }
+  .agentPanel {
+    order: 2;
+    height: clamp(500px, 72vh, 600px);
+    height: clamp(500px, 72dvh, 600px);
+    min-height: 500px;
+  }
+  .announcementPanel {
+    order: 3;
+    height: clamp(360px, 54vh, 440px);
+    height: clamp(360px, 54dvh, 440px);
+    min-height: 360px;
+  }
   .agentFeed,
-  .notificationFeed { min-height: 380px; }
-  .leftStack .notificationFeed,
-  .announcementFeed { min-height: 280px; }
+  .notificationFeed { min-height: 0; }
+  .reminderPanel .notificationFeed,
+  .announcementFeed { min-height: 0; }
 }
 
 @media (max-width: 620px) {
-  .workspaceHeader { align-items: flex-start; flex-direction: column; gap: 10px; }
-  .workspaceHeader h1 { font-size: 27px; }
-  .panel { min-height: 590px; }
-  .leftStack .panel { min-height: 410px; }
-  .panelHeader { flex-wrap: wrap; }
+  .workspaceHeader { min-height: 0; align-items: flex-start; }
+  .workspaceHeader h1 { font-size: 24px; }
+  .panel { min-height: 0; }
+  .reminderPanel {
+    height: clamp(340px, 58vh, 420px);
+    height: clamp(340px, 58dvh, 420px);
+    min-height: 340px;
+  }
+  .agentPanel {
+    height: clamp(440px, 72vh, 520px);
+    height: clamp(440px, 72dvh, 520px);
+    min-height: 440px;
+  }
+  .announcementPanel {
+    height: clamp(330px, 55vh, 400px);
+    height: clamp(330px, 55dvh, 400px);
+    min-height: 330px;
+  }
+  .panelHeader { align-items: flex-start; flex-wrap: wrap; }
   .panelTitle { min-width: calc(100% - 50px); }
-  .statusBadge { margin-left: 47px; }
-  .rolePill { margin-left: 47px; }
+  .panelActions {
+    width: calc(100% - 42px);
+    justify-content: flex-start;
+    overflow-x: auto;
+    margin-left: 42px;
+    padding-bottom: 2px;
+    scrollbar-width: none;
+  }
+  .panelActions::-webkit-scrollbar { display: none; }
   .skillManageButton { width: 31px; padding: 0; }
   .skillManageButton span { display: none; }
-  .reminderPanel .statusBadge { margin-left: 0; }
   .agentFeed,
   .notificationFeed { padding-right: 10px; padding-left: 10px; }
   .announcementFeed { padding-right: 10px; padding-left: 10px; }
@@ -1547,7 +1597,14 @@
     padding-left: 10px;
     grid-template-columns: auto minmax(0, 1fr) 17px;
   }
-  .notificationMetadata { display: none; }
+  .notificationMetadata {
+    max-width: none;
+    grid-column: 2;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    text-align: left;
+  }
+  .notificationChevron { grid-column: 3; grid-row: 1 / span 2; }
 }
 
 @media (prefers-reduced-motion: reduce) {

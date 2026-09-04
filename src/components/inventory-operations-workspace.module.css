@@ -12,7 +12,7 @@
 
 .root, .root * { box-sizing: border-box; }
 .root { background: var(--cream); }
-.root { margin: 0; color: var(--ink); background: var(--cream); font: 15px/1.5 Arial, "PingFang SC", "Microsoft YaHei", sans-serif; }
+.root { margin: 0; color: var(--ink); background: var(--cream); font: 15px/1.5 "Segoe UI Variable", "SF Pro Text", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; }
 .root button, .root input, .root select, .root textarea { font: inherit; font-size: 14px; }
 .root small { font-size: 13px; line-height: 1.45; }
 .root button { cursor: pointer; }
