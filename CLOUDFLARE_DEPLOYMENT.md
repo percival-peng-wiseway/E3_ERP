@@ -62,6 +62,22 @@ npm run preview
 
 `npm run preview` runs the OpenNext production bundle in the Workers runtime. Regular application development still uses `npm run dev`; Vectorize is not emulated there, so live vectorization must be verified against a deployed/staging Worker. Node unit/integration tests inject a bounded fake provider and do not substitute a second production retrieval system.
 
+## Development-only remote-data mode
+
+`ERP_REMOTE_DATA_READ_ONLY=true` is only for `npm run dev` when inspecting remote
+Cloudflare data. It blocks business API mutations while retaining the existing
+read-only Agent endpoints. Leave it unset or `false` for ordinary local development.
+
+Do not copy this flag into Cloudflare build variables, runtime variables or secrets.
+Production ignores this development-only flag, including when it was accidentally
+inherited during a build or deployment, and still requires the knowledge indexing
+Workflow binding. Authentication, role checks and same-origin protections continue
+to apply to production writes. Remove a mistakenly configured flag from both the
+Cloudflare build and runtime settings and rebuild/redeploy the application.
+
+`npm run preview` uses a production bundle; this development guard does not make it
+read-only. Use isolated staging bindings when testing mutations in that mode.
+
 ## Production storage
 
 Inventory and QuoteHelp continue to save to their existing upstream services, so those two modules retain their data after deployment.

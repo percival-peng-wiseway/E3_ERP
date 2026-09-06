@@ -71,7 +71,8 @@ export async function GET(request: Request) {
       let missingBindings: string[] = [];
       try {
         const bindings = await erpCloudflareBindings();
-        const indexingWorkflowRequired = process.env.ERP_REMOTE_DATA_READ_ONLY !== "true";
+        const indexingWorkflowRequired = process.env.NODE_ENV === "production"
+          || process.env.ERP_REMOTE_DATA_READ_ONLY !== "true";
         const knowledgeVectors = bindings?.knowledgeVectors;
         missingBindings = [
           ...(!bindings?.database ? ["ERP_DB"] : []),

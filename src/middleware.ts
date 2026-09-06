@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { hasValidEdgeSession } from "@/lib/auth/edge-session";
+import { remoteDataMutationBlocked } from "@/lib/auth/remote-data-policy";
 
 const PUBLIC_PATHS = new Set([
   "/login",
@@ -7,21 +8,6 @@ const PUBLIC_PATHS = new Set([
   "/api/auth/logout",
   "/api/auth/session",
 ]);
-
-const REMOTE_READ_ONLY_POST_PATHS = new Set([
-  "/api/agent",
-  "/api/agent/attachments/status",
-  "/api/agent/chat",
-]);
-
-function remoteDataMutationBlocked(request: NextRequest) {
-  if (process.env.ERP_REMOTE_DATA_READ_ONLY !== "true") return false;
-  if (!request.nextUrl.pathname.startsWith("/api/")) return false;
-
-  const method = request.method.toUpperCase();
-  if (method === "GET" || method === "HEAD" || method === "OPTIONS") return false;
-  return method !== "POST" || !REMOTE_READ_ONLY_POST_PATHS.has(request.nextUrl.pathname);
-}
 
 function remoteDataReadOnlyResponse() {
   const response = NextResponse.json({
@@ -49,7 +35,10 @@ export async function middleware(request: NextRequest) {
   }
 
   if (authenticated || (pathname.startsWith("/api/") && trustedServerRequest(request))) {
-    if (remoteDataMutationBlocked(request)) return remoteDataReadOnlyResponse();
+    if (remoteDataMutationBlocked(request.method, pathname, {
+      nodeEnv: process.env.NODE_ENV,
+      remoteDataReadOnly: process.env.ERP_REMOTE_DATA_READ_ONLY,
+    })) return remoteDataReadOnlyResponse();
     return NextResponse.next();
   }
 
