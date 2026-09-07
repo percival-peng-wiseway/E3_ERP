@@ -71,6 +71,7 @@ import styles from "./payment-track-workspace.module.css";
 import { MaterialDeliveryPicker } from "./material-delivery-picker";
 
 type AddMode = "agreement" | "manual";
+type ProposalPdfFormat = "blink" | "greensketch";
 type ProofKind = "deposit";
 type ProjectTrackViewMode = "board" | "list";
 type ProjectTrackStageFilter = "all" | PaymentTrackStage;
@@ -630,6 +631,7 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
   const [error, setError] = useState("");
   const [showAdd, setShowAdd] = useState(false);
   const [addMode, setAddMode] = useState<AddMode>("agreement");
+  const [proposalPdfFormat, setProposalPdfFormat] = useState<ProposalPdfFormat>("blink");
   const [agreement, setAgreement] = useState<File | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showAdminLogin, setShowAdminLogin] = useState(false);
@@ -921,6 +923,7 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
       return;
     }
     setAddMode("agreement");
+    setProposalPdfFormat("blink");
     setAgreement(null);
     setShowAdd(true);
   };
@@ -1014,7 +1017,10 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
     setError("");
     try {
       const { parsePaymentAgreementPdf } = await import("@/lib/payment-track/pdf-parser");
-      const parsed = await parsePaymentAgreementPdf(new Uint8Array(await agreement.arrayBuffer()));
+      const parsed = await parsePaymentAgreementPdf(
+        new Uint8Array(await agreement.arrayBuffer()),
+        { format: proposalPdfFormat },
+      );
       const parsedAgreement = {
         extractionVersion: 1,
         actorRole: "sales" as const,
@@ -2662,6 +2668,31 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
                   <span><FileCheck2 size={22} /></span>
                   <strong>Import a Solar Proposal</strong>
                 </div>
+                <fieldset className={styles.proposalFormat}>
+                  <legend>Proposal format</legend>
+                  <div>
+                    <label className={proposalPdfFormat === "blink" ? styles.selectedFormat : ""}>
+                      <input
+                        type="radio"
+                        name="proposalPdfFormat"
+                        value="blink"
+                        checked={proposalPdfFormat === "blink"}
+                        onChange={() => setProposalPdfFormat("blink")}
+                      />
+                      <span><strong>Blink</strong><small>Standard Blink solar proposal</small></span>
+                    </label>
+                    <label className={proposalPdfFormat === "greensketch" ? styles.selectedFormat : ""}>
+                      <input
+                        type="radio"
+                        name="proposalPdfFormat"
+                        value="greensketch"
+                        checked={proposalPdfFormat === "greensketch"}
+                        onChange={() => setProposalPdfFormat("greensketch")}
+                      />
+                      <span><strong>GreenSketch</strong><small>GreenSketch quotation and contract</small></span>
+                    </label>
+                  </div>
+                </fieldset>
                 <label className={styles.uploadField}>
                   <input
                     autoFocus

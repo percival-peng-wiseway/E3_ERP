@@ -41,6 +41,92 @@ function textPdf(lines: string[]) {
   return new Uint8Array(Buffer.from(document, "latin1"));
 }
 
+test("parses the current GreenSketch multi-column export with a missing customer email", async () => {
+  const proposal = textPdf([
+    "Prepared for By",
+    "Sample Customer Emily Sales",
+    "- emily@e3energy.com.au",
+    "0433 933 278 0412 249 933",
+    "1/23 White Road, Wantirna South VIC 3152, Australia",
+    "Solar Energy System Proposal",
+    "6.65kW Solar + 41.93kWh Battery",
+    "Prepared on 11 April 2026",
+    "Last updated on 26 June 2026",
+    "Valid until 26 May 2026 Quote No. QN202600000123",
+    "Quotation",
+    "Quote No. QN202600000123",
+    "System Total (incl. GST) $23,214",
+    "Battery: 41.93kWh",
+    "Key Products",
+    "Panel: LR7-54HVH-475M x 14",
+    "Inverter: FOX ESS KH8 Hybrid Inverter x 1",
+    "Battery: EQ4800-L9 x 1",
+    "Balance of System",
+    "Accessories x 1 Unit",
+    "Sub switchboard x 1 Job",
+    "Additional Charges",
+    "Installation Cost x 1 Job",
+    "Delivery Cost x 1 Job",
+    "Deductions - $10,714",
+    "STC Panel Incentive x 39 $1,489.80",
+    "STC Battery Incentive x 166 $6,424.20",
+    "Solar VIC Incentive $1,400",
+    "Solar VIC PV Interest Free Loan $1,400",
+    "Final Price(incl. GST) $12,500",
+    "Deposit $1,000",
+    "Finance Proposal Number: FINANCE-0009",
+  ]);
+
+  const parsed = await parsePaymentAgreementPdf(proposal, { format: "greensketch" });
+
+  assert.equal(parsed.quoteNumber, "QN202600000123");
+  assert.deepEqual(parsed.specialist, { name: "Emily Sales", phone: "0412 249 933" });
+  assert.deepEqual(parsed.customer, {
+    firstName: "Sample",
+    lastName: "Customer",
+    phone: "0433 933 278",
+    email: "",
+    addressLine1: "1/23 White Road",
+    suburb: "Wantirna South",
+    state: "VIC",
+    postcode: "3152",
+  });
+  assert.equal(parsed.balanceDueCents, 1_250_000);
+  assert.equal(parsed.expectedDepositCents, 100_000);
+  assert.equal(parsed.solarRebateRequired, true);
+  assert.equal(parsed.stcSolarRequired, true);
+  assert.equal(parsed.stcBatteryRequired, true);
+  assert.equal(parsed.items.some((item) => item.category === "Solar Panel"
+    && item.model === "LR7-54HVH-475M"
+    && item.capacity === ""
+    && item.quantity === 14), true);
+  assert.equal(parsed.items.some((item) => item.category === "Solar Inverter"
+    && item.model === "FOX ESS KH8 Hybrid Inverter"
+    && item.quantity === 1), true);
+  assert.equal(parsed.items.some((item) => item.category === "Battery"
+    && item.model === "EQ4800-L9"
+    && item.quantity === 1), true);
+  assert.equal(parsed.items.some((item) => item.category === "Accessories" && item.quantity === 1), true);
+  assert.equal(parsed.items.some((item) => item.description === "Sub switchboard" && item.quantity === 1), true);
+  assert.equal(parsed.items.some((item) => item.description === "Installation Cost" && item.quantity === 1), true);
+  assert.equal(parsed.items.some((item) => item.description === "Delivery Cost" && item.quantity === 1), true);
+});
+
+test("does not silently parse a GreenSketch proposal as Blink", async () => {
+  await assert.rejects(
+    parsePaymentAgreementPdf(textPdf([
+      "GreenSketch Solar Energy System Proposal",
+      "Quotation",
+      "Panel: TEST-475M x 14",
+      "System Total (incl. GST) $12,000",
+      "Deductions",
+      "Final Price (incl. GST) $12,000",
+    ]), { format: "blink" }),
+    (error: unknown) => error instanceof PaymentAgreementParseError
+      && /Select GreenSketch/i.test(error.message),
+  );
+});
+
 test("parses GreenSketch-style parties, pricing and quoted items", async () => {
   const parsed = await parsePaymentAgreementPdf(textPdf([
     "Prepared for By",

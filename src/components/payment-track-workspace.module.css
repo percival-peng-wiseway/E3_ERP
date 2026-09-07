@@ -930,6 +930,54 @@
 
 .importIntro strong { display: block; color: #35414a; font-size: 14px; }
 
+.proposalFormat {
+  padding: 0;
+  margin: 0 0 14px;
+  border: 0;
+}
+
+.proposalFormat > legend {
+  margin-bottom: 7px;
+  color: #59656f;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.proposalFormat > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.proposalFormat label {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  padding: 10px 12px;
+  color: #66727c;
+  background: #fff;
+  border: 1px solid #dfe4e8;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.proposalFormat label:hover { border-color: #aab4dc; }
+.proposalFormat label.selectedFormat { color: #4253bc; background: #f3f4ff; border-color: #8995dc; }
+
+.proposalFormat input {
+  width: 15px;
+  height: 15px;
+  margin: 0 9px 0 0;
+  accent-color: #5969d5;
+}
+
+.proposalFormat span { min-width: 0; }
+.proposalFormat strong,
+.proposalFormat small { display: block; }
+.proposalFormat strong { color: #35414a; font-size: 13px; }
+.proposalFormat small { margin-top: 2px; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+
 .uploadField {
   position: relative;
   display: flex;

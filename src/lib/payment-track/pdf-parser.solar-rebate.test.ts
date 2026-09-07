@@ -164,6 +164,33 @@ test("assesses Solar Rebate only inside a complete GreenSketch deductions block"
     Quotation
     Solar Panel: LONGi LR5-54HTH-440M / 440W x 14
     System Total (incl. GST) $12,400.00
+    Key Products
+    Panel: LONGi LR5-54HTH-440M x 14
+    Deductions
+    STC Panel Incentive x 39 $1,489.80
+    STC Battery Incentive x 166 $6,424.20
+    Solar VIC Incentive $1,400.00
+    Solar VIC PV Interest Free Loan $1,400.00
+    Final Price (incl. GST) $2,686.20
+  `), true);
+
+  assert.equal(assessProposalSolarRebateRequirement(`
+    Quotation
+    System Total (incl. GST) $12,400.00
+    Key Products
+    Battery: TEST-BATTERY x 1
+    Deductions
+    STC Panel Incentive x 39 $1,489.80
+    STC Battery Incentive x 166 $6,424.20
+    Solar VIC PV Interest Free Loan $1,400.00
+    Final Price (incl. GST) $3,086.20
+  `), false);
+
+  assert.equal(assessProposalSolarRebateRequirement(`
+    Quotation
+    System Total (incl. GST) $12,400.00
+    Key Products
+    Panel: LONGi LR5-54HTH-440M x 14
     Solar Rebate - $400.00
   `), null);
 });

@@ -140,6 +140,12 @@ export type ParsedPaymentAgreement = {
   sourceText: string;
 };
 
+export type PaymentAgreementPdfFormat = "auto" | "blink" | "greensketch";
+
+export type ParsePaymentAgreementPdfOptions = {
+  format?: PaymentAgreementPdfFormat;
+};
+
 export class PaymentAgreementParseError extends Error {
   readonly missingFields: string[];
 
@@ -335,7 +341,7 @@ function greenSketchPartyDetails(layoutText: string): GreenSketchPartyDetails | 
 
   let emailIndex = -1;
   for (let index = headingIndex + 1; index < blockEnd; index += 1) {
-    if ((coverLines[index].match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi)?.length || 0) >= 2) {
+    if ((coverLines[index].match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi)?.length || 0) >= 1) {
       emailIndex = index;
     }
   }
@@ -349,7 +355,9 @@ function greenSketchPartyDetails(layoutText: string): GreenSketchPartyDetails | 
       break;
     }
   }
-  const customerEmail = emails.find((email) => email.toLowerCase() !== specialistEmail.toLowerCase()) || emails[0] || "";
+  // GreenSketch renders a missing customer email as "-". When only the sales
+  // address is present, do not copy it into the customer's record.
+  const customerEmail = emails.find((email) => email.toLowerCase() !== specialistEmail.toLowerCase()) || "";
   const namesLine = coverLines[emailIndex - 1] || "";
   const specialistFirstName = specialistEmail.split("@", 1)[0]?.split(/[+._-]/, 1)[0] || "";
   let specialistStart = -1;
@@ -464,7 +472,7 @@ const greenSystemTotalExpression = /\bSystem\s+Total\s*\((?:incl\.?|including)\s
 // Proposal generators use several names for the same Victorian solar rebate.
 // Keep this deliberately narrower than a generic "rebate" match: battery
 // rebates, STCs and Solar Victoria loans have independent operational flows.
-const solarRebateLabelExpression = /(?:\bSolar\s*VIC(?:toria)?(?:['’]s)?\s+Solar\s+PV\s+Rebate\b|\b(?:VIC\s+)?Solar(?:\s+PV)?\s+Rebate\b|\bSolar\s+VIC(?:toria)?\s+Rebate\b)/i;
+const solarRebateLabelExpression = /(?:\bSolar\s*VIC(?:toria)?(?:['’]s)?\s+Solar\s+PV\s+Rebate\b|\b(?:VIC\s+)?Solar(?:\s+PV)?\s+Rebate\b|\bSolar\s+VIC(?:toria)?\s+(?:Rebate|Incentive)\b)/i;
 
 function normalizedPricingText(value: string) {
   return value
@@ -515,12 +523,30 @@ function greenQuotationBlock(flatText: string): GreenQuotationBlock | null {
     if (!total || total.index > 20_000) continue;
     const nextQuotation = source.search(/\bQuotation\b/i);
     if (nextQuotation >= 0 && nextQuotation < total.index) continue;
+    const finalPrice = /\bFinal\s+Price\s*\((?:incl\.?|including)\s*GST\)\s*\$?\s*[\d,]+(?:\.\d{1,2})?/i.exec(source);
+    const hasBoundedFinalPrice = Boolean(finalPrice && finalPrice.index >= total.index && finalPrice.index <= 30_000);
+    const itemEnd = hasBoundedFinalPrice && finalPrice
+      ? finalPrice.index + finalPrice[0].length
+      : Math.min(source.length, total.index + 30_000);
     return {
-      itemText: source.slice(0, total.index).trim(),
+      // Some GreenSketch versions put System Total before Key Products while
+      // older exports put it after them. Final Price closes the authoritative
+      // item region; the bounded fallback preserves precise missing-field errors.
+      itemText: source.slice(0, itemEnd).trim(),
       priceText: source.slice(total.index).trim(),
     };
   }
   return null;
+}
+
+function hasGreenSketchIdentity(flatText: string, quotation: GreenQuotationBlock | null) {
+  if (!quotation) return false;
+  if (/\bGreenSketch\b/i.test(flatText)) return true;
+  const coverText = flatText.slice(0, 20_000);
+  return (/\bPrepared\s+for\s+(?:Prepared\s+)?By\b/i.test(coverText)
+      && /\bFinal\s+Price\s*\((?:incl\.?|including)\s*GST\)/i.test(quotation.priceText))
+    || (/\bKey\s+Products\b/i.test(quotation.itemText)
+      && /\bBalance\s+of\s+System\b/i.test(quotation.itemText));
 }
 
 export function assessProposalSolarRebateRequirement(sourceText: string): boolean | null {
@@ -565,7 +591,7 @@ type ExtractedItems = {
   unparsedGreenCoreCategories: string[];
 };
 
-const greenRowMarkerExpression = /\b(?:Solar\s+Panels?|Inverter|Battery)\s*:|\b(?:Sub[\s-]*switchboard|AC\s+Cable\s+Run|Installation\s+Cost|Delivery\s+Cost)\b(?=\s*(?::|x\b))/i;
+const greenRowMarkerExpression = /\b(?:(?:Solar\s+)?Panels?|Inverter|Battery)\s*:|\b(?:Accessories|Sub[\s-]*switchboard|AC\s+Cable\s+Run|Installation\s+Cost|Delivery\s+Cost)\b(?=\s*(?::|x\b))/i;
 
 function greenItemCapacity(category: string, name: string) {
   const unit = category === "Solar Panel" ? "W" : category === "Solar Inverter" ? "kW" : "kWh";
@@ -576,11 +602,12 @@ function greenItemCapacity(category: string, name: string) {
 function extractGreenItems(quoteBlock: string): ExtractedItems {
   const items: Array<Omit<PaymentTrackItem, "id">> = [];
   const unparsed = new Set<string>();
-  const coreMatches = Array.from(quoteBlock.matchAll(/\b(Solar\s+Panels?|Inverter|Battery)\s*:/gi));
+  const parsedCoreCategories = new Set<string>();
+  const coreMatches = Array.from(quoteBlock.matchAll(/\b((?:Solar\s+)?Panels?|Inverter|Battery)\s*:/gi));
 
   for (const match of coreMatches) {
     const label = match[1];
-    const category = /^Solar\s+Panels?$/i.test(label)
+    const category = /^(?:Solar\s+)?Panels?$/i.test(label)
       ? "Solar Panel"
       : /^Inverter$/i.test(label)
         ? "Solar Inverter"
@@ -603,9 +630,11 @@ function extractGreenItems(quoteBlock: string): ExtractedItems {
       capacity: greenItemCapacity(category, name),
       quantity,
     });
+    parsedCoreCategories.add(category);
   }
 
   const supportingItems: Array<[RegExp, string, string]> = [
+    [/\bAccessories\b(?:\s*:\s*[^x]{1,160}?)?\s+x\s*(\d{1,3})\b/i, "Accessories", "Accessories"],
     [/\bSub[\s-]*switchboard\b(?:\s*:\s*[^x]{1,160}?)?\s+x\s*(\d{1,3})\b/i, "Electrical", "Sub switchboard"],
     [/\bAC\s+Cable\s+Run\b(?:\s*:\s*[^x]{1,160}?)?\s+x\s*(\d{1,3})\b/i, "Electrical", "AC Cable Run"],
     [/\bInstallation\s+Cost\b(?:\s*:\s*[^x]{1,160}?)?\s+x\s*(\d{1,3})\b/i, "Installation", "Installation Cost"],
@@ -618,7 +647,10 @@ function extractGreenItems(quoteBlock: string): ExtractedItems {
       items.push({ category, description, model: "", capacity: "", quantity });
     }
   }
-  return { items, unparsedGreenCoreCategories: [...unparsed] };
+  return {
+    items,
+    unparsedGreenCoreCategories: [...unparsed].filter((category) => !parsedCoreCategories.has(category)),
+  };
 }
 
 function extractItems(flatText: string, greenQuotation: GreenQuotationBlock | null): ExtractedItems {
@@ -655,7 +687,10 @@ function extractItems(flatText: string, greenQuotation: GreenQuotationBlock | nu
   return { items, unparsedGreenCoreCategories: [] };
 }
 
-export async function parsePaymentAgreementPdf(bytes: Uint8Array): Promise<ParsedPaymentAgreement> {
+export async function parsePaymentAgreementPdf(
+  bytes: Uint8Array,
+  options: ParsePaymentAgreementPdfOptions = {},
+): Promise<ParsedPaymentAgreement> {
   let extractedText: ExtractedPdfText;
   try {
     extractedText = await extractPdfText(bytes);
@@ -669,17 +704,34 @@ export async function parsePaymentAgreementPdf(bytes: Uint8Array): Promise<Parse
   const sourceText = extractedText.layoutText;
   const flatText = sourceText.replace(/\s+/g, " ").trim();
   const semanticText = extractedText.semanticText.replace(/\s+/g, " ").trim();
-  const greenSketchQuotation = greenQuotationBlock(flatText);
+  const requestedFormat = options.format || "auto";
+  const detectedGreenSketchQuotation = greenQuotationBlock(flatText);
+  if (requestedFormat === "greensketch" && !detectedGreenSketchQuotation) {
+    throw new PaymentAgreementParseError(
+      "This PDF does not match the selected GreenSketch proposal format.",
+      ["GreenSketch proposal format"],
+    );
+  }
+  if (requestedFormat === "blink" && hasGreenSketchIdentity(flatText, detectedGreenSketchQuotation)) {
+    throw new PaymentAgreementParseError(
+      "This appears to be a GreenSketch proposal. Select GreenSketch and try again.",
+      ["Blink proposal format"],
+    );
+  }
+  const greenSketchQuotation = requestedFormat === "blink" ? null : detectedGreenSketchQuotation;
   const greenSketchParties = greenSketchQuotation ? greenSketchPartyDetails(sourceText) : null;
   const pricingText = greenSketchQuotation?.priceText || flatText;
   const proposalNumber = captured(
     semanticText,
     /Proposal\s*(?:No|Number)\.?\s*:?\s*([A-Z0-9-]{4,})/i,
   );
-  const quoteNumber = proposalNumber
-    || (greenSketchQuotation
-      ? capturedLast(sourceText.split("\f", 1)[0] || "", /(?:^|\n)\s*Quote\s*No\.?\s*:?\s*([A-Z0-9-]{4,})/im)
-      : captured(flatText, /Quote\s*No\.?\s*:?\s*([A-Z0-9-]{4,})/i));
+  const greenSketchQuoteNumber = greenSketchQuotation
+    ? capturedLast(sourceText.split("\f", 1)[0] || "", /\bQuote\s*No\.?\s*:?\s*([A-Z0-9-]{4,})/i)
+      || captured(flatText, /\bQuote\s*No\.?\s*:?\s*([A-Z0-9-]{4,})/i)
+    : "";
+  const quoteNumber = greenSketchQuotation
+    ? greenSketchQuoteNumber || proposalNumber
+    : proposalNumber || captured(flatText, /Quote\s*No\.?\s*:?\s*([A-Z0-9-]{4,})/i);
   const legacySpecialistName = captured(flatText, /(?:Solar\s+)?Specialist\s*:?\s*(.+?)(?=\s+Mobile\s*:)/i);
   const preparedByName = captured(
     semanticText,
@@ -707,8 +759,9 @@ export async function parsePaymentAgreementPdf(bytes: Uint8Array): Promise<Parse
       semanticText,
       /Prepared\s+for\s*:?\s*.+?\s+([+()\d][+()\d\s-]{7,25})(?=\s+(?:Unit|Suite|Shop|Lot|\d))/i,
     );
-  const email = greenSketchParties?.customerEmail
-    || captured(flatText, /Email\s*:?\s*([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/i);
+  const email = greenSketchQuotation
+    ? greenSketchParties?.customerEmail || ""
+    : captured(flatText, /Email\s*:?\s*([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/i);
 
   const installationBlock = between(flatText, /Installation\s+Address\s*:?/i, /Installation\s+Information/i);
   const legacyAddressLine1 = captured(installationBlock, /Address\s+Line\s+1\s*:?\s*(.+?)(?=\s+Address\s+Line\s+1\s*:)/i)

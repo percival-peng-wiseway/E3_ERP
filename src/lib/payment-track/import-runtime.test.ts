@@ -14,5 +14,7 @@ test("proposal import parses PDF in the browser instead of the Worker route", as
   assert.doesNotMatch(routeSource, /payment-track\/pdf-parser|parsePaymentAgreementPdf/);
   assert.match(routeSource, /parsedAgreement/);
   assert.match(workspaceSource, /await import\("@\/lib\/payment-track\/pdf-parser"\)/);
+  assert.match(workspaceSource, /format:\s*proposalPdfFormat/);
+  assert.match(workspaceSource, />GreenSketch</);
   assert.match(workspaceSource, /body\.set\("parsedAgreement"/);
 });
