@@ -462,10 +462,10 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget, onOp
     } else {
       setCustomJobs([]);
       setSourceOverridesReady(false);
-      warnings.push("Weekly Schedule jobs and source-card controls could not be refreshed.");
+      warnings.push("Time Table jobs and source-card controls could not be refreshed.");
     }
     setSourceWarnings(warnings);
-    setError(successfulSources === 0 ? "Unable to load the weekly schedule." : "");
+    setError(successfulSources === 0 ? "Unable to load the time table." : "");
     setLoading(false);
     setRefreshing(false);
   }, [weekStart]);
@@ -961,7 +961,7 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget, onOp
     if (busy) return;
     closeModalAfterSuccess();
     setError("");
-    await refreshAll("Weekly Schedule refreshed from the latest source data.");
+    await refreshAll("Time Table refreshed from the latest source data.");
   }
 
   async function saveInventorySchedule(event: FormEvent<HTMLFormElement>) {
@@ -1217,11 +1217,11 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget, onOp
     if (authenticatedRole !== "admin" || !entry.overrideKey || busy) return;
     if (action !== "restore") {
       const prompt = action === "cancel"
-        ? `Cancel “${entry.title}” in Weekly Schedule?`
-        : `Delete “${entry.title}” from Weekly Schedule?`;
+        ? `Cancel “${entry.title}” in Time Table?`
+        : `Delete “${entry.title}” from Time Table?`;
       const effect = action === "cancel"
-        ? "This only marks the Weekly Schedule card as cancelled."
-        : "This only removes the card from Weekly Schedule.";
+        ? "This only marks the Time Table card as cancelled."
+        : "This only removes the card from Time Table.";
       if (!window.confirm(`${prompt}\n\n${effect} It will not delete or change Inventory, Project Track, payments, or attachments.`)) return;
     }
     setBusy(true);
@@ -1233,18 +1233,18 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget, onOp
         body: JSON.stringify({ action }),
       });
       const body = await readJsonResponse<{ error?: string }>(response);
-      if (!response.ok) throw new Error(apiMessage(body.error, "Unable to update this Weekly Schedule card."));
+      if (!response.ok) throw new Error(apiMessage(body.error, "Unable to update this Time Table card."));
       const message = action === "cancel"
-        ? `${sourceLabel(entry.source)} cancelled in Weekly Schedule.`
+        ? `${sourceLabel(entry.source)} cancelled in Time Table.`
         : action === "restore"
-          ? `${sourceLabel(entry.source)} restored in Weekly Schedule.`
-          : `${sourceLabel(entry.source)} removed from Weekly Schedule.`;
+          ? `${sourceLabel(entry.source)} restored in Time Table.`
+          : `${sourceLabel(entry.source)} removed from Time Table.`;
       await refreshAll(message);
       window.dispatchEvent(new CustomEvent("erp:project-schedule-updated", {
         detail: { source: "weekly-schedule" },
       }));
     } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : "Unable to update this Weekly Schedule card.");
+      setError(actionError instanceof Error ? actionError.message : "Unable to update this Time Table card.");
     } finally {
       setBusy(false);
     }
@@ -1257,7 +1257,7 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget, onOp
         className={entry.cancelled ? styles.scheduleRestoreButton : styles.scheduleCancelButton}
         onClick={() => void updateSourceOverride(entry, entry.cancelled ? "restore" : "cancel")}
         disabled={busy}
-        aria-label={`${entry.cancelled ? "Restore" : "Cancel"} ${entry.title} in Weekly Schedule`}
+        aria-label={`${entry.cancelled ? "Restore" : "Cancel"} ${entry.title} in Time Table`}
       >
         {entry.cancelled ? <RotateCcw size={13} /> : <X size={13} />}{entry.cancelled ? "Restore" : "Cancel"}
       </button>
@@ -1266,7 +1266,7 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget, onOp
         className={styles.scheduleDeleteButton}
         onClick={() => void updateSourceOverride(entry, "delete")}
         disabled={busy}
-        aria-label={`Delete ${entry.title} from Weekly Schedule`}
+        aria-label={`Delete ${entry.title} from Time Table`}
       >
         <Trash2 size={13} />Delete
       </button>
@@ -1472,7 +1472,7 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget, onOp
     <section className={styles.workspace}>
       <header className={styles.pageHeader}>
         <div>
-          <h1 ref={scheduleHeadingRef} id="project-schedule-title" tabIndex={-1}>Weekly Schedule</h1>
+          <h1 ref={scheduleHeadingRef} id="project-schedule-title" tabIndex={-1}>Time Table</h1>
         </div>
         <div className={styles.headerActions}>
           <div className={styles.viewToggle} role="group" aria-label="Schedule view">
@@ -1568,7 +1568,7 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget, onOp
         <div className={styles.calendarScheduleFrame}>
           {renderWipUnscheduledRail()}
           {loading ? (
-            <div className={styles.loading}><LoaderCircle size={27} className={styles.spinning} /> Loading weekly schedule…</div>
+            <div className={styles.loading}><LoaderCircle size={27} className={styles.spinning} /> Loading time table…</div>
           ) : (
             <div className={styles.calendarScroller}>
               <div className={styles.calendarGrid} role="region" aria-labelledby="project-schedule-title">
@@ -1618,9 +1618,9 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget, onOp
           )}
         </div>
       ) : loading ? (
-        <div className={styles.loading}><LoaderCircle size={27} className={styles.spinning} /> Loading weekly schedule…</div>
+        <div className={styles.loading}><LoaderCircle size={27} className={styles.spinning} /> Loading time table…</div>
       ) : (
-        <div className={styles.scheduleListScroller} role="region" aria-label={`Weekly Schedule list for ${weekRangeLabel(weekStart, weekEnd)}`} tabIndex={0}>
+        <div className={styles.scheduleListScroller} role="region" aria-label={`Time Table list for ${weekRangeLabel(weekStart, weekEnd)}`} tabIndex={0}>
           <table className={styles.scheduleList}>
             <caption className={styles.visuallyHidden}>Scheduled jobs from {weekRangeLabel(weekStart, weekEnd)}</caption>
             <thead>

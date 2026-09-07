@@ -1642,7 +1642,7 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
               ...(includesDelivery ? { deliveryAssignee, selections: deliverySelectionDraft } : {}),
               ...(includesInstallation ? { installationAssignee } : {}),
               expectedUpdatedAt: project.updatedAt,
-            }, "Work scheduled and added to Weekly Schedule.")}>
+            }, "Work scheduled and added to Time Table.")}>
               <CalendarDays size={15} /> {hasActiveWorkSchedule(project) ? "Update Schedule" : "Schedule Work"}
             </button>
             <button className={styles.primaryButton} type="button" disabled={busy || !savedScheduleMatches} onClick={() => void performAction("mark_work_completed", {}, workMode === "delivery_only" ? "Delivery marked complete." : "Installation marked complete.")}>
@@ -1712,11 +1712,11 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
                     },
                     deliveryRequest
                       ? "Delivery request updated for Project Manager review."
-                      : "Delivery request sent to Weekly Schedule for Project Manager review.",
+                      : "Delivery request sent to Time Table for Project Manager review.",
                   )}
                 >
                   {busy ? <LoaderCircle className={styles.spinning} size={15} /> : <CalendarDays size={15} />}
-                  {deliveryRequest ? "Update request" : "Send to Weekly Schedule"}
+                  {deliveryRequest ? "Update request" : "Send to Time Table"}
                 </button>
               </div>
             </div>
@@ -1810,7 +1810,7 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
               onClick={() => void performAction(
                 "schedule_delivery",
                 { deliveryDate, deliveryTime, deliveryAssignee, expectedUpdatedAt: project.updatedAt },
-                "Delivery schedule saved and Weekly Schedule task updated.",
+                "Delivery schedule saved and Time Table task updated.",
               )}
             >
               {busy ? <LoaderCircle className={styles.spinning} size={15} /> : <CalendarDays size={15} />}
@@ -1940,11 +1940,11 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
                     },
                     installationRequest
                       ? "Installment request updated for Project Manager review."
-                      : "Installment request sent to Weekly Schedule for Project Manager review.",
+                      : "Installment request sent to Time Table for Project Manager review.",
                   )}
                 >
                   {busy ? <LoaderCircle className={styles.spinning} size={15} /> : <CalendarDays size={15} />}
-                  {installationRequest ? "Update request" : "Send to Weekly Schedule"}
+                  {installationRequest ? "Update request" : "Send to Time Table"}
                 </button>
               </div>
             </div>
@@ -2038,7 +2038,7 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
               onClick={() => void performAction(
                 "schedule_installation",
                 { installationDate, installationTime, installationAssignee, expectedUpdatedAt: project.updatedAt },
-                "Installment schedule saved and Weekly Schedule task updated.",
+                "Installment schedule saved and Time Table task updated.",
               )}
             >
               {busy ? <LoaderCircle className={styles.spinning} size={15} /> : <CalendarDays size={15} />}
