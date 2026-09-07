@@ -3,6 +3,8 @@ import type {
   PaymentTrackItem,
   PaymentTrackSpecialist,
 } from "./types";
+// @ts-expect-error -- focused Node ESM tests require the explicit extension.
+import { classifyProposalPdfReadError, ProposalPdfReadError, retryableProposalPdfRead } from "./pdf-read-errors.ts";
 
 type MatrixSource = ArrayLike<number> | {
   a?: number;
@@ -121,8 +123,18 @@ async function loadPdfRuntime() {
     const pdfWorkerGlobal = globalThis as typeof globalThis & {
       pdfjsWorker?: { WorkerMessageHandler: unknown };
     };
-    pdfWorkerGlobal.pdfjsWorker ??= { WorkerMessageHandler: worker.WorkerMessageHandler };
+    // A previously cached handler can belong to an older runtime after an app
+    // update. Always bind the handler imported alongside this exact runtime.
+    pdfWorkerGlobal.pdfjsWorker = { WorkerMessageHandler: worker.WorkerMessageHandler };
     return runtime;
+  }).catch((error: unknown) => {
+    // A transient chunk download failure must not poison every subsequent
+    // import attempt until the user closes the page.
+    pdfRuntime = null;
+    const failure = classifyProposalPdfReadError(error);
+    throw failure.code === "PDF_READ_FAILED"
+      ? new ProposalPdfReadError("PDF_RUNTIME_LOAD")
+      : failure;
   });
   return pdfRuntime;
 }
@@ -201,19 +213,19 @@ async function extractPdfText(bytes: Uint8Array): Promise<ExtractedPdfText> {
     disableFontFace: true,
     useSystemFonts: true,
   });
-  const document = await loadingTask.promise;
   const layoutPages: string[] = [];
   const semanticPages: string[] = [];
   let accumulatedCharacters = 0;
 
   try {
+    const document = await loadingTask.promise;
     if (document.numPages < 1 || document.numPages > MAX_PROPOSAL_PAGES) {
-      throw new Error("Agreement page count is outside the supported range");
+      throw new ProposalPdfReadError("PDF_PAGE_LIMIT");
     }
     for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
       const page = await document.getPage(pageNumber);
       const content = await page.getTextContent();
-      if (content.items.length > 50_000) throw new Error("Agreement contains too many text items");
+      if (content.items.length > 50_000) throw new ProposalPdfReadError("PDF_TEXT_LIMIT");
       const positioned: PositionedText[] = content.items
         .filter(printableText)
         .map((item) => {
@@ -227,7 +239,7 @@ async function extractPdfText(bytes: Uint8Array): Promise<ExtractedPdfText> {
         })
         .filter((item) => item.text.trim());
       accumulatedCharacters += positioned.reduce((total, item) => total + item.text.length, 0);
-      if (accumulatedCharacters > 1_000_000) throw new Error("Agreement text is too large");
+      if (accumulatedCharacters > 1_000_000) throw new ProposalPdfReadError("PDF_TEXT_LIMIT");
 
       // PDF generators often store multi-column content in logical reading
       // order even when the visual rows interleave the columns. Keep both
@@ -246,9 +258,14 @@ async function extractPdfText(bytes: Uint8Array): Promise<ExtractedPdfText> {
         .map((row) => lineText(row.items))
         .filter(Boolean)
         .join("\n"));
+      // Image-heavy proposals may contain many pages. Release each page's
+      // cached objects as soon as its text has been collected.
+      page.cleanup();
     }
   } finally {
-    await loadingTask.destroy();
+    // A failed initialization still owns a task/worker and must be disposed.
+    // Cleanup must not replace the original, actionable read error.
+    await loadingTask.destroy().catch(() => undefined);
   }
 
   return {
@@ -691,15 +708,21 @@ export async function parsePaymentAgreementPdf(
   bytes: Uint8Array,
   options: ParsePaymentAgreementPdfOptions = {},
 ): Promise<ParsedPaymentAgreement> {
-  let extractedText: ExtractedPdfText;
-  try {
-    extractedText = await extractPdfText(bytes);
-  } catch (error) {
-    if (process.env.NODE_ENV !== "production") {
-      console.error("Payment proposal PDF extraction failed", error);
+  let extractedText: ExtractedPdfText | undefined;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      extractedText = await extractPdfText(bytes);
+      break;
+    } catch (error) {
+      const failure = classifyProposalPdfReadError(error);
+      if (attempt === 0 && retryableProposalPdfRead(failure)) {
+        pdfRuntime = null;
+        continue;
+      }
+      throw new PaymentAgreementParseError(failure.message, [failure.code]);
     }
-    throw new PaymentAgreementParseError("The Solar Proposal PDF could not be read.", ["readable PDF text"]);
   }
+  if (!extractedText) throw new PaymentAgreementParseError("The PDF reader did not complete. [PDF_READ_FAILED]", ["PDF_READ_FAILED"]);
 
   const sourceText = extractedText.layoutText;
   const flatText = sourceText.replace(/\s+/g, " ").trim();

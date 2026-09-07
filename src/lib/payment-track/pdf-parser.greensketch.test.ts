@@ -41,7 +41,7 @@ function textPdf(lines: string[]) {
   return new Uint8Array(Buffer.from(document, "latin1"));
 }
 
-test("parses the current GreenSketch multi-column export with a missing customer email", async () => {
+test("parses the current GreenSketch export repeatedly, including after a damaged PDF", async () => {
   const proposal = textPdf([
     "Prepared for By",
     "Sample Customer Emily Sales",
@@ -110,6 +110,16 @@ test("parses the current GreenSketch multi-column export with a missing customer
   assert.equal(parsed.items.some((item) => item.description === "Sub switchboard" && item.quantity === 1), true);
   assert.equal(parsed.items.some((item) => item.description === "Installation Cost" && item.quantity === 1), true);
   assert.equal(parsed.items.some((item) => item.description === "Delivery Cost" && item.quantity === 1), true);
+
+  await assert.rejects(
+    parsePaymentAgreementPdf(new TextEncoder().encode("not a valid PDF")),
+    (error: unknown) => error instanceof PaymentAgreementParseError
+      && error.missingFields.includes("PDF_INVALID")
+      && error.message.includes("[PDF_INVALID]"),
+  );
+  // A failed document must not leave its worker/task unusable. The parser must
+  // also retain the caller's input buffer so the same file can be selected again.
+  assert.deepEqual(await parsePaymentAgreementPdf(proposal, { format: "greensketch" }), parsed);
 });
 
 test("does not silently parse a GreenSketch proposal as Blink", async () => {
