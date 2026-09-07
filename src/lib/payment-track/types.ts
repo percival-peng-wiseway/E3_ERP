@@ -58,12 +58,14 @@ export const PAYMENT_TRACK_STAGE_SKIP_REASON_MAX_LENGTH = 500;
 
 export type PaymentTrackFileKind =
   | "contract"
+  | "attachment"
   | "deposit_proof"
   | "solar_rebate_qr_code"
   | "collection_proof"
   | "final_payment_proof";
 
 export type PaymentTrackUploadContentType =
+  | "application/octet-stream"
   | "application/pdf"
   | "image/jpeg"
   | "image/png"
@@ -182,6 +184,8 @@ export type PaymentTrackHistoryAction =
   | "solar_rebate_confirmed"
   | "stage_skipped"
   | "pm_notes_updated"
+  | "project_notes_updated"
+  | "attachment_uploaded"
   | "completed";
 
 export interface PaymentTrackHistoryEntry {
@@ -259,6 +263,10 @@ export interface PaymentTrackProject {
   stcSolarReceivedAmountCents?: number | null;
   stcBatteryReceivedAmountCents?: number | null;
   solarRebateReceivedAmountCents?: number | null;
+  attachments?: PaymentTrackFile[];
+  projectNotes?: string;
+  projectNotesUpdatedAt?: string | null;
+  projectNotesUpdatedBy?: string | null;
   pmNotes: string;
   pmNotesUpdatedAt: string | null;
   pmNotesUpdatedBy: string | null;

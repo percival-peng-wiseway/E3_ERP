@@ -64,7 +64,7 @@ export function paymentTrackFileSignatureMatches(type: PaymentTrackUploadContent
     return bytes.length >= expected.length
       && timingSafeEqual(Buffer.from(bytes.subarray(0, 8)), Buffer.from(expected));
   }
-  return bytes.length >= 12
+  return type === "image/webp" && bytes.length >= 12
     && new TextDecoder().decode(bytes.subarray(0, 4)) === "RIFF"
     && new TextDecoder().decode(bytes.subarray(8, 12)) === "WEBP";
 }

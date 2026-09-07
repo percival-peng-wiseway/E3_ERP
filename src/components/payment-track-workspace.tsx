@@ -634,6 +634,11 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [proofFile, setProofFile] = useState<File | null>(null);
+  const [projectNotesDraft, setProjectNotesDraft] = useState("");
+  const [savedProjectNotes, setSavedProjectNotes] = useState("");
+  const [projectNotesVersion, setProjectNotesVersion] = useState<string | null>(null);
+  const [detailSaving, setDetailSaving] = useState<"notes" | "files" | null>(null);
+  const projectFileInputRef = useRef<HTMLInputElement | null>(null);
   const [actionAmount, setActionAmount] = useState("");
   const [rebateReceiptAmount, setRebateReceiptAmount] = useState("");
   const [deliveryDate, setDeliveryDate] = useState("");
@@ -923,6 +928,10 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
   const openProject = useCallback((project: PaymentTrackProject, element?: HTMLElement) => {
     returnFocusRef.current = element ?? null;
     setProofFile(null);
+    setProjectNotesDraft(project.projectNotes || "");
+    setSavedProjectNotes(project.projectNotes || "");
+    setProjectNotesVersion(project.projectNotesUpdatedAt || null);
+    setDetailSaving(null);
     setActionAmount("");
     const currentWorkMode = project.deliveredAt && !project.installedAt && project.workMode === "delivery_only"
       ? "installation_only"
@@ -1088,6 +1097,68 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
       setError(createError instanceof Error ? createError.message : "Unable to create this project.");
     } finally {
       setBusy(false);
+    }
+  };
+
+  const saveProjectNotes = async () => {
+    if (!selected || busy) return;
+    setBusy(true);
+    setDetailSaving("notes");
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(`/api/payment-track/${selected.id}/notes`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notes: projectNotesDraft, expectedNotesUpdatedAt: projectNotesVersion }),
+      });
+      const result = await readJsonResponse<PaymentTrackMutationResponse & { error?: string }>(response);
+      if (!response.ok) throw new Error(apiError(result, "Unable to save project notes."));
+      updateProject(result.data);
+      setProjectNotesDraft(result.data.projectNotes || "");
+      setSavedProjectNotes(result.data.projectNotes || "");
+      setProjectNotesVersion(result.data.projectNotesUpdatedAt || null);
+      setNotice("Project notes saved.");
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Unable to save project notes.");
+    } finally {
+      setBusy(false);
+      setDetailSaving(null);
+    }
+  };
+
+  const uploadProjectFiles = async (files: File[]) => {
+    if (!selected || busy || !files.length) return;
+    if (files.some((file) => file.size < 1 || file.size > MAX_PROOF_SIZE)) {
+      setError("Choose non-empty files up to 10 MB each.");
+      return;
+    }
+    if ((selected.attachments?.length || 0) + files.length > 50) {
+      setError("A project can have up to 50 additional files.");
+      return;
+    }
+    setBusy(true);
+    setDetailSaving("files");
+    setError("");
+    setNotice("");
+    let uploaded = 0;
+    try {
+      for (const file of files) {
+        const body = new FormData();
+        body.set("file", file);
+        const response = await fetch(`/api/payment-track/${selected.id}/files`, { method: "POST", body });
+        const result = await readJsonResponse<PaymentTrackMutationResponse & { error?: string }>(response);
+        if (!response.ok) throw new Error(apiError(result, "Unable to upload project file."));
+        updateProject(result.data);
+        uploaded += 1;
+      }
+      setNotice(`${uploaded} project file${uploaded === 1 ? "" : "s"} uploaded.`);
+    } catch (uploadError) {
+      const message = uploadError instanceof Error ? uploadError.message : "Unable to upload project file.";
+      setError(`${uploaded ? `${uploaded} file(s) uploaded before the upload stopped. ` : ""}${message}`);
+    } finally {
+      setBusy(false);
+      setDetailSaving(null);
     }
   };
 
@@ -2854,6 +2925,35 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
                   </div>
                 </section>
 
+                <div className={styles.projectDetailSidebar}>
+                  <section className={`${styles.detailSection} ${styles.projectNotesSection}`}>
+                    <h3><FileText size={16} /><label htmlFor="project-notes">Notes</label></h3>
+                    <textarea
+                      id="project-notes"
+                      value={projectNotesDraft}
+                      onChange={(event) => setProjectNotesDraft(event.target.value)}
+                      placeholder="Add project updates, reminders or handover notes…"
+                      maxLength={5_000}
+                      rows={5}
+                      disabled={busy}
+                      aria-describedby="project-notes-status"
+                    />
+                    <div className={styles.projectNotesFooter}>
+                      <small id="project-notes-status">
+                        {projectNotesDraft.trim() !== savedProjectNotes
+                          ? "Unsaved changes"
+                          : selected.projectNotesUpdatedAt
+                            ? `Saved by ${selected.projectNotesUpdatedBy || "team"} · ${formatDate(selected.projectNotesUpdatedAt, true)}`
+                            : "Shared with the project team"}
+                      </small>
+                      <button type="button" className={styles.secondaryButton}
+                        disabled={busy || projectNotesDraft.trim() === savedProjectNotes}
+                        onClick={() => void saveProjectNotes()}>
+                        {detailSaving === "notes" ? <LoaderCircle className={styles.spinning} size={14} /> : null}
+                        {detailSaving === "notes" ? "Saving…" : "Save notes"}
+                      </button>
+                    </div>
+                  </section>
                 <section className={`${styles.detailSection} ${styles.chosenItemsSection}`}>
                   <h3>
                     <PackageCheck size={16} /> Chosen Items <span>{deliverySelectionDraft.length}</span>
@@ -2881,10 +2981,26 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
                     </div>
                   )}
                 </section>
+                </div>
               </div>
 
               <section className={styles.detailSection}>
-                <h3><Paperclip size={16} /> Files</h3>
+                <div className={styles.projectFilesHeading}>
+                  <h3><Paperclip size={16} /> Files</h3>
+                  <button className={styles.secondaryButton} type="button" disabled={busy}
+                    onClick={() => projectFileInputRef.current?.click()}>
+                    {detailSaving === "files" ? <LoaderCircle className={styles.spinning} size={14} /> : <UploadCloud size={14} />}
+                    {detailSaving === "files" ? "Uploading…" : "Files +"}
+                  </button>
+                  <input ref={projectFileInputRef} type="file" hidden multiple disabled={busy}
+                    aria-label="Upload project files"
+                    onChange={(event) => {
+                      const files = Array.from(event.target.files || []);
+                      event.target.value = "";
+                      void uploadProjectFiles(files);
+                    }} />
+                </div>
+                <p className={styles.projectFilesHint}>Up to 10 MB per file. PDF and images open in preview; other files download.</p>
                 <div className={styles.fileGrid}>
                   {[
                     selected.contract,
@@ -2892,6 +3008,7 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
                     selected.solarRebateQrCode,
                     selected.collection.proof,
                     ...selected.finalPayments.map((payment) => payment.proof),
+                    ...(selected.attachments || []),
                   ].filter(Boolean).map((file) => file ? (
                     <a key={file.id} className={styles.fileCard} href={file.url} target="_blank" rel="noreferrer">
                       <span><FileText size={18} /></span>
@@ -2904,6 +3021,7 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
                     && !selected.solarRebateQrCode
                     && !selected.collection.proof
                     && !selected.finalPayments.some((payment) => payment.proof)
+                    && !selected.attachments?.length
                     ? <p className={styles.noFiles}>No files attached yet.</p>
                     : null}
                 </div>

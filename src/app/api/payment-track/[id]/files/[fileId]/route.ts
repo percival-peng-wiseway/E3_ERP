@@ -40,7 +40,7 @@ export async function GET(
     return new Response(bytes, {
       headers: {
         "cache-control": "private, no-store",
-        "content-disposition": `inline; filename*=UTF-8''${encodedName}`,
+        "content-disposition": `${file.contentType === "application/octet-stream" ? "attachment" : "inline"}; filename*=UTF-8''${encodedName}`,
         "content-length": String(bytes.byteLength),
         "content-security-policy": "default-src 'none'; sandbox",
         "content-type": file.contentType,

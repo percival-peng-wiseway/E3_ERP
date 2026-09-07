@@ -97,6 +97,8 @@ Employee access is protected by a unified ERP sign-in. The server issues a signe
 - Applicable Solar and Battery STC receipts are confirmed separately before completion
 - Installed / Waiting COES, STC Rebate and Done projects support repeatable Sales payment acknowledgements followed by Admin amount confirmation; partial or zero receipts remain collectible until the Amount Due reaches zero
 - Only the initial deposit requires a payment screenshot or PDF; every successful workflow action closes Project Details
+- Project Details includes shared Notes above Chosen Items, with explicit saving and conflict protection for simultaneous edits. These remain separate from PM Notes.
+- Files + attaches multiple project documents (up to 10 MiB each, 50 additional files per project); validated PDFs/images preview, other formats download, and all files retain the existing employee access protection.
 - Cards show the live remaining Amount Due, while Project Details retains the original proposal, every proof and the final-payment ledger
 - Administrators can override a stage completed outside ERP only with a reason and a current project version; pending payment reviews cannot be bypassed
 - Project Details includes a read-only Activity history with the actor, time, action and override details

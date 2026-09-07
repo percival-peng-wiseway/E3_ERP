@@ -61,6 +61,7 @@ type StoredFinalPayment = StoredReceipt & {
 type StoredProject = Omit<
   PaymentTrackProject,
   | "contract"
+  | "attachments"
   | "deposit"
   | "collection"
   | "finalPayments"
@@ -89,6 +90,7 @@ type StoredProject = Omit<
   | "solarPanelConsumption"
   | "workMode"
 > & {
+  attachments?: StoredFile[];
   contract: StoredFile | null;
   deposit: StoredReceipt;
   collection: StoredReceipt;
@@ -197,6 +199,7 @@ export class PaymentTrackRepositoryError extends Error {
 }
 
 const MIME_EXTENSIONS: Record<PaymentTrackUploadContentType, string> = {
+  "application/octet-stream": "bin",
   "application/pdf": "pdf",
   "image/jpeg": "jpg",
   "image/png": "png",
@@ -218,7 +221,7 @@ let mutationQueue: Promise<void> = Promise.resolve();
 
 function storedFileObjectKey(file: StoredFile) {
   const expectedDirectory = file.kind === "contract" ? contractsPath : proofsPath;
-  if (path.basename(file.storedName) !== file.storedName || !/^[0-9a-f-]{36}\.(?:pdf|jpg|png|webp)$/.test(file.storedName)) {
+  if (path.basename(file.storedName) !== file.storedName || !/^[0-9a-f-]{36}\.(?:pdf|jpg|png|webp|bin)$/.test(file.storedName)) {
     throw new PaymentTrackRepositoryError("The stored file path is invalid.", 500, "invalid_file_path");
   }
   return `payment-track/${file.kind === "contract" ? "contracts" : "proofs"}/${file.storedName}`;
@@ -368,6 +371,10 @@ function publicProject(project: StoredProject): PaymentTrackProject {
     + finalPayments.reduce((total, payment) => total + (payment.confirmedAmountCents || 0), 0);
   return {
     ...publicFields,
+    attachments: (project.attachments || []).map((file) => publicFile(project.id, file)!),
+    projectNotes: project.projectNotes || "",
+    projectNotesUpdatedAt: project.projectNotesUpdatedAt || null,
+    projectNotesUpdatedBy: project.projectNotesUpdatedBy || null,
     contract: publicFile(project.id, project.contract),
     deposit: {
       ...project.deposit,
@@ -1024,6 +1031,7 @@ export function deletePaymentTrackProject(id: string) {
       deleted.solarRebateQrCode,
       deleted.collection.proof,
       ...finalPaymentProofs,
+      ...(deleted.attachments || []),
     ].filter(Boolean) as StoredFile[];
     const uniqueFiles = new Map<string, StoredFile>();
     for (const file of files) {
@@ -1036,6 +1044,68 @@ export function deletePaymentTrackProject(id: string) {
     await writeStoredProjects(projects, storedDocument.version);
     await Promise.allSettled([...uniqueFiles.values()].map((file) => deleteStoredFile(file)));
     return publicProject(deleted);
+  });
+}
+
+export function updatePaymentTrackProjectNotes(
+  id: string,
+  role: PaymentTrackRole,
+  name: string,
+  notes: string,
+  expectedNotesUpdatedAt: string | null,
+) {
+  return withMutation(async () => {
+    requireRole(role, ["sales", "specialist", "pm", "admin"], "Your role cannot edit project notes.");
+    if (typeof notes !== "string" || notes.length > 5_000
+      || /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(notes)) {
+      throw new PaymentTrackRepositoryError("Use up to 5,000 characters for project notes.", 400, "invalid_notes");
+    }
+    const document = await readStoredProjectDocument();
+    const project = document.projects.find((candidate) => candidate.id === id);
+    if (!project) throw new PaymentTrackRepositoryError("Project not found.", 404, "not_found");
+    if (expectedNotesUpdatedAt !== (project.projectNotesUpdatedAt || null)) {
+      throw new PaymentTrackRepositoryError("Notes changed since you opened this project. Copy your draft, then reload the project before saving.", 409, "notes_conflict");
+    }
+    const timestamp = nextProjectTimestamp(project);
+    project.projectNotes = notes.trim();
+    project.projectNotesUpdatedAt = timestamp;
+    project.projectNotesUpdatedBy = actorName(role, name);
+    project.updatedAt = timestamp;
+    project.history.push(historyEntry("project_notes_updated", timestamp, role, name));
+    await writeStoredProjects(document.projects, document.version);
+    return publicProject(project);
+  });
+}
+
+export function uploadPaymentTrackAttachment(
+  id: string,
+  role: PaymentTrackRole,
+  name: string,
+  upload: PaymentTrackUpload,
+) {
+  return withMutation(async () => {
+    requireRole(role, ["sales", "specialist", "pm", "admin"], "Your role cannot upload project files.");
+    if (upload.size < 1 || upload.size > 10 * 1024 * 1024) {
+      throw new PaymentTrackRepositoryError("Each file must be 10 MB or smaller.", 400, "invalid_file_size");
+    }
+    const document = await readStoredProjectDocument();
+    const project = document.projects.find((candidate) => candidate.id === id);
+    if (!project) throw new PaymentTrackRepositoryError("Project not found.", 404, "not_found");
+    if ((project.attachments || []).length >= 50) {
+      throw new PaymentTrackRepositoryError("A project can have up to 50 additional files.", 409, "attachment_limit");
+    }
+    const timestamp = nextProjectTimestamp(project);
+    const stored = await storedUpload("attachment", role, upload, timestamp);
+    project.attachments = [...(project.attachments || []), stored.file];
+    project.updatedAt = timestamp;
+    project.history.push(historyEntry("attachment_uploaded", timestamp, role, name));
+    try {
+      await writeStoredProjects(document.projects, document.version);
+    } catch (error) {
+      await deleteStoredFile(stored.file).catch(() => undefined);
+      throw error;
+    }
+    return publicProject(project);
   });
 }
 
@@ -1318,7 +1388,7 @@ function paymentCanBeRecorded(project: StoredProject) {
 }
 
 function nextProjectTimestamp(project: StoredProject) {
-  const previous = [project.updatedAt, project.pmNotesUpdatedAt]
+  const previous = [project.updatedAt, project.pmNotesUpdatedAt, project.projectNotesUpdatedAt]
     .map((value) => typeof value === "string" ? Date.parse(value) : Number.NaN)
     .filter(Number.isFinite);
   return new Date(Math.max(Date.now(), ...previous.map((value) => value + 1))).toISOString();
@@ -1994,6 +2064,7 @@ export async function getPaymentTrackFile(projectId: string, fileId: string): Pr
     project.solarRebateQrCode,
     project.collection.proof,
     ...finalProofs,
+    ...(project.attachments || []),
   ]
     .filter(Boolean) as StoredFile[];
   const file = candidates.find((candidate) => candidate.id === fileId);
