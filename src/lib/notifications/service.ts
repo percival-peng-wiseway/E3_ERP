@@ -74,7 +74,8 @@ type OperationalSnapshot = {
 const priorityOrder: Record<NotificationPriority, number> = {
   urgent: 0,
   high: 1,
-  normal: 2,
+  medium: 2,
+  normal: 3,
 };
 
 const operationalStatusOrder: Record<OperationalOrder["status"], number> = {
@@ -528,7 +529,7 @@ export function buildPaymentTrackNotifications(
       } else if (task.action === "confirm_solar_stc") {
         items.push(notification({
           role: task.role,
-          priority: "high",
+          priority: "medium",
           title: customerName,
           description: "Confirm Solar STC",
           module: "payments",
@@ -538,7 +539,7 @@ export function buildPaymentTrackNotifications(
       } else if (task.action === "confirm_battery_stc") {
         items.push(notification({
           role: task.role,
-          priority: "high",
+          priority: "medium",
           title: customerName,
           description: "Confirm Battery STC",
           module: "payments",

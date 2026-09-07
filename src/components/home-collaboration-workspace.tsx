@@ -81,7 +81,7 @@ type AgentComposerAttachment = AgentMessageAttachment & {
 
 type NotificationRole = "all" | "sales" | "specialist" | "pm" | "admin";
 type NotificationOwnerRole = Exclude<NotificationRole, "all">;
-type NotificationPriority = "urgent" | "high" | "normal";
+type NotificationPriority = "urgent" | "high" | "medium" | "normal";
 type NotificationModule = "payments" | "projects" | "reimbursements" | "inventory" | "quotations";
 
 type WorkspaceNotification = {
@@ -156,13 +156,15 @@ const EMPTY_NOTIFICATION_COUNTS: Record<NotificationRole, number> = {
 const NOTIFICATION_PRIORITY_LABELS: Record<NotificationPriority, string> = {
   urgent: "Urgent",
   high: "High",
+  medium: "Medium",
   normal: "Normal",
 };
 
 const NOTIFICATION_PRIORITY_ORDER: Record<NotificationPriority, number> = {
   urgent: 0,
   high: 1,
-  normal: 2,
+  medium: 2,
+  normal: 3,
 };
 
 function citationText(value: unknown, maximum: number) {
@@ -505,7 +507,7 @@ function normalizeNotification(value: unknown): WorkspaceNotification | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const item = value as Record<string, unknown>;
   const roles: NotificationOwnerRole[] = ["sales", "specialist", "pm", "admin"];
-  const priorities: NotificationPriority[] = ["urgent", "high", "normal"];
+  const priorities: NotificationPriority[] = ["urgent", "high", "medium", "normal"];
   const modules: NotificationModule[] = ["payments", "projects", "reimbursements", "inventory", "quotations"];
   if (
     typeof item.id !== "string"

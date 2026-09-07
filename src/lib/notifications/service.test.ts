@@ -189,6 +189,26 @@ test("non-delivery high-priority reminders keep their normal priority badge", ()
   assert.equal(deposit.ownerName, undefined);
 });
 
+test("Solar and Battery STC confirmations are medium while Solar Rebate stays high", () => {
+  const reminders = buildPaymentTrackNotifications([project({
+    stage: "stc_rebate",
+    stcSolarRequired: true,
+    stcBatteryRequired: true,
+    solarRebateRequired: true,
+    outstandingCents: 0,
+  })], NOW);
+  assert.equal(reminders.length, 3);
+  for (const action of ["Confirm Solar STC", "Confirm Battery STC"]) {
+    const reminder = reminders.find((item) => item.actionLabel === action);
+    assert.ok(reminder);
+    assert.equal(reminder.priority, "medium");
+    assert.equal(reminder.badgeLabel, undefined);
+    assert.equal(reminder.role, "admin");
+    assert.equal(reminder.entityId, "PAY-TEST-1");
+  }
+  assert.equal(reminders.find((item) => item.actionLabel === "Confirm Solar Rebate")?.priority, "high");
+});
+
 test("deposit and collection confirmations are primarily assigned to Jiaqi", () => {
   const [deposit] = buildPaymentTrackNotifications([project({
     stage: "deposit_not_paid",

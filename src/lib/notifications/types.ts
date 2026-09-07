@@ -2,7 +2,7 @@ export const NOTIFICATION_ROLES = ["sales", "specialist", "pm", "admin"] as cons
 
 export type NotificationRole = (typeof NOTIFICATION_ROLES)[number];
 export type NotificationRoleFilter = "all" | NotificationRole;
-export type NotificationPriority = "urgent" | "high" | "normal";
+export type NotificationPriority = "urgent" | "high" | "medium" | "normal";
 export type NotificationModule =
   | "payments"
   | "projects"
