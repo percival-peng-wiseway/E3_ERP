@@ -5,6 +5,8 @@ import type {
 } from "./types";
 // @ts-expect-error -- focused Node ESM tests require the explicit extension.
 import { classifyProposalPdfReadError, ProposalPdfReadError, retryableProposalPdfRead } from "./pdf-read-errors.ts";
+// @ts-expect-error -- focused Node ESM tests require the explicit extension.
+import { readProposalTextItems } from "./pdf-text-stream.ts";
 
 type MatrixSource = ArrayLike<number> | {
   a?: number;
@@ -224,9 +226,8 @@ async function extractPdfText(bytes: Uint8Array): Promise<ExtractedPdfText> {
     }
     for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
       const page = await document.getPage(pageNumber);
-      const content = await page.getTextContent();
-      if (content.items.length > 50_000) throw new ProposalPdfReadError("PDF_TEXT_LIMIT");
-      const positioned: PositionedText[] = content.items
+      const textItems = await readProposalTextItems(page.streamTextContent());
+      const positioned: PositionedText[] = textItems
         .filter(printableText)
         .map((item) => {
           const source = item as unknown as { str: string; transform: number[]; width?: number };

@@ -120,6 +120,17 @@ test("parses the current GreenSketch export repeatedly, including after a damage
   // A failed document must not leave its worker/task unusable. The parser must
   // also retain the caller's input buffer so the same file can be selected again.
   assert.deepEqual(await parsePaymentAgreementPdf(proposal, { format: "greensketch" }), parsed);
+
+  // Safari before 26.4 has getReader(), but lacks stream async iteration.
+  // Exercise the real PDF.js path under that capability constraint.
+  const descriptor = Object.getOwnPropertyDescriptor(ReadableStream.prototype, Symbol.asyncIterator);
+  try {
+    Object.defineProperty(ReadableStream.prototype, Symbol.asyncIterator, { configurable: true, value: undefined });
+    assert.deepEqual(await parsePaymentAgreementPdf(proposal, { format: "greensketch" }), parsed);
+  } finally {
+    if (descriptor) Object.defineProperty(ReadableStream.prototype, Symbol.asyncIterator, descriptor);
+    else Reflect.deleteProperty(ReadableStream.prototype, Symbol.asyncIterator);
+  }
 });
 
 test("does not silently parse a GreenSketch proposal as Blink", async () => {
