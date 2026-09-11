@@ -34,6 +34,7 @@ function MemberCard({ member, entry, entries, week, currentUser, onSaved, onEdit
 }) {
   const reportTitleId = useId();
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const backdropPressed = useRef(false);
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<WorkEntry | null>(null);
   const [busy, setBusy] = useState(false);
@@ -98,16 +99,22 @@ function MemberCard({ member, entry, entries, week, currentUser, onSaved, onEdit
   </>;
 
   return <>
-    <article className={styles.memberCard} aria-label={`${member.displayName} weekly card`}>
+    <article className={styles.memberCard} aria-label={`${member.displayName} weekly card`}
+      onClick={event => { if (!(event.target as HTMLElement).closest("button")) setOpen(true); }}>
       <header><button type="button" className={styles.memberOpen} aria-label={`Open ${member.displayName} weekly records`} onClick={() => setOpen(true)}>
         <span className={styles.memberAvatar}>{member.displayName.slice(0, 1)}</span>
         <span><strong>{member.displayName}{isOwner && " · You"}</strong><small>{dateRange(ranges.start, ranges.end)}</small></span>
         <span aria-hidden="true">↗</span>
       </button><span className={styles.badge}>{entry ? "Updated" : "Not updated"}</span></header>
       {report}
-      <button type="button" className={styles.openRecords} onClick={() => setOpen(true)}>Open weekly records · {past.length} previous {past.length === 1 ? "week" : "weeks"}</button>
     </article>
     {open && <dialog ref={dialogRef} className={styles.weekDialog} aria-labelledby={reportTitleId}
+      onPointerDown={event => { backdropPressed.current = isDialogBackdrop(event); }}
+      onClick={event => {
+        const dismiss = backdropPressed.current && isDialogBackdrop(event);
+        backdropPressed.current = false;
+        if (dismiss) close();
+      }}
       onCancel={event => { event.preventDefault(); close(); }}>
       <header className={styles.weekDialogHeader}><div><span className={styles.eyebrow}>WEEKLY RECORDS</span><h2 id={reportTitleId}>{member.displayName}</h2><p>{member.department} · {dateRange(ranges.start, ranges.end)} · Monday – Friday</p></div><button autoFocus type="button" disabled={busy} aria-label="Close weekly records" onClick={close}>Close ×</button></header>
       <div className={`${styles.memberCard} ${styles.expandedWeek}`}>{form || report}</div>
@@ -125,6 +132,13 @@ function MemberCard({ member, entry, entries, week, currentUser, onSaved, onEdit
       </section>
     </dialog>}
   </>;
+}
+
+function isDialogBackdrop(event: React.MouseEvent<HTMLDialogElement>) {
+  if (event.target !== event.currentTarget) return false;
+  const bounds = event.currentTarget.getBoundingClientRect();
+  return event.clientX < bounds.left || event.clientX > bounds.right
+    || event.clientY < bounds.top || event.clientY > bounds.bottom;
 }
 
 function dateRange(start: string, end: string) {
