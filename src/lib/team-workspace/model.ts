@@ -66,7 +66,7 @@ export function weeklyDateRanges(week: string) {
     date.setUTCDate(date.getUTCDate() + days);
     return date.toISOString().slice(0, 10);
   };
-  return { start, end: offset(6), previousStart: offset(-7), previousEnd: offset(-1) };
+  return { start, end: offset(6), nextStart: offset(7), nextEnd: offset(13) };
 }
 
 export function applyEntry(raw: Record<string, unknown>, user: ErpUser, members: string[], old?: WorkEntry): WorkEntry {

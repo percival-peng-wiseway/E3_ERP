@@ -81,15 +81,15 @@ function MemberCard({ member, entry, entries, week, currentUser, onSaved, onEdit
   }
 
   const form = draft ? <form onSubmit={save}><fieldset disabled={busy}>
-    <label>Completed last week <span className={styles.weekDates}>{dateRange(ranges.previousStart, ranges.previousEnd)}</span><textarea autoFocus rows={open ? 10 : 6} maxLength={12000} placeholder="What did you finish or achieve last week?" value={draft.content} onChange={event => setDraft({ ...draft, content: event.target.value })} /></label>
-    <label>This Week Plan <span className={styles.weekDates}>{dateRange(ranges.start, ranges.end)}</span><textarea rows={open ? 10 : 6} maxLength={6000} placeholder="What will you focus on this week?" value={draft.goals} onChange={event => setDraft({ ...draft, goals: event.target.value })} /></label>
+    <label>Completed last week <span className={styles.weekDates}>{dateRange(ranges.start, ranges.end)}</span><textarea autoFocus rows={open ? 10 : 6} maxLength={12000} placeholder="What did you finish or achieve last week?" value={draft.content} onChange={event => setDraft({ ...draft, content: event.target.value })} /></label>
+    <label>This Week Plan <span className={styles.weekDates}>{dateRange(ranges.nextStart, ranges.nextEnd)}</span><textarea rows={open ? 10 : 6} maxLength={6000} placeholder="What will you focus on this week?" value={draft.goals} onChange={event => setDraft({ ...draft, goals: event.target.value })} /></label>
     {error && <p role="alert" className={styles.error}>{error}</p>}
     <footer><button type="button" onClick={() => { setDraft(null); setError(""); onEditing(false); }}>Cancel</button><button type="submit" className={styles.primary}>{busy ? "Saving…" : "Save update"}</button></footer>
   </fieldset></form> : null;
   const report = <>
     <div className={styles.weekContent}>
-      <section><h4>Completed last week</h4><span className={styles.weekDates}>{dateRange(ranges.previousStart, ranges.previousEnd)}</span><p className={!entry?.content ? styles.memberPlaceholder : undefined}>{entry?.content || "No update yet."}</p></section>
-      <section><h4>This Week Plan</h4><span className={styles.weekDates}>{dateRange(ranges.start, ranges.end)}</span><p className={!entry?.goals ? styles.memberPlaceholder : undefined}>{entry?.goals || "No plan added yet."}</p></section>
+      <section><h4>Completed last week</h4><span className={styles.weekDates}>{dateRange(ranges.start, ranges.end)}</span><p className={!entry?.content ? styles.memberPlaceholder : undefined}>{entry?.content || "No update yet."}</p></section>
+      <section><h4>This Week Plan</h4><span className={styles.weekDates}>{dateRange(ranges.nextStart, ranges.nextEnd)}</span><p className={!entry?.goals ? styles.memberPlaceholder : undefined}>{entry?.goals || "No plan added yet."}</p></section>
     </div>
     <footer><span>{entry ? `Updated ${new Date(entry.updatedAt).toLocaleString("en-AU", { timeZone: "Australia/Melbourne", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}` : "Visible to everyone"}</span>{isOwner && <button type="button" onClick={() => { setOpen(true); edit(); }}>Update my card</button>}</footer>
     {saved && <p role="status" className={styles.notice}>Weekly update saved.</p>}
@@ -115,8 +115,8 @@ function MemberCard({ member, entry, entries, week, currentUser, onSaved, onEdit
           return <details key={record.id} className={styles.pastWeek}>
             <summary>{dateRange(dates.start, dates.end)}<span>View weekly record</span></summary>
             <div className={styles.weekContent}>
-              <section><h4>Completed last week</h4><span className={styles.weekDates}>{dateRange(dates.previousStart, dates.previousEnd)}</span><p>{record.content || "No update recorded."}</p></section>
-              <section><h4>This Week Plan</h4><span className={styles.weekDates}>{dateRange(dates.start, dates.end)}</span><p>{record.goals || "No plan recorded."}</p></section>
+              <section><h4>Completed last week</h4><span className={styles.weekDates}>{dateRange(dates.start, dates.end)}</span><p>{record.content || "No update recorded."}</p></section>
+              <section><h4>This Week Plan</h4><span className={styles.weekDates}>{dateRange(dates.nextStart, dates.nextEnd)}</span><p>{record.goals || "No plan recorded."}</p></section>
             </div>
           </details>;
         }) : <div className={styles.emptyColumn}>No records before this week yet.</div>}
