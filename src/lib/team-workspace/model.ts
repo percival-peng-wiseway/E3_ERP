@@ -1,12 +1,12 @@
 import type { ErpUser } from "../auth/types";
 
 export const WEEKLY_MEMBERS = [
-  { username: "ruihan", displayName: "RuiHan", department: "Sales & Marketing" },
-  { username: "sam", displayName: "Sam", department: "Sales & Marketing" },
-  { username: "wendy", displayName: "Wendy", department: "Operation" },
-  { username: "hogan", displayName: "Hogan", department: "Operation" },
-  { username: "kevin", displayName: "Kevin", department: "Procurement" },
-  { username: "jiaqi", displayName: "JiaQi", department: "Finance & HR" },
+  { username: "ruihan", displayName: "RuiHan", departments: ["Sales & Marketing"] },
+  { username: "sam", displayName: "Sam", departments: ["Sales & Marketing"] },
+  { username: "wendy", displayName: "Wendy", departments: ["Operation", "Procurement"] },
+  { username: "hogan", displayName: "Hogan", departments: ["Operation", "Sales & Marketing"] },
+  { username: "kevin", displayName: "Kevin", departments: ["Procurement", "Operation"] },
+  { username: "jiaqi", displayName: "JiaQi", departments: ["Finance & HR"] },
 ] as const;
 export function isWeeklyMember(username: string) {
   return WEEKLY_MEMBERS.some(member => member.username === username);

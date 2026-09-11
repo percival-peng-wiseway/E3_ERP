@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { ErpUser } from "@/lib/auth/types";
 import { WEEKLY_MEMBERS, weeklyDateRanges, type WorkEntry } from "@/lib/team-workspace/model";
 import styles from "./team-workspace.module.css";
@@ -17,12 +17,13 @@ export function WeeklyMemberCards(props: Props) {
   const departments = ["Sales & Marketing", "Procurement", "Operation", "Finance & HR"] as const;
   return <div className={styles.departmentGrid}>
     {departments.map(department => <section key={department} className={styles.department} aria-label={department}>
-      <header><h3>{department}</h3><span>{WEEKLY_MEMBERS.filter(member => member.department === department).length}</span></header>
+      <header><h3>{department}</h3><span>{WEEKLY_MEMBERS.filter(member => member.departments.some(name => name === department)).length}</span></header>
       <div className={styles.memberGrid}>
-        {WEEKLY_MEMBERS.filter(member => member.department === department)
-          .sort((a, b) => department === "Operation" ? Number(b.username === "hogan") - Number(a.username === "hogan") : 0)
+        {WEEKLY_MEMBERS.filter(member => member.departments.some(name => name === department))
+          .sort((a, b) => Number(a.departments[0] !== department) - Number(b.departments[0] !== department)
+            || (department === "Operation" ? Number(b.username === "hogan") - Number(a.username === "hogan") : 0))
           .map(member => <MemberCard key={`${member.username}:${props.week}`} {...props}
-            member={member} entry={props.entries.find(entry => entry.kind === "weekly" && entry.owner === member.username && entry.date === props.week)} />)}
+            member={{ ...member, department }} entry={props.entries.find(entry => entry.kind === "weekly" && entry.owner === member.username && entry.date === props.week)} />)}
       </div>
     </section>)}
   </div>;
@@ -31,6 +32,7 @@ export function WeeklyMemberCards(props: Props) {
 function MemberCard({ member, entry, entries, week, currentUser, onSaved, onEditing }: Props & {
   member: { username: string; displayName: string; department: string }; entry?: WorkEntry;
 }) {
+  const reportTitleId = useId();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<WorkEntry | null>(null);
@@ -105,9 +107,9 @@ function MemberCard({ member, entry, entries, week, currentUser, onSaved, onEdit
       {report}
       <button type="button" className={styles.openRecords} onClick={() => setOpen(true)}>Open weekly records · {past.length} previous {past.length === 1 ? "week" : "weeks"}</button>
     </article>
-    {open && <dialog ref={dialogRef} className={styles.weekDialog} aria-labelledby={`${member.username}-weekly-title`}
+    {open && <dialog ref={dialogRef} className={styles.weekDialog} aria-labelledby={reportTitleId}
       onCancel={event => { event.preventDefault(); close(); }}>
-      <header className={styles.weekDialogHeader}><div><span className={styles.eyebrow}>WEEKLY RECORDS</span><h2 id={`${member.username}-weekly-title`}>{member.displayName}</h2><p>{member.department} · {dateRange(ranges.start, ranges.end)} · Monday – Friday</p></div><button autoFocus type="button" disabled={busy} aria-label="Close weekly records" onClick={close}>Close ×</button></header>
+      <header className={styles.weekDialogHeader}><div><span className={styles.eyebrow}>WEEKLY RECORDS</span><h2 id={reportTitleId}>{member.displayName}</h2><p>{member.department} · {dateRange(ranges.start, ranges.end)} · Monday – Friday</p></div><button autoFocus type="button" disabled={busy} aria-label="Close weekly records" onClick={close}>Close ×</button></header>
       <div className={`${styles.memberCard} ${styles.expandedWeek}`}>{form || report}</div>
       <section className={styles.pastWeeks}><h3>Previous weekly records <span>{past.length}</span></h3><p>Expand a week to view the previous week’s completed work and that week’s plan.</p>
         {past.length ? past.map(record => {

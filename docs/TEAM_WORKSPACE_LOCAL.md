@@ -16,12 +16,13 @@ feature needs no new migration or secrets.
 
 ## Weekly tasks & goals
 
-Six fixed cards: RuiHan, Sam, Wendy, Hogan, Kevin and JiaQi. Each report uses Monday–Friday workweeks:
+Six team members: RuiHan, Sam, Wendy, Hogan, Kevin and JiaQi. Each report uses Monday–Friday workweeks:
 “Completed last week” is the week before the selected week; “This Week Plan” is
 the selected week itself. Dates advance together when the reporting week changes. Everyone can read; only the card's
-owner can edit. Compact cards are grouped into Sales & Marketing (RuiHan, Sam),
-Procurement (Kevin), Operation (Hogan, Wendy), and Finance & HR (JiaQi). Cards open
-an enlarged report with dated, collapsible prior weeks.
+owner can edit. Compact cards are grouped into Sales & Marketing (RuiHan, Sam, Hogan),
+Procurement (Kevin, Wendy), Operation (Hogan, Wendy, Kevin), and Finance & HR (JiaQi). Cards open
+an enlarged report with dated, collapsible prior weeks. Members with multiple
+departments share one weekly record across their cards; edits stay in sync.
 
 ## Task requests
 
