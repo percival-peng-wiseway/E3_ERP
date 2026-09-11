@@ -34,8 +34,12 @@ export function taskActions(entry: WorkEntry, user: ErpUser): { action: TaskActi
   if (entry.status === "review" && user.role === "admin") return [{ action: "request_changes", label: "Request changes" }, { action: "accept", label: "Accept & mark Done" }];
   return [];
 }
+/** Only the original assigner and current assignee receive task notifications. */
+export function taskNotificationRecipients(entry: WorkEntry): Set<string> {
+  return new Set([entry.assignedBy || entry.history[0]?.by, entry.owner].filter((username): username is string => Boolean(username)));
+}
 export function taskReminders(entries: WorkEntry[], username: string) {
-  return entries.filter(entry => entry.kind === "task").flatMap(entry => {
+  return entries.filter(entry => entry.kind === "task" && taskNotificationRecipients(entry).has(username)).flatMap(entry => {
     const latest = (entry.notifications || []).filter(item => item.recipient === username && !item.read).slice().reverse().sort((a, b) => b.at.localeCompare(a.at))[0];
     return latest ? [{ ...latest, entry }] : [];
   }).sort((a,b) => b.at.localeCompare(a.at));

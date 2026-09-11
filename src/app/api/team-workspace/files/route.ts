@@ -30,7 +30,7 @@ export async function POST(request: Request) {
     const old = (await listEntries()).find(entry => entry.id === form.get("task") && entry.kind === "task");
     if (!old) return json("Task not found.", 404);
     const users = (await listManagedErpUsers()).filter(user => user.active);
-    const entry = await saveEntry({ ...old, version: Number(form.get("version")), update: `Uploaded file: ${upload.name.slice(0,200)}` }, session.user, users.map(user => user.username), users.filter(user => user.role === "admin").map(user => user.username), { name: upload.name, bytes: new Uint8Array(await upload.arrayBuffer()) });
+    const entry = await saveEntry({ ...old, version: Number(form.get("version")), update: `Uploaded file: ${upload.name.slice(0,200)}` }, session.user, users.map(user => user.username), { name: upload.name, bytes: new Uint8Array(await upload.arrayBuffer()) });
     return Response.json({ entry });
   } catch (error) { return json(error instanceof WorkError ? error.message : "Unable to upload file.", error instanceof WorkError ? error.status : 500); }
 }

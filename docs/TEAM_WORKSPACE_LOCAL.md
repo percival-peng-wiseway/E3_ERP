@@ -34,8 +34,9 @@ fields persist independently and are editable only by their respective authors.
 - Upload supports multiple files, max 10 MB each and 30 per task. Images have
   thumbnails and enlarged previews; ordinary files have download links.
 - Task history is retained in storage but not displayed as a timeline.
-- Every update notifies active admins at High priority. Creation, reassignment,
-  feedback and acceptance also notify the assignee. Reminders are grouped by task
+- Every update notifies only the original assigner and current assignee at High
+  priority, including files, feedback and acceptance. Other admins and former
+  assignees do not receive or see task reminders. Legacy notices are filtered on read. Reminders are grouped by task
   and recipient in Home and Team Workspace, with a 30-second workspace refresh.
 - Installer accounts can access Team Workspace in addition to Home and Time Table.
 - Notifications are in-app only; no email or SMS is configured.

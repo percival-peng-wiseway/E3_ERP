@@ -44,29 +44,36 @@ test("local persistence, concurrent stale updates, and one weekly plan per owner
     const results = await Promise.allSettled([saveEntry({ ...task, progress: 30 }, member, members), saveEntry({ ...task, progress: 60 }, member, members)]);
     assert.equal(results.filter(r => r.status === "fulfilled").length, 1);
     assert.equal((await listEntries())[0].version, 2);
-    const assigned = await saveEntry({ ...input, title: "Notification test" }, admin, members, ["admin"]);
+    const assigned = await saveEntry({ ...input, title: "Notification test" }, admin, members);
     assert.deepEqual(assigned.notifications?.map(item => item.recipient).sort(), ["admin", "sam"]);
     assert.ok(assigned.notifications?.every(item => item.priority === "high"));
-    const updated = await saveEntry({ ...assigned, action: "start_work", update: "Started work" }, member, members, ["admin"]);
+    const updated = await saveEntry({ ...assigned, action: "start_work", update: "Started work" }, member, members);
     assert.equal(updated.notifications?.length, 2);
-    const submitted = await saveEntry({ ...updated, action: "submit_review" }, member, members, ["admin"]);
-    const feedback = await saveEntry({ ...submitted, action: "request_changes", update: "Please check measurements" }, admin, members, ["admin"]);
+    const submitted = await saveEntry({ ...updated, action: "submit_review" }, member, members);
+    const feedback = await saveEntry({ ...submitted, action: "request_changes", update: "Please check measurements" }, admin, members);
     assert.equal(feedback.notifications?.length, 2);
-    const fileTask = await saveEntry({ ...feedback, update: "Uploaded evidence" }, member, members, ["admin"], { name: "progress.txt", bytes: new TextEncoder().encode("test file") });
+    const fileTask = await saveEntry({ ...feedback, update: "Uploaded evidence" }, member, members, { name: "progress.txt", bytes: new TextEncoder().encode("test file") });
     assert.equal(fileTask.attachments?.length, 1);
     assert.equal(fileTask.notifications?.length, 2);
     assert.equal((await readAttachment(fileTask.id, fileTask.attachments![0].id)).bytes.toString(), "test file");
-    await assert.rejects(saveEntry({ ...fileTask }, other, members, ["admin"], { name: "no.txt", bytes: new Uint8Array([1]) }), /cannot edit/);
+    await assert.rejects(saveEntry({ ...fileTask }, other, members, { name: "no.txt", bytes: new Uint8Array([1]) }), /cannot edit/);
     const notification = fileTask.notifications!.find(item => item.recipient === "sam")!;
     await assert.rejects(markNotificationRead(notification.id, "other"), /not found/);
     await markNotificationRead(notification.id, "sam");
     const stored = (await listEntries()).find(item => item.id === fileTask.id)!;
     assert.equal(stored.notifications!.find(item => item.id === notification.id)!.read, true);
-    const reassigned = await saveEntry({ ...stored, owner: "admin", action: "start_work" }, admin, members, ["admin"]);
-    const review = await saveEntry({ ...reassigned, action: "submit_review" }, admin, members, ["admin"]);
-    const accepted = await saveEntry({ ...review, action: "accept" }, admin, members, ["admin"]);
+    const reassigned = await saveEntry({ ...stored, owner: "admin", action: "start_work" }, admin, members);
+    const review = await saveEntry({ ...reassigned, action: "submit_review" }, admin, members);
+    const accepted = await saveEntry({ ...review, action: "accept" }, admin, members);
     assert.equal(accepted.owner, "admin"); assert.equal(accepted.status, "done");
     assert.equal(taskReminders([accepted], "admin").length, 1);
+    assert.deepEqual(accepted.notifications?.map(item => item.recipient), ["admin"], "self-assigned requests have one reminder");
+    assert.equal(taskReminders([accepted], "sam").length, 0, "former assignees no longer receive reminders");
+    const delegated = await saveEntry(input, admin, members);
+    const unrelatedAdmin = { ...admin, username: "other" };
+    const edited = await saveEntry({ ...delegated, content: "Updated requirements" }, unrelatedAdmin, members);
+    assert.deepEqual(edited.notifications?.map(item => item.recipient).sort(), ["admin", "sam"], "an administrator editing the task does not become a notification recipient");
+    assert.equal(taskReminders([edited], "other").length, 0);
     await saveEntry({ ...input, kind: "weekly" }, member, members);
     await assert.rejects(saveEntry({ ...input, kind: "weekly" }, member, members), /already have a plan/);
   } finally { await rm(dir, { recursive: true, force: true }); }
@@ -142,4 +149,14 @@ test("image previews use raster signatures and never trust SVG or HTML content",
   assert.equal(imagePreviewType(new TextEncoder().encode("RIFF0000WEBP")), "image/webp");
   assert.equal(imagePreviewType(new TextEncoder().encode("<svg onload='alert(1)'>")), undefined);
   assert.equal(imagePreviewType(new TextEncoder().encode("<html>")), undefined);
+});
+
+test("legacy notifications are hidden from unrelated admins and former assignees", () => {
+  const task = applyEntry(input, admin, members);
+  task.assignedBy = undefined; // Legacy entries recover the assigner from creation history.
+  task.notifications = ["admin", "sam", "other"].map(recipient => ({ id: recipient, recipient, priority: "high", message: "Updated", at: task.updatedAt, read: false }));
+  assert.equal(taskReminders([task], "admin").length, 1);
+  assert.equal(taskReminders([task], "sam").length, 1);
+  assert.equal(taskReminders([task], "other").length, 0);
+  assert.equal(taskReminders([{ ...task, owner: "other" }], "sam").length, 0);
 });

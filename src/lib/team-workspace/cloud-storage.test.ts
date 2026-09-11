@@ -27,15 +27,19 @@ const admin = { username: "admin", displayName: "Admin", role: "admin" as const 
 const sam = { username: "sam", displayName: "Sam", role: "sales" as const };
 const request = { kind: "task", title: "Cloud task", owner: "sam", date: "2026-09-11", content: "Requirements", goals: "Outcome", attendees: "", status: "start", update: "" };
 test("production uses versioned cloud documents and private file keys, with bounded retry", async () => {
-  const task = await repository.saveEntry(request, admin, ["admin", "sam"], ["admin"]);
+  const task = await repository.saveEntry(request, admin, ["admin", "sam"]);
   assert.equal(fixture.value[0].id, task.id);
   assert.equal((await repository.listEntries()).length, 1);
+  fixture.value[0].notifications!.push({ id: "legacy-other-admin", recipient: "other-admin", priority: "high", message: "Legacy broadcast", at: task.updatedAt, read: false });
+  assert.deepEqual((await repository.listEntries())[0].notifications!.map(item => item.recipient).sort(), ["admin", "sam"]);
+  await assert.rejects(repository.markNotificationRead("legacy-other-admin", "other-admin"), /not found/);
   fixture.conflict = true;
-  const updated = await repository.saveEntry({ ...task, action: "save_employee", update: "Started" }, sam, ["admin", "sam"], ["admin"]);
+  const updated = await repository.saveEntry({ ...task, action: "save_employee", update: "Started" }, sam, ["admin", "sam"]);
   assert.equal(updated.status, "wip");
+  assert.deepEqual(fixture.value[0].notifications!.map(item => item.recipient).sort(), ["admin", "sam"]);
   await assert.rejects(repository.saveEntry({ ...task }, sam, ["admin", "sam"]), /changed/);
   fixture.conflict = true;
-  const uploaded = await repository.saveEntry({ ...updated, update: "Attached" }, sam, ["admin", "sam"], ["admin"], { name: "test.txt", bytes: new TextEncoder().encode("attachment test") });
+  const uploaded = await repository.saveEntry({ ...updated, update: "Attached" }, sam, ["admin", "sam"], { name: "test.txt", bytes: new TextEncoder().encode("attachment test") });
   assert.equal(fixture.puts, 1, "cloud contention must not re-upload the same KV key");
   assert.equal((await repository.readAttachment(task.id, uploaded.attachments![0].id)).bytes.toString(), "attachment test");
   const notice = uploaded.notifications!.find(item => item.recipient === "admin")!;

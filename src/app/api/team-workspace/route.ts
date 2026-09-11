@@ -27,7 +27,7 @@ export async function POST(request: Request) {
       await markNotificationRead(input.id, session.user.username); return json({ ok: true });
     }
     const team = await members();
-    const entry = await saveEntry(input, session.user, team.map(u => u.username), team.filter(u => u.role === "admin").map(u => u.username));
+    const entry = await saveEntry(input, session.user, team.map(u => u.username));
     return json({ entry });
   } catch (error) { if (error instanceof WorkError) return json({ error: error.message }, error.status); if (error instanceof SyntaxError) return json({ error: "Invalid JSON." }, 400); return json({ error: "Unable to save. Your changes have not been discarded; try again." }, 500); }
 }
