@@ -92,10 +92,13 @@ test("weekly cards are limited to the requested roster, including JiaQi as an ad
   assert.equal(updated.goals, "Plan next week's site visits");
 });
 
-test("weekly date ranges keep Monday–Sunday boundaries across years and daylight saving", () => {
-  assert.deepEqual(weeklyDateRanges("2027-01-04"), { start: "2027-01-04", end: "2027-01-10", nextStart: "2027-01-11", nextEnd: "2027-01-17" });
-  assert.deepEqual(weeklyDateRanges("2026-12-31"), { start: "2026-12-28", end: "2027-01-03", nextStart: "2027-01-04", nextEnd: "2027-01-10" });
-  assert.deepEqual(weeklyDateRanges("2026-10-04"), { start: "2026-09-28", end: "2026-10-04", nextStart: "2026-10-05", nextEnd: "2026-10-11" });
+test("weekly reports use the previous and selected Monday–Friday workweeks", () => {
+  assert.deepEqual(weeklyDateRanges("2026-09-07"), { start: "2026-09-07", end: "2026-09-11", previousStart: "2026-08-31", previousEnd: "2026-09-04" });
+  assert.deepEqual(weeklyDateRanges("2026-09-14"), { start: "2026-09-14", end: "2026-09-18", previousStart: "2026-09-07", previousEnd: "2026-09-11" });
+  assert.deepEqual(weeklyDateRanges("2026-09-13"), weeklyDateRanges("2026-09-07"), "weekend dates belong to the same reporting week");
+  assert.deepEqual(weeklyDateRanges("2027-01-04"), { start: "2027-01-04", end: "2027-01-08", previousStart: "2026-12-28", previousEnd: "2027-01-01" });
+  assert.deepEqual(weeklyDateRanges("2026-12-31"), { start: "2026-12-28", end: "2027-01-01", previousStart: "2026-12-21", previousEnd: "2026-12-25" });
+  assert.deepEqual(weeklyDateRanges("2026-10-05"), { start: "2026-10-05", end: "2026-10-09", previousStart: "2026-09-28", previousEnd: "2026-10-02" });
 });
 
 test("completion requires admin acceptance and supports return/rework/resubmission", () => {
