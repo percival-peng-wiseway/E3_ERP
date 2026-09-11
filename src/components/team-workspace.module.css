@@ -13,3 +13,35 @@
 .newTaskCard{margin-bottom:20px}
 
 .taskDetailLayout{display:grid;grid-template-columns:minmax(260px,.8fr) minmax(0,1.2fr);gap:38px}.taskInformation{padding-right:28px;border-right:1px solid #e6eaf1}.taskInformation dl{display:grid;gap:20px;margin:0 0 30px}.taskInformation dt{font-size:14px;color:#7c899c;margin-bottom:7px}.taskInformation dd{font-size:17px;color:#334155;margin:0;font-weight:500}.taskInformation h3{font-size:16px;margin:25px 0 10px}.taskInformation p{font-size:16px;line-height:1.8;white-space:pre-wrap;overflow-wrap:anywhere;margin-bottom:24px}.taskInformation>button{margin-top:12px}.taskResponsePanel{min-width:0}.taskAttachments>header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;gap:12px}.taskAttachments h3{font-size:17px;margin:0}.workspace .uploadControl{display:flex;align-items:center;gap:7px;position:relative;overflow:hidden;border:1px solid #dce2ef;border-radius:8px;padding:9px 13px;color:#625fc3;background:#fafaff;font-size:14px;cursor:pointer}.uploadControl input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%}.uploadControl:focus-within{outline:2px solid #9391e2}.attachmentGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.attachmentItem{display:flex;align-items:center;gap:12px;border:1px solid #e3e8f1;border-radius:9px;padding:10px;min-width:0}.attachmentItem>svg{color:#8491a7;flex-shrink:0}.attachmentItem>div{min-width:0}.attachmentItem a{display:block;color:#555b8b;font-size:14px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;text-decoration:none}.attachmentItem a:hover{text-decoration:underline}.attachmentItem small{display:block;margin-top:6px;font-size:12px;color:#8996a8}.attachmentItem small a{display:inline;font-size:12px}.workspace .imageThumb{padding:0;border:0;background:#f0f2f8;width:62px;height:62px;flex-shrink:0;overflow:hidden}.imageThumb img{width:100%;height:100%;object-fit:cover}.fileHint{font-size:14px;color:#8a96a7;padding:22px;background:#fafbfd;border:1px dashed #dbe2ee;border-radius:9px;text-align:center}.simpleTaskStatus{display:flex;align-items:center;justify-content:space-between;border-top:1px solid #e9edf3;margin-top:22px;padding:20px 0;font-size:15px;color:#7a879a}.simpleTaskStatus strong{font-size:13px;font-weight:500;border-radius:6px;background:#eff0fd;color:#6561b7;padding:6px 10px}.feedbackForms{display:grid;gap:22px}.feedbackBox{border:1px solid #e2e7f0;border-radius:11px;padding:18px;background:#fafbfe}.feedbackBox:last-of-type{background:#faf9ff}.workspace .feedbackBox label{font-size:16px;font-weight:600;color:#46516b;gap:12px}.workspace .feedbackBox textarea{font-size:16px;font-weight:400;line-height:1.6;padding:13px;min-height:112px}.feedbackBox textarea:read-only{background:#f5f6f9;color:#607087}.feedbackBox small{display:block;font-size:12px;color:#8a93a4;margin-top:12px}.inlineTask button{font-size:14px}.inlineTask h2{font-size:26px}.imagePreview{border:0;border-radius:14px;padding:18px;width:min(1000px,92vw);max-height:90dvh;overflow:auto}.imagePreview::backdrop{background:#152235aa}.imagePreview header{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-bottom:15px}.imagePreview strong{overflow-wrap:anywhere}.imagePreview>img{display:block;max-width:100%;max-height:74dvh;object-fit:contain;margin:auto}@media(max-width:900px){.taskDetailLayout{grid-template-columns:1fr;gap:24px}.taskInformation{border-right:0;border-bottom:1px solid #e6eaf1;padding:0 0 24px}.taskInformation dl{grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.attachmentGrid{grid-template-columns:1fr}}@media(max-width:520px){.taskInformation dl{grid-template-columns:1fr}.feedbackBox{padding:14px}}
+
+/* Department overview: short previews, with full reports in the weekly dialog. */
+.departmentGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px;align-items:start}
+.department{min-width:0}
+.department>header{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;padding:0 3px}
+.department>header h3{font-size:15px;font-weight:600;margin:0;color:#485772}
+.department>header>span{font-size:12px;color:#78869c;background:#e9edf5;border-radius:6px;padding:3px 7px}
+.department .memberGrid{grid-template-columns:1fr;gap:14px}
+.memberGrid>.memberCard>header{padding:13px 14px;gap:8px}
+.memberGrid .memberAvatar{width:32px;height:32px;border-radius:9px;font-size:15px}
+.memberGrid .memberOpen strong{font-size:15px}
+.memberGrid .memberOpen small{font-size:10px;line-height:1.4;margin-top:4px}
+.memberGrid>.memberCard .weekContent>section{padding:12px 15px;min-height:0}
+.memberGrid>.memberCard .weekContent h4{font-size:11px;letter-spacing:.3px;margin-bottom:4px}
+.memberGrid>.memberCard .weekDates{font-size:10px;margin-bottom:7px}
+.memberGrid>.memberCard .weekContent p{font-size:13px;line-height:1.6;max-height:42px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.memberGrid>.memberCard>footer,.memberGrid>.memberCard>.notice{display:none}
+.workspace .memberGrid .openRecords{padding:10px;font-size:11px}
+.weekDialog{width:min(1200px,calc(100vw - 64px))}
+.weekDialogHeader h2{font-size:30px}
+.weekDialogHeader p{font-size:15px;line-height:1.6}
+.weekDialog .weekContent h4{font-size:16px;letter-spacing:0;text-transform:none;color:#495973}
+.weekDialog .weekDates{font-size:14px;margin-bottom:18px}
+.weekDialog .weekContent p{font-size:18px;line-height:1.85;max-height:none}
+.workspace .expandedWeek label{font-size:16px;font-weight:600;color:#495973}
+.workspace .expandedWeek textarea{font-size:18px;font-weight:400;line-height:1.8;padding:14px}
+.weekDialog .memberCard footer>span{font-size:13px}
+.weekDialog button{font-size:14px}
+.weekDialog .pastWeeks>p{font-size:14px;line-height:1.6}
+.weekDialog .pastWeek summary{font-size:15px}
+@media(max-width:1250px){.departmentGrid{grid-template-columns:repeat(2,minmax(0,1fr));gap:24px 18px}}
+@media(max-width:700px){.departmentGrid{grid-template-columns:1fr;gap:24px}.weekDialog{width:calc(100vw - 20px)}.weekDialog .weekContent p,.workspace .expandedWeek textarea{font-size:18px}}

@@ -1,12 +1,12 @@
 import type { ErpUser } from "../auth/types";
 
 export const WEEKLY_MEMBERS = [
-  { username: "ruihan", displayName: "RuiHan" },
-  { username: "sam", displayName: "Sam" },
-  { username: "wendy", displayName: "Wendy" },
-  { username: "hogan", displayName: "Hogan" },
-  { username: "kevin", displayName: "Kevin" },
-  { username: "jiaqi", displayName: "JiaQi" },
+  { username: "ruihan", displayName: "RuiHan", department: "Sales & Marketing" },
+  { username: "sam", displayName: "Sam", department: "Sales & Marketing" },
+  { username: "wendy", displayName: "Wendy", department: "Operation" },
+  { username: "hogan", displayName: "Hogan", department: "Operation" },
+  { username: "kevin", displayName: "Kevin", department: "Procurement" },
+  { username: "jiaqi", displayName: "JiaQi", department: "Finance & HR" },
 ] as const;
 export function isWeeklyMember(username: string) {
   return WEEKLY_MEMBERS.some(member => member.username === username);
@@ -62,7 +62,7 @@ export function weeklyDateRanges(week: string) {
     date.setUTCDate(date.getUTCDate() + days);
     return date.toISOString().slice(0, 10);
   };
-  return { start, end: offset(6), nextStart: offset(7), nextEnd: offset(13) };
+  return { start, end: offset(6), previousStart: offset(-7), previousEnd: offset(-1) };
 }
 
 export function applyEntry(raw: Record<string, unknown>, user: ErpUser, members: string[], old?: WorkEntry): WorkEntry {

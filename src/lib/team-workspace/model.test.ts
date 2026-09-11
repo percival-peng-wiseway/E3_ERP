@@ -86,8 +86,9 @@ test("weekly cards are limited to the requested roster, including JiaQi as an ad
 });
 
 test("weekly date ranges keep Monday–Sunday boundaries across years and daylight saving", () => {
-  assert.deepEqual(weeklyDateRanges("2026-12-31"), { start: "2026-12-28", end: "2027-01-03", nextStart: "2027-01-04", nextEnd: "2027-01-10" });
-  assert.deepEqual(weeklyDateRanges("2026-10-04"), { start: "2026-09-28", end: "2026-10-04", nextStart: "2026-10-05", nextEnd: "2026-10-11" });
+  assert.deepEqual(weeklyDateRanges("2027-01-04"), { start: "2027-01-04", end: "2027-01-10", previousStart: "2026-12-28", previousEnd: "2027-01-03" });
+  assert.deepEqual(weeklyDateRanges("2026-12-31"), { start: "2026-12-28", end: "2027-01-03", previousStart: "2026-12-21", previousEnd: "2026-12-27" });
+  assert.deepEqual(weeklyDateRanges("2026-10-04"), { start: "2026-09-28", end: "2026-10-04", previousStart: "2026-09-21", previousEnd: "2026-09-27" });
 });
 
 test("completion requires admin acceptance and supports return/rework/resubmission", () => {

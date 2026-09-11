@@ -17,8 +17,10 @@ feature needs no new migration or secrets.
 ## Weekly tasks & goals
 
 Six fixed cards: RuiHan, Sam, Wendy, Hogan, Kevin and JiaQi. Each Monday–Sunday week
-contains completed work and next week's plan. Everyone can read; only the card's
-owner can edit. Cards open an enlarged view with dated, collapsible prior weeks.
+contains the previous week's completed work and the selected week's plan. Everyone can read; only the card's
+owner can edit. Compact cards are grouped into Sales & Marketing (RuiHan, Sam),
+Procurement (Kevin), Operation (Hogan, Wendy), and Finance & HR (JiaQi). Cards open
+an enlarged report with dated, collapsible prior weeks.
 
 ## Task requests
 
