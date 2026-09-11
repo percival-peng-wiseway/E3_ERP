@@ -2,7 +2,7 @@ import { mkdir, readFile, rename, writeFile, unlink } from "node:fs/promises";
 import path from "node:path";
 import type { ErpUser } from "../auth/types";
 // @ts-expect-error Node source tests use explicit extensions.
-import { applyEntry, TASK_LABELS, taskNotificationRecipients, WorkError, type WorkEntry } from "./model.ts";
+import { applyEntry, TASK_LABELS, taskNotificationRecipients, weeklyDepartment, WorkError, type WorkEntry } from "./model.ts";
 // @ts-expect-error Node source tests use explicit extensions.
 import { imagePreviewType } from "./image-type.ts";
 // @ts-expect-error Node source tests use explicit extensions.
@@ -24,7 +24,7 @@ function normalize(data: unknown): WorkEntry[] {
   return data.map((entry: WorkEntry) => {
     const status = (value: string) => ({ todo: "start", in_progress: "wip", blocked: "feedback" }[value] || value) as WorkEntry["status"];
     const returned = entry.history.filter((item, index) => status(item.status) === "feedback" && index > 0 && status(entry.history[index - 1].status) === "review").at(-1);
-    return { ...entry, notifications: entry.kind === "task" ? (entry.notifications || []).filter(item => taskNotificationRecipients(entry).has(item.recipient)) : entry.notifications, assignedBy: entry.assignedBy || entry.history[0]?.by,
+    return { ...entry, department: entry.kind === "weekly" ? weeklyDepartment(entry) : entry.department, notifications: entry.kind === "task" ? (entry.notifications || []).filter(item => taskNotificationRecipients(entry).has(item.recipient)) : entry.notifications, assignedBy: entry.assignedBy || entry.history[0]?.by,
       employeeFeedback: entry.employeeFeedback ?? entry.history.filter(item => item.by === entry.owner && ["wip", "review"].includes(status(item.status))).at(-1)?.note ?? "",
       adminFeedback: entry.adminFeedback ?? returned?.note ?? "",
       status: status(entry.status), history: entry.history.map(item => ({ ...item, status: status(item.status) })) };
@@ -87,7 +87,7 @@ export function saveEntry(input: Record<string, unknown>, user: ErpUser, members
       const reason = !old ? "New task assigned" : attachment ? "New file uploaded" : old.status !== entry.status ? TASK_LABELS[entry.status] : "Task updated";
       entry.notifications = Array.from(recipients, recipient => ({ id: crypto.randomUUID(), recipient, priority: "high" as const, message: `${reason}: ${entry.title}`, at: entry.updatedAt, read: false }));
     }
-    if (entry.kind === "weekly" && entries.some(e => e.id !== entry.id && e.kind === "weekly" && e.owner === entry.owner && e.date === entry.date)) throw new WorkError("You already have a plan for this week. Edit the existing plan.", 409);
+    if (entry.kind === "weekly" && entries.some(e => e.id !== entry.id && e.kind === "weekly" && e.owner === entry.owner && e.date === entry.date && weeklyDepartment(e) === entry.department)) throw new WorkError("You already have a plan for this department and week. Edit the existing plan.", 409);
     const updated = old ? entries.map(e => e.id === entry.id ? entry : e) : [entry, ...entries];
     await writeStored(updated, version, bindings);
     return entry;

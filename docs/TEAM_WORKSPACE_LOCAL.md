@@ -21,8 +21,12 @@ Six team members: RuiHan, Sam, Wendy, Hogan, Kevin and JiaQi. Each report uses M
 the selected week itself. Dates advance together when the reporting week changes. Everyone can read; only the card's
 owner can edit. Compact cards are grouped into Sales & Marketing (RuiHan, Sam, Hogan),
 Procurement (Kevin, Wendy), Operation (Hogan, Wendy, Kevin), and Finance & HR (JiaQi). Cards open
-an enlarged report with dated, collapsible prior weeks. Members with multiple
-departments share one weekly record across their cards; edits stay in sync.
+an enlarged report with dated, collapsible prior weeks. Each department + member + week has its own record, update status and history.
+The nine cards are independent, even for the same person. Owners can edit only
+their assigned department cards. Existing records without a department stay in
+the original department (Hogan/Wendy: Operation; Kevin: Procurement); the added
+departments start empty. This compatibility mapping preserves IDs and content
+on read and is persisted on the next normal workspace save.
 
 ## Task requests
 

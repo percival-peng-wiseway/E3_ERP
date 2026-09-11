@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import type { ErpUser } from "@/lib/auth/types";
-import { WEEKLY_MEMBERS, weeklyDateRanges, type WorkEntry } from "@/lib/team-workspace/model";
+import { WEEKLY_MEMBERS, weeklyDateRanges, weeklyDepartment, type WorkEntry } from "@/lib/team-workspace/model";
 import styles from "./team-workspace.module.css";
 
 type Props = {
@@ -22,8 +22,8 @@ export function WeeklyMemberCards(props: Props) {
         {WEEKLY_MEMBERS.filter(member => member.departments.some(name => name === department))
           .sort((a, b) => Number(a.departments[0] !== department) - Number(b.departments[0] !== department)
             || (department === "Operation" ? Number(b.username === "hogan") - Number(a.username === "hogan") : 0))
-          .map(member => <MemberCard key={`${member.username}:${props.week}`} {...props}
-            member={{ ...member, department }} entry={props.entries.find(entry => entry.kind === "weekly" && entry.owner === member.username && entry.date === props.week)} />)}
+          .map(member => <MemberCard key={`${department}:${member.username}:${props.week}`} {...props}
+            member={{ ...member, department }} entry={props.entries.find(entry => entry.kind === "weekly" && entry.owner === member.username && weeklyDepartment(entry) === department && entry.date === props.week)} />)}
       </div>
     </section>)}
   </div>;
@@ -43,7 +43,7 @@ function MemberCard({ member, entry, entries, week, currentUser, onSaved, onEdit
   const isOwner = currentUser.username === member.username;
 
   const ranges = weeklyDateRanges(week);
-  const past = entries.filter(record => record.kind === "weekly" && record.owner === member.username && record.date < ranges.start)
+  const past = entries.filter(record => record.kind === "weekly" && record.owner === member.username && weeklyDepartment(record) === member.department && record.date < ranges.start)
     .sort((left, right) => right.date.localeCompare(left.date));
   useEffect(() => {
     if (!open) return;
@@ -62,7 +62,7 @@ function MemberCard({ member, entry, entries, week, currentUser, onSaved, onEdit
   function edit() {
     setDraft(entry ? { ...entry, update: "" } : {
       id: "", kind: "weekly", title: `${member.displayName}'s weekly update`, date: week,
-      owner: member.username, content: "", goals: "", attendees: "", status: "start",
+      owner: member.username, department: member.department, content: "", goals: "", attendees: "", status: "start",
       progress: 0, update: "", version: 0, createdAt: "", updatedAt: "", history: [],
     });
     setError(""); setSaved(false); onEditing(true);
@@ -99,9 +99,9 @@ function MemberCard({ member, entry, entries, week, currentUser, onSaved, onEdit
   </>;
 
   return <>
-    <article className={styles.memberCard} aria-label={`${member.displayName} weekly card`}
+    <article className={styles.memberCard} aria-label={`${member.displayName} ${member.department} weekly card`}
       onClick={event => { if (!(event.target as HTMLElement).closest("button")) setOpen(true); }}>
-      <header><button type="button" className={styles.memberOpen} aria-label={`Open ${member.displayName} weekly records`} onClick={() => setOpen(true)}>
+      <header><button type="button" className={styles.memberOpen} aria-label={`Open ${member.displayName} ${member.department} weekly records`} onClick={() => setOpen(true)}>
         <span className={styles.memberAvatar}>{member.displayName.slice(0, 1)}</span>
         <span><strong>{member.displayName}{isOwner && " · You"}</strong><small>{dateRange(ranges.start, ranges.end)}</small></span>
         <span aria-hidden="true">↗</span>

@@ -2,12 +2,13 @@
 import { useEffect, useRef, useState } from "react";
 import { CalendarDays, ClipboardList, Target, Plus, RefreshCw, X, ArrowRight } from "lucide-react";
 import type { ErpUser } from "@/lib/auth/types";
-import { canEdit, monday, isWeeklyMember, taskReminders, TASK_LABELS, type WorkEntry, type WorkKind, type WorkStatus } from "@/lib/team-workspace/model";
+import { canEdit, monday, WEEKLY_MEMBERS, weeklyDepartment, taskReminders, TASK_LABELS, type WorkEntry, type WorkKind, type WorkStatus } from "@/lib/team-workspace/model";
 import { TaskWorkflowActions } from "./task-workflow-actions";
 import { TaskFiles } from "./task-files";
 import { WeeklyMemberCards } from "./weekly-member-cards";
 import styles from "./team-workspace.module.css";
 const labels = TASK_LABELS;
+const weeklySlots = WEEKLY_MEMBERS.flatMap(member => member.departments.map(department => ({ owner: member.username, department })));
 function today() { return new Intl.DateTimeFormat("en-CA", { timeZone: "Australia/Melbourne", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()); }
 export function TeamWorkspace({ currentUser, openTaskTarget }: { currentUser: ErpUser; openTaskTarget?: { entityId: string; requestId: number } }) {
   const openedTarget = useRef<number | null>(null);
@@ -114,7 +115,7 @@ export function TeamWorkspace({ currentUser, openTaskTarget }: { currentUser: Er
   </button>;
   return <section className={styles.workspace}>
     <header className={styles.heading}><div><span className={styles.eyebrow}>TEAM COLLABORATION {process.env.NODE_ENV === "development" && <span>Local preview</span>}</span><h1>Team Workspace</h1><p>Weekly plans, assigned work and administrator acceptance.</p></div><button onClick={() => void load()} disabled={loading || busy || weeklyEditing}><RefreshCw size={16} />Refresh</button></header>
-    <div className={styles.stats} style={{ gridTemplateColumns: "repeat(2, 1fr)" }}><div><Target size={21} /><span><strong>{entries.filter(e => e.kind === "weekly" && e.date === week && isWeeklyMember(e.owner)).length}</strong>/ 6 updated · week of {week}</span></div><div><ClipboardList size={21} /><span><strong>{entries.filter(e => e.kind === "task" && e.status !== "done").length}</strong>Open assigned tasks</span></div></div>
+    <div className={styles.stats} style={{ gridTemplateColumns: "repeat(2, 1fr)" }}><div><Target size={21} /><span><strong>{weeklySlots.filter(slot => entries.some(e => e.kind === "weekly" && e.date === week && e.owner === slot.owner && weeklyDepartment(e) === slot.department)).length}</strong>/ {weeklySlots.length} cards updated · week of {week}</span></div><div><ClipboardList size={21} /><span><strong>{entries.filter(e => e.kind === "task" && e.status !== "done").length}</strong>Open assigned tasks</span></div></div>
     <details className={styles.taskNotifications}><summary>My task reminders · {notifications.length} tasks <span>High priority</span></summary>
       {!notifications.length && <p>No unread task notifications.</p>}{notifications.map(notification => <button type="button" key={notification.id} onClick={() => { if (weeklyEditing && !window.confirm("Discard unsaved weekly edits?")) return; setWeeklyEditing(false); void openNotification(notification.id, notification.entry); }}><strong>High</strong><span>{notification.message}<small>{new Date(notification.at).toLocaleString("en-AU")}</small></span></button>)}
     </details>

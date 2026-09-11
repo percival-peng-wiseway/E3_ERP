@@ -163,3 +163,21 @@ test("legacy notifications are hidden from unrelated admins and former assignees
   assert.equal(taskReminders([task], "other").length, 0);
   assert.equal(taskReminders([{ ...task, owner: "other" }], "sam").length, 0);
 });
+
+test("department-specific weekly reports enforce ownership and cannot be moved", () => {
+  const wendy = { username: "wendy", displayName: "Wendy", role: "pm" as const };
+  const operation = applyEntry({ ...input, kind: "weekly", department: "Operation" }, wendy, ["wendy"]);
+  const procurement = applyEntry({ ...input, kind: "weekly", department: "Procurement" }, wendy, ["wendy"]);
+  assert.notEqual(operation.id, procurement.id);
+  assert.equal(operation.department, "Operation");
+  assert.equal(procurement.department, "Procurement");
+  assert.equal(canEdit(operation, wendy), true);
+  assert.equal(canEdit(procurement, admin), false);
+  assert.throws(() => applyEntry({ ...operation, department: "Procurement" }, wendy, ["wendy"], operation), /cannot be moved/);
+  assert.throws(() => applyEntry({ ...input, kind: "weekly", department: "Sales & Marketing" }, wendy, ["wendy"]), /assigned departments/);
+  assert.throws(() => applyEntry({ ...input, kind: "weekly", department: "Procurement" }, member, members), /assigned departments/);
+  const legacy = { ...operation, department: undefined };
+  const edited = applyEntry({ ...legacy, content: "Updated legacy report" }, wendy, ["wendy"], legacy);
+  assert.equal(edited.department, "Operation");
+  assert.equal(edited.id, operation.id);
+});

@@ -18,6 +18,7 @@ export type WorkEntry = {
   id: string; kind: WorkKind; title: string; date: string; owner: string;
   content: string; goals: string; attendees: string; status: WorkStatus;
   progress: number; update: string; version: number; createdAt: string; updatedAt: string;
+  department?: string;
   assignedBy?: string;
   employeeFeedback?: string;
   adminFeedback?: string;
@@ -25,6 +26,13 @@ export type WorkEntry = {
   notifications?: { id: string; recipient: string; priority: "high"; message: string; at: string; read: boolean }[];
   history: { at: string; by: string; status: WorkStatus; progress: number; note: string }[];
 };
+/** Records created before department-specific cards belong to the original department. */
+export function weeklyDepartment(entry: Pick<WorkEntry, "owner" | "department">) {
+  return entry.department ?? WEEKLY_MEMBERS.find(member => member.username === entry.owner)?.departments[0];
+}
+export function hasWeeklyDepartment(username: string, department: unknown) {
+  return WEEKLY_MEMBERS.find(member => member.username === username)?.departments.some(name => name === department) ?? false;
+}
 export const TASK_LABELS: Record<WorkStatus, string> = { start: "Submitted", wip: "In progress", review: "Awaiting acceptance", feedback: "Changes requested", done: "Done" };
 export type TaskAction = "start_work" | "submit_review" | "request_changes" | "accept";
 export function taskActions(entry: WorkEntry, user: ErpUser): { action: TaskAction; label: string }[] {
@@ -50,7 +58,7 @@ export class WorkError extends Error {
 }
 export function canEdit(entry: WorkEntry, user: ErpUser) {
   return entry.kind === "meeting" ? entry.owner === user.username || user.role === "admin"
-    : entry.kind === "weekly" ? entry.owner === user.username && isWeeklyMember(user.username)
+    : entry.kind === "weekly" ? entry.owner === user.username && hasWeeklyDepartment(user.username, weeklyDepartment(entry))
     : user.role === "admin" || entry.owner === user.username;
 }
 export function monday(date: string) {
@@ -87,6 +95,13 @@ export function applyEntry(raw: Record<string, unknown>, user: ErpUser, members:
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(date)) || new Date(date).toISOString().slice(0,10) !== date) throw new WorkError("Choose a valid date.");
   const owner = kind === "task" ? str("owner", 100, true) : old?.owner || user.username;
   if (kind === "task" && !members.includes(owner)) throw new WorkError("Choose an active team member.");
+  let department: string | undefined;
+  if (kind === "weekly") {
+    const requested = raw.department === undefined ? weeklyDepartment(old || { owner }) : raw.department;
+    if (typeof requested !== "string" || !hasWeeklyDepartment(owner, requested)) throw new WorkError("Choose one of your assigned departments.", 403);
+    if (old && requested !== weeklyDepartment(old)) throw new WorkError("A weekly record cannot be moved to another department.", 403);
+    department = requested;
+  }
   const content = str("content", 12000), goals = str("goals", 6000), attendees = str("attendees", 2000), update = str("update", 4000);
   let status = raw.status as WorkStatus;
   if (kind === "task") {
@@ -118,7 +133,7 @@ export function applyEntry(raw: Record<string, unknown>, user: ErpUser, members:
   if (old?.kind === "task" && user.role !== "admin" && (owner !== old.owner || title !== old.title || date !== old.date || content !== old.content || goals !== old.goals || attendees !== old.attendees)) throw new WorkError("Only administrators can change task assignments and requirements.", 403);
   const at = new Date().toISOString();
   const progress = kind === "task" ? 0 : raw.progress as number;
-  return { id: old?.id || crypto.randomUUID(), kind: kind as WorkKind, title, date: kind === "weekly" ? monday(date) : date, owner, content, goals, attendees, status, progress, update,
+  return { id: old?.id || crypto.randomUUID(), kind: kind as WorkKind, title, date: kind === "weekly" ? monday(date) : date, owner, department, content, goals, attendees, status, progress, update,
     assignedBy: old?.assignedBy || (old ? old.history[0]?.by : user.username),
     employeeFeedback: raw.action === "save_employee" || raw.action === "employee_review" ? update : old?.employeeFeedback || "",
     adminFeedback: raw.action === "admin_feedback" || raw.action === "request_changes" || raw.action === "accept" && update ? update : old?.adminFeedback || "",

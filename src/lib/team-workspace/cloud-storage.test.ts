@@ -52,3 +52,34 @@ test("missing production bindings fail closed instead of using local files", asy
   try { await assert.rejects(repository.listEntries(), /requires ERP_DB/); }
   finally { fixture.missing = false; }
 });
+
+test("cloud weekly records isolate departments and preserve legacy reports", async () => {
+  fixture.value = []; fixture.version = 0;
+  const wendy = { username: "wendy", displayName: "Wendy", role: "pm" as const };
+  const weekly = { ...request, kind: "weekly", progress: 0, content: "Original operations report", goals: "Operations plan" };
+  const original = await repository.saveEntry(weekly, wendy, ["wendy"]);
+  delete fixture.value[0].department; // Simulate a record written before department separation.
+  const legacy = (await repository.listEntries())[0];
+  assert.equal(legacy.department, "Operation");
+  assert.equal(legacy.id, original.id);
+  assert.equal(legacy.content, "Original operations report");
+  assert.equal(fixture.value.length, 1, "legacy reads must not duplicate content into additional departments");
+  const procurement = await repository.saveEntry({ ...weekly, department: "Procurement", content: "Purchase stock", goals: "Confirm supplier" }, wendy, ["wendy"]);
+  assert.notEqual(procurement.id, original.id);
+  await assert.rejects(repository.saveEntry({ ...weekly, department: "Procurement" }, wendy, ["wendy"]), /already have a plan/);
+  await assert.rejects(repository.saveEntry({ ...weekly, department: "Operation" }, wendy, ["wendy"]), /already have a plan/);
+  await Promise.all([
+    repository.saveEntry({ ...legacy, content: "Updated operations" }, wendy, ["wendy"]),
+    repository.saveEntry({ ...procurement, content: "Updated procurement" }, wendy, ["wendy"]),
+  ]);
+  const records = await repository.listEntries();
+  assert.equal(records.find(record => record.id === original.id)?.content, "Updated operations");
+  assert.equal(records.find(record => record.id === procurement.id)?.content, "Updated procurement");
+  assert.equal(records.find(record => record.id === original.id)?.goals, "Operations plan");
+  assert.equal(records.find(record => record.id === procurement.id)?.goals, "Confirm supplier");
+  assert.equal(records.find(record => record.id === original.id)?.history.length, 2);
+  assert.equal(records.find(record => record.id === procurement.id)?.history.length, 2);
+  const nextWeek = await repository.saveEntry({ ...weekly, department: "Procurement", date: "2026-09-14" }, wendy, ["wendy"]);
+  assert.notEqual(nextWeek.id, procurement.id);
+  assert.equal((await repository.listEntries()).length, 3);
+});
