@@ -1,6 +1,8 @@
 import type { ErpUser } from "@/lib/auth/types";
 
 export const ERP_USERS: readonly ErpUser[] = [
+  { username: "leo", displayName: "Leo", role: "installer" },
+  { username: "other", displayName: "Other", role: "installer" },
   { username: "percival", displayName: "Percival", role: "admin" },
   { username: "steve", displayName: "Steve", role: "admin" },
   { username: "jerry", displayName: "Jerry", role: "admin" },

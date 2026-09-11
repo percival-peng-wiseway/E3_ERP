@@ -92,7 +92,11 @@ const UserManagementDialog = dynamic(
   { ssr: false, loading: WorkspaceLoading },
 );
 
-type ModuleId = "home" | "files" | "inventory" | "quotations" | "projects" | "site-visits" | "payments" | "reimbursements" | "reports";
+const InstallerWorkspace = dynamic(() => import("./installer-workspace").then((module) => module.InstallerWorkspace), { loading: () => <WorkspaceLoading /> });
+
+const TeamWorkspace = dynamic(() => import("./team-workspace").then(module => module.TeamWorkspace), { loading: () => <WorkspaceLoading /> });
+
+type ModuleId = "team" | "home" | "files" | "inventory" | "quotations" | "projects" | "site-visits" | "payments" | "reimbursements" | "reports";
 type EntityNavigationTarget = { module: ModuleId; entityId: string; requestId: number };
 
 const NAVIGATION: Array<{
@@ -103,6 +107,7 @@ const NAVIGATION: Array<{
     group: "Workspace",
     items: [
       { id: "home", label: "Home", icon: Home, enabled: true },
+      { id: "team", label: "Team Workspace", icon: ClipboardList, enabled: true },
       { id: "projects", label: "Time Table", icon: ClipboardList, enabled: true },
       { id: "payments", label: "Project Track", icon: CreditCard, enabled: true },
       { id: "site-visits", label: "Site Visiting", icon: MapPin, enabled: true },
@@ -115,6 +120,7 @@ const NAVIGATION: Array<{
 ];
 
 const MODULE_LABELS: Record<ModuleId, string> = {
+  team: "Team Workspace",
   home: "Home",
   files: "Files",
   inventory: "Inventory",
@@ -129,6 +135,11 @@ const MODULE_LABELS: Record<ModuleId, string> = {
 const ERP_BROWSER_ACCOUNT_KEY = "e3-erp-browser-account:v1";
 const LEGACY_AGENT_CONVERSATION_KEY = "e3-agent-conversation:v1";
 export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
+  if (currentUser.role === "installer") return <InstallerWorkspace currentUser={currentUser} />;
+  return <EmployeeWorkspace currentUser={currentUser as ErpUser & { role: Exclude<ErpUser["role"], "installer"> }} />;
+}
+
+function EmployeeWorkspace({ currentUser }: { currentUser: ErpUser & { role: Exclude<ErpUser["role"], "installer"> } }) {
   const [activeModule, setActiveModule] = useState<ModuleId>("home");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [agentTraceSidebarOpen, setAgentTraceSidebarOpen] = useState(false);
@@ -486,7 +497,7 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
             </div>
           ) : null}
         </div>
-        <main className={`desk-main ${activeModule === "home" || activeModule === "files" || activeModule === "projects" || activeModule === "site-visits" || activeModule === "payments" || activeModule === "reimbursements" ? "wide-workspace" : ""}`}>
+        <main className={`desk-main ${activeModule === "team" || activeModule === "home" || activeModule === "files" || activeModule === "projects" || activeModule === "site-visits" || activeModule === "payments" || activeModule === "reimbursements" ? "wide-workspace" : ""}`}>
           <div className="persistent-home-workspace" hidden={activeModule !== "home"}>
             <HomeCollaborationWorkspace
               currentUser={currentUser}
@@ -498,6 +509,7 @@ export function ERPWorkspace({ currentUser }: { currentUser: ErpUser }) {
               onNavigate={(module, entityId) => navigate(module, true, entityId)}
             />
           </div>
+          {activeModule === "team" && <TeamWorkspace currentUser={currentUser} openTaskTarget={entityNavigationTarget?.module === "team" ? entityNavigationTarget : undefined} />}
           {activeModule === "files" && <FilesWorkspace currentUser={currentUser} />}
           {activeModule === "inventory" && <InventoryOperationsWorkspace currentUser={currentUser} />}
           {activeModule === "quotations" && <QuoteHelpWorkspace />}

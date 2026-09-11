@@ -43,7 +43,7 @@ export class KnowledgeIndexWorkflow extends WorkflowEntrypoint<
           await processKnowledgeIndexJob(jobId, {
             workerId: `knowledge-workflow:${event.instanceId}`,
             leaseSeconds: KNOWLEDGE_INDEX_EXECUTION_CONFIG.workflowLeaseSeconds,
-            deadlineAt: Date.now() + KNOWLEDGE_INDEX_EXECUTION_CONFIG.workflowProviderTimeoutMs,
+            deadlineAt: Date.now() + 90_000 + KNOWLEDGE_INDEX_EXECUTION_CONFIG.workflowProviderTimeoutMs,
             providerTimeoutMs: KNOWLEDGE_INDEX_EXECUTION_CONFIG.workflowProviderTimeoutMs,
           });
         });

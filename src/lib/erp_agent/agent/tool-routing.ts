@@ -22,6 +22,12 @@ function hasInventoryIdentifier(message: string): boolean {
 }
 
 export function isKnowledgeIntent(message: string): boolean {
+  if (/\.(?:pdf|docx?|txt|md)\b/iu.test(message)) return true;
+  // Device operating questions need manuals even when the user does not say "manual".
+  const device = /\b(?:battery|inverter|foxcloud|foxess)\b|电池|逆变器/iu.test(message);
+  const setting = /\b(?:mode|settings?|configure|configuration)\b|模式|设置|配置/iu.test(message);
+  const howTo = /\b(?:how|switch|change|select|configure|enable|disable)\b|怎么|如何|切换|选择|更改|开启|关闭/iu.test(message);
+  if (device && setting && howTo) return true;
   return /\b(?:policy|policies|procedure|procedures|process|manual|handbook|guide|guidance|knowledge\s*base|documentation|document|documented|warranty|warranties|specification|troubleshoot(?:ing)?|faq|internal\s+knowledge|kb[-_][a-z0-9_-]+|e\d{3,4})\b|\b(?:acceptance\s+tolerance|export\s+(?:acceptance|test))\b|政策|流程|程序|手册|指南|知识库|文档|文件规定|保修|质保|规范|故障排查|内部知识/iu.test(message);
 }
 

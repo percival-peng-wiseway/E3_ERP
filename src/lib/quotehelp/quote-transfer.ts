@@ -55,6 +55,12 @@ function normalizeImportedQuote(entry: unknown, index: number): QuoteInputs {
     .map(([key, value]) => [key, optionalNumber(value)] as const)
     .filter((entry): entry is [string, number] => entry[1] !== undefined));
 
+  const rawItemNames = isRecord(raw.itemNames) ? raw.itemNames : {};
+  const itemNames = Object.fromEntries(Object.entries(rawItemNames)
+    .filter((entry): entry is [string, string] => typeof entry[1] === "string")
+    .map(([key, value]) => [key, value.trim().slice(0, 200)])
+    .filter(([, value]) => value));
+
   const customItems = Array.isArray(raw.customItems) ? raw.customItems.slice(0, 100).map((item) => {
     const custom = isRecord(item) ? item : {};
     return {
@@ -125,6 +131,7 @@ function normalizeImportedQuote(entry: unknown, index: number): QuoteInputs {
     manualSolarStc: optionalNumber(raw.manualSolarStc),
     manualBatteryStc: optionalNumber(raw.manualBatteryStc),
     manualMargins,
+    itemNames,
     customItems,
     manualCosts,
   };

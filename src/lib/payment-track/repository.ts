@@ -1,3 +1,7 @@
+// @ts-expect-error -- focused Node ESM tests require the explicit extension.
+import { confirmedCustomerPayments, MAX_RECEIVABLE_CENTS } from "./amount-due.ts";
+// @ts-expect-error -- focused Node ESM tests require the explicit extension.
+import { parsePaymentTrackCustomer } from "./create-input.ts";
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -331,7 +335,7 @@ async function writeStoredProjects(projects: StoredProject[], expectedVersion: n
   await rename(temporaryPath, recordsPath);
 }
 
-function withMutation<T>(work: () => Promise<T>): Promise<T> {
+async function withMutation<T>(work: () => Promise<T>): Promise<T> {
   const retryingWork = async () => {
     for (let attempt = 0; attempt < MAXIMUM_STORAGE_RETRIES; attempt += 1) {
       try {
@@ -346,6 +350,9 @@ function withMutation<T>(work: () => Promise<T>): Promise<T> {
       "storage_conflict",
     );
   };
+  // Workers must not await another request's I/O through an isolate-wide queue.
+  // D1 version checks and the retries above protect concurrent cloud writes.
+  if (await erpCloudflareBindings()) return retryingWork();
   const result = mutationQueue.then(retryingWork, retryingWork);
   mutationQueue = result.then(() => undefined, () => undefined);
   return result;
@@ -366,9 +373,7 @@ function publicProject(project: StoredProject): PaymentTrackProject {
     ...publicFields
   } = project;
   const finalPayments = project.finalPayments || [];
-  const confirmedCents = (project.deposit.confirmedAmountCents || 0)
-    + (project.collection.confirmedAmountCents || 0)
-    + finalPayments.reduce((total, payment) => total + (payment.confirmedAmountCents || 0), 0);
+  const confirmedCents = confirmedCustomerPayments(project);
   return {
     ...publicFields,
     attachments: (project.attachments || []).map((file) => publicFile(project.id, file)!),
@@ -403,6 +408,8 @@ function publicProject(project: StoredProject): PaymentTrackProject {
     solarRebateReceivedAt: typeof project.solarRebateReceivedAt === "string"
       ? project.solarRebateReceivedAt
       : null,
+    stcSolarExpectedAmountCents: normalizedExpectedStcAmount(project.stcSolarExpectedAmountCents),
+    stcBatteryExpectedAmountCents: normalizedExpectedStcAmount(project.stcBatteryExpectedAmountCents),
     stcSolarReceivedAmountCents: normalizedRebateReceiptAmount(project.stcSolarReceivedAmountCents),
     stcBatteryReceivedAmountCents: normalizedRebateReceiptAmount(project.stcBatteryReceivedAmountCents),
     solarRebateReceivedAmountCents: normalizedRebateReceiptAmount(project.solarRebateReceivedAmountCents),
@@ -1047,6 +1054,104 @@ export function deletePaymentTrackProject(id: string) {
   });
 }
 
+export function updatePaymentTrackStcEstimate(id: string, role: PaymentTrackRole, name: string, solar: number | null, battery: number | null, expectedUpdatedAt: string) {
+  return withMutation(async () => {
+    requireRole(role, ["admin"], "Only an Administrator can edit expected STC amounts.");
+    for (const value of [solar, battery]) if (value !== null && (!Number.isSafeInteger(value) || value < 0 || value > MAX_RECEIVABLE_CENTS)) {
+      throw new PaymentTrackRepositoryError("Enter valid non-negative STC amounts.", 400, "invalid_amount");
+    }
+    const document = await readStoredProjectDocument();
+    const project = document.projects.find(project => project.id === id);
+    if (!project) throw new PaymentTrackRepositoryError("Project not found.", 404, "not_found");
+    if (project.updatedAt !== expectedUpdatedAt) throw new PaymentTrackRepositoryError("This project changed. Reload it before saving.", 409, "version_conflict");
+    const timestamp = nextProjectTimestamp(project);
+    const note = `Expected Solar STC: ${project.stcSolarExpectedAmountCents ?? "unknown"} → ${solar ?? "unknown"} cents; expected Battery STC: ${project.stcBatteryExpectedAmountCents ?? "unknown"} → ${battery ?? "unknown"} cents.`;
+    project.stcSolarExpectedAmountCents = solar;
+    project.stcBatteryExpectedAmountCents = battery;
+    project.updatedAt = timestamp;
+    project.history.push(historyEntry("stc_estimate_updated", timestamp, role, name, note));
+    await writeStoredProjects(document.projects, document.version);
+    return publicProject(project);
+  });
+}
+
+export function updatePaymentTrackAmountDue(
+  id: string,
+  role: PaymentTrackRole,
+  name: string,
+  amountDueCents: number,
+  expectedUpdatedAt: string,
+  reason = "",
+) {
+  return withMutation(async () => {
+    requireRole(role, ["admin"], "Only an Administrator can change Amount Due.");
+    if (!Number.isSafeInteger(amountDueCents) || amountDueCents < 0 || amountDueCents > MAX_RECEIVABLE_CENTS) {
+      throw new PaymentTrackRepositoryError("Enter a valid non-negative Amount Due.", 400, "invalid_amount");
+    }
+    if (typeof reason !== "string" || reason.length > 500 || /[\u0000-\u001f\u007f]/.test(reason)) {
+      throw new PaymentTrackRepositoryError("Use up to 500 characters for the adjustment reason.", 400, "invalid_reason");
+    }
+    const document = await readStoredProjectDocument();
+    const project = document.projects.find((candidate) => candidate.id === id);
+    if (!project) throw new PaymentTrackRepositoryError("Project not found.", 404, "not_found");
+    if (typeof expectedUpdatedAt !== "string" || expectedUpdatedAt !== project.updatedAt) {
+      throw new PaymentTrackRepositoryError("This project or its payments changed. Reload the project and review the latest Amount Due before saving.", 409, "amount_due_conflict");
+    }
+    const previousAmountDueCents = publicProject(project).outstandingCents;
+    // A no-op at zero must preserve any existing customer overpayment credit.
+    if (amountDueCents === previousAmountDueCents) return publicProject(project);
+    const confirmedPaymentsCents = confirmedCustomerPayments(project);
+    const balanceDueCents = confirmedPaymentsCents + amountDueCents;
+    if (!Number.isSafeInteger(balanceDueCents) || balanceDueCents > MAX_RECEIVABLE_CENTS) {
+      throw new PaymentTrackRepositoryError("The adjusted total receivable exceeds the supported amount.", 400, "invalid_amount");
+    }
+    const timestamp = nextProjectTimestamp(project);
+    const entry = historyEntry("amount_due_adjusted", timestamp, role, name, reason.trim() || undefined);
+    entry.amountAdjustment = {
+      previousAmountDueCents, amountDueCents,
+      previousBalanceDueCents: project.balanceDueCents, balanceDueCents, confirmedPaymentsCents,
+    };
+    project.balanceDueCents = balanceDueCents;
+    project.updatedAt = timestamp;
+    project.history.push(entry);
+    await writeStoredProjects(document.projects, document.version);
+    return publicProject(project);
+  });
+}
+
+export function updatePaymentTrackCustomer(
+  id: string,
+  role: PaymentTrackRole,
+  name: string,
+  customerInput: unknown,
+  expectedCustomerUpdatedAt: string | null,
+) {
+  return withMutation(async () => {
+    requireRole(role, ["sales", "specialist", "pm", "admin"], "Your role cannot edit customer information.");
+    const customer = parsePaymentTrackCustomer(customerInput);
+    if (!customer) throw new PaymentTrackRepositoryError("Enter valid customer information, Coupling (up to 80 characters) and NMI (up to 32 characters).", 400, "invalid_customer");
+    if (expectedCustomerUpdatedAt !== null && (typeof expectedCustomerUpdatedAt !== "string"
+      || !Number.isFinite(Date.parse(expectedCustomerUpdatedAt))
+      || new Date(expectedCustomerUpdatedAt).toISOString() !== expectedCustomerUpdatedAt)) {
+      throw new PaymentTrackRepositoryError("The current customer version is required.", 400, "invalid_customer_version");
+    }
+    const document = await readStoredProjectDocument();
+    const project = document.projects.find((candidate) => candidate.id === id);
+    if (!project) throw new PaymentTrackRepositoryError("Project not found.", 404, "not_found");
+    if (expectedCustomerUpdatedAt !== (project.customerUpdatedAt || null)) {
+      throw new PaymentTrackRepositoryError("Customer information changed in another session. Reload the latest details before editing again.", 409, "customer_conflict");
+    }
+    const timestamp = nextProjectTimestamp(project);
+    project.customer = customer;
+    project.customerUpdatedAt = timestamp;
+    project.updatedAt = timestamp;
+    // Record attribution without copying customer/NMI values into audit notes.
+    project.history.push(historyEntry("customer_updated", timestamp, role, name));
+    await writeStoredProjects(document.projects, document.version);
+    return publicProject(project);
+  });
+}
+
 export function updatePaymentTrackProjectNotes(
   id: string,
   role: PaymentTrackRole,
@@ -1204,6 +1309,10 @@ function validateNonNegativeAmount(value: number | undefined) {
     throw new PaymentTrackRepositoryError("Enter a valid non-negative amount.", 400, "invalid_amount");
   }
   return value as number;
+}
+
+function normalizedExpectedStcAmount(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= MAX_RECEIVABLE_CENTS ? value : null;
 }
 
 function normalizedRebateReceiptAmount(value: unknown) {

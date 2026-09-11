@@ -165,6 +165,15 @@ test("upload, background vectorization, grounded retrieval, citations and atomic
   assert.ok(attachmentScoped.data?.every((item) => item.document_id === created.document.id));
   assert.deepEqual(cloud.searches[1].filter.document_id, { $in: [created.document.id] });
 
+  const namedFile = await searchKnowledgeBase(
+    { query: "summarise h3.md", limit: 5 }, auth("sales"),
+    { provider: cloud.provider, now: new Date("2026-08-28T00:00:00Z"), getFileSource: async () => source },
+  );
+  assert.equal(namedFile.ok, true);
+  assert.ok(namedFile.data?.length);
+  assert.ok(namedFile.data?.every((item) => item.document_id === created.document.id));
+  assert.equal(cloud.searches.length, 2, "named-file reads use authorised stored chunks without another vector query");
+
   const beforeUpdate = (await repository.getKnowledgeDocument(created.document.id))!;
   const updated = await repository.updateKnowledgeDocumentMetadata(
     created.document.id,

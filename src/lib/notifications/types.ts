@@ -8,7 +8,8 @@ export type NotificationModule =
   | "projects"
   | "reimbursements"
   | "inventory"
-  | "quotations";
+  | "quotations"
+  | "team";
 
 export type WorkspaceNotification = {
   id: string;

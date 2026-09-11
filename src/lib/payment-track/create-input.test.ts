@@ -79,3 +79,15 @@ test("manual project data remains backward compatible with optional rebate field
   assert.ok(parsed);
   assert.equal(parsed.solarRebateRequired, false);
 });
+
+
+test("manual and strict import inputs retain optional Coupling and NMI as text", () => {
+  const body = validBody();
+  Object.assign(body.customer, { coupling: "DC", nmi: "00123456789" });
+  for (const exact of [false, true]) {
+    const parsed = parsePaymentTrackCreateInput(body, { exact });
+    assert.ok(parsed);
+    assert.equal(parsed.customer.coupling, "DC");
+    assert.equal(parsed.customer.nmi, "00123456789");
+  }
+});

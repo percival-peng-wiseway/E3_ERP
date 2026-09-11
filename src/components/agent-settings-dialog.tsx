@@ -15,6 +15,9 @@ import { readJsonResponse } from "@/lib/client/http";
 import styles from "./agent-settings-dialog.module.css";
 
 type AgentSettings = {
+  modelProvider?: "kimi" | "ollama";
+  basicAuthUsername?: string;
+  hasSavedPassword?: boolean;
   configured: boolean;
   source: "saved" | "environment" | "default";
   maskedApiKey: string | null;
@@ -58,6 +61,11 @@ export function AgentSettingsDialog({
 }) {
   const [settings, setSettings] = useState(EMPTY_SETTINGS);
   const [apiKey, setApiKey] = useState("");
+  const [modelProvider, setModelProvider] = useState<"kimi" | "ollama">("ollama");
+  const [qwenUrl, setQwenUrl] = useState("");
+  const [qwenModel, setQwenModel] = useState("qwen3.5:9b");
+  const [qwenUsername, setQwenUsername] = useState("erp");
+  const [qwenPassword, setQwenPassword] = useState("");
   const [region, setRegion] = useState<AgentSettings["region"]>("china");
   const [plannerModel, setPlannerModel] = useState(EMPTY_SETTINGS.plannerModel);
   const [executorModel, setExecutorModel] = useState(EMPTY_SETTINGS.executorModel);
@@ -83,12 +91,17 @@ export function AgentSettingsDialog({
     setError("");
     setNotice("");
     setApiKey("");
+    setQwenPassword("");
     void fetch("/api/settings/agent", { cache: "no-store" })
       .then(async (response) => {
         const body = await readJsonResponse<AgentSettingsResponse>(response);
         if (!response.ok || !body.data) throw new Error(responseError(body, "Unable to load Agent settings."));
         if (!active) return;
         setSettings(body.data);
+        setModelProvider(body.data.modelProvider || (body.data.configured ? "kimi" : "ollama"));
+        setQwenUrl(body.data.modelProvider === "ollama" ? body.data.baseUrl : "");
+        setQwenModel(body.data.modelProvider === "ollama" ? body.data.model : "qwen3.5:9b");
+        setQwenUsername(body.data.basicAuthUsername || "erp");
         setRegion(body.data.region);
         setPlannerModel(body.data.plannerModel || body.data.model);
         setExecutorModel(body.data.executorModel || body.data.model);
@@ -153,7 +166,12 @@ export function AgentSettingsDialog({
       const response = await fetch("/api/settings/agent", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        body: JSON.stringify(modelProvider === "ollama" ? {
+          modelProvider: "ollama", baseUrl: qwenUrl.trim(), model: qwenModel.trim(),
+          basicAuthUsername: qwenUsername.trim(),
+          ...(qwenPassword ? { basicAuthPassword: qwenPassword } : {}),
+        } : {
+          modelProvider: "kimi",
           ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
           region,
           plannerModel: plannerModel.trim(),
@@ -167,7 +185,10 @@ export function AgentSettingsDialog({
       setPlannerModel(body.data.plannerModel);
       setExecutorModel(body.data.executorModel);
       setApiKey("");
-      setNotice(body.data.configured
+      setQwenPassword("");
+      setNotice(body.data.modelProvider === "ollama"
+        ? "Qwen connection verified and model found. Your Agent now uses this model."
+        : body.data.configured
         ? `Moonshot API key and both models verified for the ${body.data.region === "china" ? "China" : "International"} platform.`
         : "Add a Moonshot API key to enable the E3 Agent models.");
       window.dispatchEvent(new CustomEvent("erp:agent-settings-updated"));
@@ -191,6 +212,9 @@ export function AgentSettingsDialog({
       setPlannerModel(body.data.plannerModel);
       setExecutorModel(body.data.executorModel);
       setApiKey("");
+      setQwenPassword("");
+      setModelProvider(body.data.modelProvider || (body.data.configured ? "kimi" : "ollama"));
+      setQwenUrl(body.data.modelProvider === "ollama" ? body.data.baseUrl : "");
       setNotice(body.data.source === "environment"
         ? "Saved settings removed. The environment Kimi configuration is now active."
         : "Saved settings removed. Add a Moonshot API key to enable Kimi again.");
@@ -212,13 +236,23 @@ export function AgentSettingsDialog({
         <header>
           <div className={styles.headingIcon}><Bot size={21} /></div>
           <div>
-            <h2 id="agent-settings-title">E3 Agent API Key</h2>
+            <h2 id="agent-settings-title">E3 Agent Model Settings</h2>
           </div>
           <button type="button" aria-label="Close settings" disabled={saving} onClick={onClose}><X size={19} /></button>
         </header>
 
         {loading ? (
           <div className={styles.loading}><LoaderCircle className={styles.spinning} size={20} /> Loading Agent settings…</div>
+        ) : settings.modelProvider === "ollama" && settings.source === "environment" ? (
+          <div className={styles.loading}>
+            <Bot size={20} />
+            <div>
+              <strong>Qwen · {settings.model}</strong>
+              <p>Text and image requests use your home model service.</p>
+              <p>Keep the home computer, Ollama and tunnel running. Connection settings are managed by the server administrator.</p>
+              <button type="button" onClick={onClose}>Close</button>
+            </div>
+          </div>
         ) : (
           <form onSubmit={submit}>
             <div className={`${styles.status} ${settings.configured ? styles.ready : ""}`}>
@@ -227,8 +261,8 @@ export function AgentSettingsDialog({
                 <strong>{settings.configured ? "Model endpoint configured" : "Model endpoint unavailable"}</strong>
                 <small>
                   {settings.configured
-                    ? `Planner ${settings.plannerModel} · Executor ${settings.executorModel} · ${settings.region === "china" ? "China" : "International"} · ${settings.source === "saved" ? "saved settings" : "environment settings"}${settings.maskedApiKey ? ` · ${settings.maskedApiKey}` : ""}`
-                    : "Add a Moonshot API key to enable planning, answers and image understanding."}
+                    ? settings.modelProvider === "ollama" ? `Qwen · ${settings.model} · Saved connection` : `Planner ${settings.plannerModel} · Executor ${settings.executorModel} · ${settings.region === "china" ? "China" : "International"} · ${settings.source === "saved" ? "saved settings" : "environment settings"}${settings.maskedApiKey ? ` · ${settings.maskedApiKey}` : ""}`
+                    : modelProvider === "ollama" ? "Connect your home Qwen model for text, images and ERP analysis." : "Add a Moonshot API key to enable planning, answers and image understanding."}
                 </small>
               </div>
             </div>
@@ -236,6 +270,61 @@ export function AgentSettingsDialog({
             {notice ? <div className={styles.notice} role="status">{notice}</div> : null}
             {error ? <div className={styles.error} role="alert">{error}</div> : null}
 
+            <div className={styles.fieldGrid}>
+              <label>
+                Model provider
+                <select value={modelProvider} disabled={saving} onChange={(event) => {
+                  const selected = event.target.value as "kimi" | "ollama";
+                  setModelProvider(selected);
+                  setError(""); setNotice(""); setQwenPassword("");
+                  if (selected === "kimi" && settings.modelProvider === "ollama") {
+                    setPlannerModel("kimi-k3"); setExecutorModel("kimi-k2.6");
+                  }
+                }}>
+                  <option value="ollama">Qwen · Home computer</option>
+                  <option value="kimi">Kimi · Moonshot</option>
+                </select>
+              </label>
+            </div>
+
+            {modelProvider === "ollama" ? (
+              <section className={styles.providerSection} aria-labelledby="qwen-settings-title">
+                <div className={styles.sectionHeading}>
+                  <div>
+                    <h3 id="qwen-settings-title">Qwen on your home computer</h3>
+                    <p>Keep Ollama and ngrok running on your Windows computer.</p>
+                  </div>
+                </div>
+                <div className={styles.fieldGrid}>
+                  <label>
+                    ngrok HTTPS address
+                    <input type="url" required value={qwenUrl} disabled={saving}
+                      onChange={(event) => { setQwenUrl(event.target.value); setQwenPassword(""); }}
+                      placeholder="https://your-address.ngrok-free.app" spellCheck={false} />
+                    <small>Paste the HTTPS address from ngrok. /v1 is added automatically.</small>
+                  </label>
+                  <label>
+                    Model name
+                    <input required value={qwenModel} disabled={saving}
+                      onChange={(event) => setQwenModel(event.target.value)} placeholder="qwen3.5:9b" spellCheck={false} />
+                    <small>Use the exact model name shown by Ollama.</small>
+                  </label>
+                  <label>
+                    ngrok username
+                    <input required value={qwenUsername} disabled={saving} autoComplete="off"
+                      onChange={(event) => { setQwenUsername(event.target.value); setQwenPassword(""); }} />
+                  </label>
+                  <label>
+                    ngrok password
+                    <input type="password" value={qwenPassword} disabled={saving} autoComplete="new-password"
+                      required={!settings.hasSavedPassword || settings.modelProvider !== "ollama"}
+                      onChange={(event) => setQwenPassword(event.target.value)}
+                      placeholder={settings.hasSavedPassword ? "Leave blank to keep saved password" : "Enter your tunnel password"} />
+                    <small>The Basic Auth password you set, not your ngrok account token.</small>
+                  </label>
+                </div>
+              </section>
+            ) : (
             <section className={styles.providerSection} aria-labelledby="kimi-settings-title">
               <div className={styles.sectionHeading}>
                 <div>
@@ -321,10 +410,13 @@ export function AgentSettingsDialog({
                 Active key source: {settings.source === "saved" ? "saved in ERP" : settings.source === "environment" ? "environment" : "not configured"}
               </small>
             </section>
+            )}
 
             <div className={styles.securityNote}>
               <ShieldCheck size={17} />
-              <p><strong>Server-side only.</strong> The raw key is never returned after saving. Region choices map only to official Moonshot endpoints, and each selected model must be advertised by that API account.</p>
+              <p><strong>Server-side only.</strong> {modelProvider === "ollama"
+                ? "Your password is never returned after saving. We verify the tunnel connection and model name before activating Qwen."
+                : "The raw key is never returned after saving. Region choices map only to official Moonshot endpoints, and each selected model must be advertised by that API account."}</p>
             </div>
 
             <footer>
@@ -337,7 +429,7 @@ export function AgentSettingsDialog({
                 <button className={styles.secondaryButton} type="button" disabled={saving} onClick={onClose}>Cancel</button>
                 <button className={styles.primaryButton} type="submit" disabled={saving}>
                   {saving ? <LoaderCircle className={styles.spinning} size={16} /> : <Save size={16} />}
-                  Save Agent Settings
+                  {modelProvider === "ollama" ? "Verify & Save Qwen" : "Save Agent Settings"}
                 </button>
               </div>
             </footer>

@@ -129,3 +129,17 @@ test("embedding failures fail closed before D1 activation", async () => {
   );
   assert.equal(vectors.stored.size, 0);
 });
+
+test("large documents respect Vectorize's 20-ID read limit", async () => {
+  const vectors = provider();
+  const lookup = vectors.instance.getByIds;
+  const batches: number[] = [];
+  vectors.instance.getByIds = async ids => {
+    assert.ok(ids.length <= 20, "Vectorize rejects larger read payloads");
+    batches.push(ids.length);
+    return lookup(ids);
+  };
+  const indexed = await upsertKnowledgeChunks({ provider: vectors.instance, document: document(), chunks: chunks(34) });
+  assert.equal(indexed.length, 34);
+  assert.deepEqual(batches, [20, 14]);
+});

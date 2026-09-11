@@ -6,6 +6,8 @@ export type PasswordVerifier = {
 };
 
 export const LEGACY_PASSWORD_VERIFIERS: Readonly<Record<string, PasswordVerifier>> = {
+  leo: { salt: "c4RRLghfMcoUmqR4FzXkyA", passwordHash: "YyVeGGm_ovjSvA2zIBBuszytzkgt4kHsgE4x32NRbqc" },
+  other: { salt: "VONXN4FwN-qWV7U56RwqYg", passwordHash: "IO8WBxAi4o0uj0VdkGZiOgBfJgiBg0HvAclxSZ22Zko" },
   jerry: { salt: "u6ZRfR-mSgxr4jE8rIgG0g", passwordHash: "8KL4JTzjMs3H7-ohzSINJmVTsv9GUmPNRw3d-he2SQE" },
   jiaqi: { salt: "UABndEoYw_a6x478-F1kGQ", passwordHash: "IgkoGnIV8cwon2Ku7pSwisUb-puG7XDnuLXYkX0olzU" },
   wendy: { salt: "r3bn02cgBdgnQArpYHCjQg", passwordHash: "YtvgZDTBA1FOVgqfEIfyoaX9nerWc7AeRYJ05Uas4iA" },

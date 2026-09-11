@@ -1,5 +1,7 @@
 "use client";
 
+import { KnowledgeArtifactsPanel } from "./knowledge-artifacts-panel";
+
 import {
   AlertCircle,
   BookOpen,
@@ -1001,7 +1003,7 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
       {notice ? <div className={styles.notice} role="status" aria-live="polite"><CheckCircle2 size={17} /><span>{notice}</span><button type="button" onClick={() => setNotice("")} aria-label="Dismiss notification"><X size={15} /></button></div> : null}
       {error ? <div className={styles.error} role="alert"><AlertCircle size={17} /><span>{error}</span><button type="button" onClick={() => setError("")} aria-label="Dismiss error"><X size={15} /></button></div> : null}
 
-      <div className={`${styles.driveShell} ${view === "knowledge" ? styles.knowledgeShell : ""}`}>
+      <div className={`${styles.driveShell} ${view === "knowledge" ? styles.knowledgeShell : ""} ${selectedKnowledgeItem ? styles.knowledgeExpanded : ""}`}>
         <aside className={styles.viewRail} aria-label="Files views">
           <div className={styles.railActions}>
             <button type="button" className={styles.railNewButton} disabled={view === "trash"} onClick={(event) => view === "knowledge" ? fileInputRef.current?.click() : openDialog({ type: "create" }, event.currentTarget)}>{view === "knowledge" ? <UploadCloud size={18} /> : <Plus size={18} />}{view === "knowledge" ? "Upload" : "New"}</button>
@@ -1121,6 +1123,7 @@ export function FilesWorkspace({ currentUser }: { currentUser: ErpUser }) {
                   <i className={`${styles.knowledgeStatus} ${styles[`knowledge${knowledgeStatusLabel(selectedKnowledgeItem.knowledge.status)}`]}`}>{knowledgeStatusLabel(selectedKnowledgeItem.knowledge.status)}</i>
                   <span>{selectedKnowledgeItem.knowledge.status === "ready" ? "Available to Agent" : selectedKnowledgeItem.knowledge.status === "failed" ? "Vectorization needs attention" : "Vectorization in progress"}</span>
                 </div>
+                <KnowledgeArtifactsPanel key={selectedKnowledgeItem.knowledge.id} id={selectedKnowledgeItem.knowledge.id} revision={selectedKnowledgeItem.knowledge.updatedAt} />
                 <section className={styles.vectorSummary}>
                   <h3><Database size={15} />Vectorize</h3>
                   <dl>

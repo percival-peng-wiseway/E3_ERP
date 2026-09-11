@@ -59,3 +59,9 @@ test("ordinary local development remains writable without the explicit remote-da
 test("an unknown runtime with an explicit read-only flag stays protected", () => {
   assert.equal(remoteDataMutationBlocked("DELETE", "/api/files", { remoteDataReadOnly: "true" }), true);
 });
+
+test("team workspace permits isolated local saves without allowing production mutations", () => {
+  assert.equal(remoteDataMutationBlocked("POST", "/api/team-workspace", { nodeEnv: "development", remoteDataReadOnly: "true" }), false);
+  assert.equal(remoteDataMutationBlocked("POST", "/api/payment-track", { nodeEnv: "development", remoteDataReadOnly: "true" }), true);
+  assert.equal(remoteDataMutationBlocked("POST", "/api/team-workspace", { nodeEnv: "test", remoteDataReadOnly: "true" }), true);
+});

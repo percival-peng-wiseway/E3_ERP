@@ -160,9 +160,9 @@ async function visibleVectorIds(
   ids: string[],
 ) {
   const visible = new Set<string>();
-  // Keep each lookup comfortably below the binding's per-request ID limit.
-  for (let offset = 0; offset < ids.length; offset += 100) {
-    const vectors = await provider.getByIds(ids.slice(offset, offset + 100));
+  // Vectorize getByIds rejects more than 20 identifiers (error 40007).
+  for (let offset = 0; offset < ids.length; offset += 20) {
+    const vectors = await provider.getByIds(ids.slice(offset, offset + 20));
     for (const vector of vectors) visible.add(vector.id);
   }
   return visible;
@@ -179,6 +179,7 @@ export async function upsertKnowledgeChunks(input: {
   const timing = input.timing || DEFAULT_TIMING;
   const ids = input.chunks.map((chunk, index) => chunk.indexItemKey
     || `knowledge/${input.document.id}/g${input.document.indexGeneration}/${String(index).padStart(5, "0")}`);
+  let stage = "embedding";
   try {
     const embeddings = await embeddingsInBatches(
       input.provider,
@@ -187,6 +188,7 @@ export async function upsertKnowledgeChunks(input: {
     if (embeddings.length !== input.chunks.length) {
       throw new KnowledgeVectorProviderError("index_failed", "Workers AI returned an incomplete embedding batch.");
     }
+    stage = "index upload";
     await input.provider.upsert(embeddings.map((values, index) => ({
       id: ids[index],
       values,
@@ -200,9 +202,19 @@ export async function upsertKnowledgeChunks(input: {
       timing.now() + timeoutMs,
       input.deadlineAt ?? Number.POSITIVE_INFINITY,
     );
+    stage = "index visibility";
     while (true) {
       const visible = await visibleVectorIds(input.provider, ids);
       if (ids.every((id) => visible.has(id))) {
+        stage = "artifact storage";
+        const bindings = await erpCloudflareBindings();
+        if (bindings?.files) await bindings.files.put(
+          `knowledge-artifacts/${input.document.id}/g${input.document.indexGeneration}/${input.document.sourceChecksum}/vectors.json`,
+          JSON.stringify({ sourceChecksum: input.document.sourceChecksum, generation: input.document.indexGeneration,
+            model: KNOWLEDGE_VECTOR_CONFIG.embeddingModel, dimensions: KNOWLEDGE_VECTOR_CONFIG.dimensions,
+            createdAt: new Date().toISOString(),
+            vectors: input.chunks.map((chunk, index) => ({ id: ids[index], values: embeddings[index], text: chunk.text, pageFrom: chunk.pageFrom, pageTo: chunk.pageTo })) }),
+        );
         return input.chunks.map((chunk, index) => ({
           ...chunk,
           indexItemKey: ids[index],
@@ -221,9 +233,15 @@ export async function upsertKnowledgeChunks(input: {
   } catch (error) {
     await input.provider.deleteByIds(ids).catch(() => undefined);
     if (error instanceof KnowledgeVectorProviderError) throw error;
+    const message = error instanceof Error ? error.message : "";
+    // Only an allowlisted category is exposed; provider messages may contain input.
+    const category = /timeout|timed out/i.test(message) ? "timeout"
+      : /limit|too many|too large/i.test(message) ? "service limit"
+      : /network|connection/i.test(message) ? "connection"
+      : "provider error";
     throw new KnowledgeVectorProviderError(
       "index_failed",
-      "The knowledge vectors could not be generated or stored.",
+      `Knowledge ${stage} failed (${category}). Please retry.`,
     );
   }
 }

@@ -8,7 +8,7 @@ import { getWorkspaceFileIndexSource, listWorkspaceFileIndexSources } from "../w
 // @ts-expect-error -- focused Node ESM tests require the explicit extension.
 import { canAccessKnowledgeScope, KNOWLEDGE_RETRIEVAL_CONFIG } from "./config.ts";
 // @ts-expect-error -- focused Node ESM tests require the explicit extension.
-import { listKnowledgeChunksByKeys, listKnowledgeDocuments } from "./repository.ts";
+import { listActiveKnowledgeChunksForDocument, listKnowledgeChunksByKeys, listKnowledgeDocuments } from "./repository.ts";
 // @ts-expect-error -- focused Node ESM tests require the explicit extension.
 import { knowledgeCandidatesHaveCurrentConflict, normalizeKnowledgeQuery, selectGroundedKnowledgeResults } from "./retrieval-policy.ts";
 // @ts-expect-error -- focused Node ESM tests require the explicit extension.
@@ -124,6 +124,25 @@ export async function searchKnowledgeBase(
   };
   let prefetchedDocuments: Awaited<ReturnType<typeof listKnowledgeDocuments>> | null = null;
   let allowedDocumentIds: Set<string> | null = null;
+  const namedDocumentIds = new Set<string>();
+  // Explicit filenames identify a stored source, independently of embedding similarity.
+  if (!documentIds && /\.(?:pdf|docx?|txt|md)\b/iu.test(query)) {
+    try {
+      prefetchedDocuments = await listKnowledgeDocuments({ tenantId: KNOWLEDGE_TENANT_ID, includeDisabled: true });
+      const normalized = query.normalize("NFKC").toLocaleLowerCase("en-AU");
+      for (const document of prefetchedDocuments) {
+        const name = document.fileName.normalize("NFKC").toLocaleLowerCase("en-AU");
+        if (name.length >= 5 && normalized.includes(name)
+          && document.status === "ready" && scopes.includes(document.accessScope)) namedDocumentIds.add(document.id);
+      }
+      if (namedDocumentIds.size) {
+        allowedDocumentIds = namedDocumentIds;
+        filters.document_id = { $in: [...namedDocumentIds] };
+      }
+    } catch {
+      return result<AgentKnowledgeDocument[]>({ ok: false, data: null, error_code: "unavailable", retryable: true });
+    }
+  }
   if (documentIds) {
     try {
       prefetchedDocuments = await listKnowledgeDocuments({ tenantId: KNOWLEDGE_TENANT_ID, includeDisabled: true });
@@ -139,12 +158,20 @@ export async function searchKnowledgeBase(
   }
   let vectorMatches: Awaited<ReturnType<KnowledgeVectorProvider["query"]>>;
   try {
-    const queryVector = await provider.embedQuery(query);
-    vectorMatches = await provider.query(queryVector, {
-      topK: 40,
-      namespace: KNOWLEDGE_TENANT_ID,
-      filter: filters,
-    });
+    if (namedDocumentIds.size) {
+      // A named-file read does not need semantic similarity or vector propagation.
+      // All existing source freshness, permissions and citation checks still apply below.
+      const selectedChunks = await Promise.all([...namedDocumentIds].slice(0, 4)
+        .map((id) => listActiveKnowledgeChunksForDocument(id, KNOWLEDGE_TENANT_ID)));
+      vectorMatches = selectedChunks.flat().map((chunk) => ({ id: chunk.indexItemKey, score: 1 }));
+    } else {
+      const queryVector = await provider.embedQuery(query);
+      vectorMatches = await provider.query(queryVector, {
+        topK: 40,
+        namespace: KNOWLEDGE_TENANT_ID,
+        filter: filters,
+      });
+    }
   } catch {
     return result<AgentKnowledgeDocument[]>({ ok: false, data: null, error_code: "unavailable", retryable: true });
   }
@@ -195,7 +222,8 @@ export async function searchKnowledgeBase(
       return [{
         document,
         chunk,
-        score: candidateScore(query, `${document.title}\n${chunk.text}`, providerChunk.score),
+        score: namedDocumentIds.has(document.id) && /分析|总结|概述|摘要|\b(?:analy[sz]e|summari[sz]e|summary|overview)\b/iu.test(query)
+          ? 1 : candidateScore(query, `${document.title}\n${chunk.text}`, providerChunk.score),
       }];
     });
     const grounded = selectGroundedKnowledgeResults({

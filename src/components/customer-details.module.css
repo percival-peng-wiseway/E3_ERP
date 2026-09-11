@@ -1,0 +1,19 @@
+.section { border: 1px solid #dce3eb; border-radius: 8px; padding: 16px; min-width: 0; color: #425164; }
+.section h3 { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; margin: 0 0 16px; }
+.section h3 > svg { color: #6875ef; }
+.section button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 10px; color: #4f60c4; border: 1px solid #dce3eb; border-radius: 6px; background: white; font: inherit; font-size: 12px; cursor: pointer; }
+.heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 16px; }
+.heading h3 { margin: 0; }
+.section button:disabled { opacity: .5; cursor: not-allowed; }
+.section button:focus-visible, .fields input:focus-visible { outline: 2px solid #6875ef; outline-offset: 2px; }
+.section dl, .fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; margin: 0; }
+.section dt { text-transform: uppercase; color: #8190a0; font-size: 12px; margin-bottom: 5px; }
+.section dd { margin: 0; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.section dd a { color: inherit; }
+.fields label { display: flex; flex-direction: column; gap: 6px; min-width: 0; font-size: 12px; }
+.fields input { box-sizing: border-box; width: 100%; min-width: 0; border: 1px solid #cdd6e0; border-radius: 6px; padding: 9px; color: inherit; font: inherit; font-size: 14px; background: white; }
+.actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.actions button[type=submit] { background: #5868d9; color: white; border-color: #5868d9; }
+.error, .notice { font-size: 12px; line-height: 1.5; margin: 12px 0 0; }
+.error { color: #b33d3d; } .notice { color: #477963; }
+@media (max-width: 600px) { .section dl, .fields { grid-template-columns: minmax(0, 1fr); } .fields input { font-size: 16px; } }

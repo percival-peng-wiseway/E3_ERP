@@ -287,3 +287,42 @@ export function buildAgentPlanResponseFormat(
     },
   } as const;
 }
+
+
+/** Ollama enforces each plan kind as a complete grammar branch. */
+export function buildOllamaAgentPlanResponseFormat(
+  allowedToolNames: readonly AgentToolName[],
+  maximumStepCount = DEFAULT_AGENT_QUERY_PLAN_MAX_STEPS,
+  allowedKinds: readonly AgentQueryPlanKind[] = ["execute", "direct", "clarify"],
+) {
+  const base = buildAgentPlanResponseFormat(allowedToolNames, maximumStepCount);
+  const schema = base.json_schema.schema;
+  return {
+    ...base,
+    json_schema: {
+      ...base.json_schema,
+      schema: {
+        anyOf: allowedKinds.map((kind) => ({
+          ...schema,
+          properties: {
+            ...schema.properties,
+            kind: { type: "string", enum: [kind] },
+            intent: { ...schema.properties.intent, minLength: 1, maxLength: 400 },
+            steps: kind === "execute"
+              ? { ...schema.properties.steps, minItems: 1, items: {
+                ...schema.properties.steps.items,
+                properties: {
+                  ...schema.properties.steps.items.properties,
+                  id: { type: "string", pattern: "^[a-z][a-z0-9_-]{0,47}$", description: "Stable ID such as step_1." },
+                },
+              } }
+              : { type: "array", items: schema.properties.steps.items, maxItems: 0 },
+            clarification: kind === "clarify"
+              ? { type: "string", minLength: 1, maxLength: 500 }
+              : { type: "string", enum: [""] },
+          },
+        })),
+      },
+    },
+  };
+}

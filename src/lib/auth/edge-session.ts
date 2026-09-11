@@ -11,6 +11,7 @@ type SessionPayload = {
   username?: unknown;
   sessionVersion?: unknown;
   expiresAt?: unknown;
+  role?: unknown;
 };
 
 function cookieValue(request: Request, name: string) {
@@ -31,7 +32,7 @@ function base64UrlBytes(value: string) {
   return Uint8Array.from(decoded, (character) => character.charCodeAt(0));
 }
 
-export async function hasValidEdgeSession(request: Request) {
+export async function edgeSessionRole(request: Request) {
   const suppliedSecret = process.env.ERP_AUTH_SESSION_SECRET?.trim() || "";
   const secret = isAcceptableErpSessionSecret(suppliedSecret)
     ? suppliedSecret
@@ -68,13 +69,17 @@ export async function hasValidEdgeSession(request: Request) {
     if (!Number.isSafeInteger(sessionVersion) || (sessionVersion as number) < 1) return false;
 
     const bindings = await erpCloudflareBindings();
-    if (!bindings) return payload.version === 2 || ACTIVE_USERNAMES.has(username);
+    if (!bindings) return payload.version === 2 && typeof payload.role === "string" ? payload.role : ACTIVE_USERNAMES.has(username) ? "legacy" : false;
     if (!bindings.database) return false;
     const account = await bindings.database.prepare(
-      "SELECT active, session_version FROM erp_users WHERE username = ?1",
-    ).bind(username).first<{ active: number; session_version: number }>();
-    return account?.active === 1 && account.session_version === sessionVersion;
+      "SELECT active, session_version, role FROM erp_users WHERE username = ?1",
+    ).bind(username).first<{ active: number; session_version: number; role: string }>();
+    return account?.active === 1 && account.session_version === sessionVersion ? account.role : false;
   } catch {
     return false;
   }
+}
+
+export async function hasValidEdgeSession(request: Request) {
+  return Boolean(await edgeSessionRole(request));
 }

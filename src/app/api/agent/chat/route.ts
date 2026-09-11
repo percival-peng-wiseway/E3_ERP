@@ -63,10 +63,12 @@ export async function POST(request: Request) {
   }
   const input = cleanInput(raw);
   if (!input) return json({ error: { code: "invalid_request", message: "message and optional conversation_id are required." } }, 400);
+  let modelProvider: "kimi" | "ollama" | undefined;
   let kimiRegion: "china" | "international" | undefined;
   try {
     const kimi = await resolveKimiSettings();
     kimiRegion = kimi.region;
+    modelProvider = kimi.modelProvider;
     const response = await chatWithBusinessAgent({
       input,
       auth,
@@ -74,6 +76,7 @@ export async function POST(request: Request) {
       kimiConfig: kimi.apiKey ? {
         apiKey: kimi.apiKey,
         baseUrl: kimi.baseUrl,
+        modelProvider: kimi.modelProvider,
         flashModel: kimi.fastModel,
         complexModel: kimi.complexModel,
       } : null,
@@ -94,7 +97,7 @@ export async function POST(request: Request) {
       "Business Agent unavailable",
       safeErrorKind(error),
     );
-    const modelWarning = kimiRequestWarning(error, kimiRegion);
+    const modelWarning = kimiRequestWarning(error, kimiRegion, modelProvider);
     const visibleError = modelWarning?.message || "The Agent cannot process this request right now.";
     scheduleConversationAudit({
       actorUsername: session.user.username,

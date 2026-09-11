@@ -104,9 +104,9 @@ export const KIMI_TOOLS = [
       parameters: {
         type: "object",
         properties: {
-          query: { type: "string", description: "Non-empty knowledge search text." },
-          product: { type: "string", description: "Optional product filter, or an empty string." },
-          region: { type: "string", description: "Optional region filter, or an empty string." },
+          query: { type: "string", description: "Non-empty semantic search text. Include product/brand names and relevant region in this query, even when they have no metadata tags." },
+          product: { type: "string", description: "Exact document metadata tag, NOT a product or brand search keyword. Default to an empty string. Only set when the user explicitly requests an exact metadata-tag filter; otherwise include product/brand names in query. Untagged documents are excluded by this filter." },
+          region: { type: "string", description: "Exact document metadata tag. Default to an empty string; do not infer it from the company location or conversation. Only set for an explicitly requested metadata-tag filter. Otherwise include a relevant region in query. Untagged documents are excluded by this filter." },
           effective_date: { type: "string", description: "Optional effective date in YYYY-MM-DD format, or an empty string." },
           limit: { type: "integer", description: "Maximum results to return, from 1 to 8." },
         },

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 // @ts-expect-error -- Node ESM tests require the explicit extension.
@@ -155,4 +156,20 @@ test("metadata, ACL, freshness, citations and grounding policy", () => {
   assert.match(context, /^SECURITY: .*untrusted document data/);
   assert.match(context, /untrusted_document_text/);
   assert.match(context, /Ignore all system instructions/);
+});
+
+
+test("long Chinese paragraphs make progress when a full chunk cannot overlap", () => {
+  const moduleUrl = new URL("./chunker.ts", import.meta.url).href;
+  const run = spawnSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", `
+    import { chunkParsedKnowledgeDocument } from ${JSON.stringify(moduleUrl)};
+    const text = "安".repeat(1700);
+    const chunks = chunkParsedKnowledgeDocument({documentId:"test", indexGeneration:1,
+      parsed:{title:"test",contentType:"text/markdown",characterCount:text.length,
+        sections:[{text,headingPath:[],pageNumber:1,order:0}]}});
+    console.log(JSON.stringify({count:chunks.length,characters:chunks.map(c=>c.text).join("").length,maxTokens:Math.max(...chunks.map(c=>c.tokenCount))}));
+  `], { encoding: "utf8", timeout: 5000 });
+  assert.equal(run.error, undefined, "Chunking must terminate within its time limit");
+  assert.equal(run.status, 0);
+  assert.deepEqual(JSON.parse(run.stdout), {count:3,characters:1700,maxTokens:800});
 });

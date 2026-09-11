@@ -153,3 +153,20 @@ test("an attached screenshot is analysed visually unless company knowledge is ex
     true,
   );
 });
+
+
+test("device mode instructions require knowledge without a manual keyword", () => {
+  for (const question of ["fox电池的模式选择怎么切换", "How do I change the battery work mode?", "如何设置逆变器的模式"]) {
+    assert.equal(shouldUseKnowledgeConversationIntent(question), true);
+    assert.deepEqual(focusedAgentToolNames(question), ["search_knowledge_base"]);
+  }
+  assert.equal(shouldUseKnowledgeConversationIntent("How many batteries are in stock?"), false);
+  assert.equal(shouldUseKnowledgeConversationIntent("怎么修改报价里的电池名称"), false);
+});
+
+
+test("existing PDF filenames route to knowledge even without a new attachment", () => {
+  const message = "分析这个账单 2026 Jun INV 3051839831.pdf";
+  assert.equal(shouldUseKnowledgeConversationIntent(message), true);
+  assert.deepEqual(focusedAgentToolNames(message), ["search_knowledge_base"]);
+});

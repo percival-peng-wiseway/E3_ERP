@@ -39,6 +39,7 @@
       "remote": true
     }
   ],
+  "services": [{ "binding": "MARKITDOWN", "service": "e3-markitdown", "remote": true }],
   "workflows": [
     {
       "name": "e3-knowledge-indexer",

@@ -58,7 +58,7 @@ test("Kimi separates structured planning from evidence synthesis", () => {
   assert.match(modelOrchestrator, /weeklyScheduleStrictDateRange: strictHistoricalWeeklyRange/u);
   assert.match(route, /const modelRequest = buildingPersonalSkill \|\| imageParts\.length > 0 \|\| requiresKnowledge/u);
   assert.match(route, /if \(modelRequest && !settings\.apiKey\)/u);
-  assert.match(route, /kimiRequestWarning\(primaryError, settings\.region\)/u);
+  assert.match(route, /kimiRequestWarning\(primaryError, settings\.region, settings\.modelProvider\)/u);
   assert.doesNotMatch(modelOrchestrator, /modelErrorDetail|error\?\.message/u);
   assert.match(route, /structuredPlanFirst = Boolean\(settings\.apiKey\)/u);
   assert.match(route, /workflowAnswer = structuredPlanFirst \? null/u);

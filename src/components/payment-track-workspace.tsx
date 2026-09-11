@@ -1,7 +1,13 @@
 "use client";
 
+import { StcEstimateEditor } from "./stc-estimate-editor";
+import { projectCreatedMonth, summarizeReceivables } from "@/lib/payment-track/receivables-summary";
+import { AmountDueEditor } from "./amount-due-editor";
+import { CustomerDetails } from "./customer-details";
+
 import {
   AlertCircle,
+  Archive,
   BadgeCheck,
   Banknote,
   Boxes,
@@ -48,6 +54,7 @@ import type { ErpRole } from "@/lib/auth/types";
 import { readJsonResponse } from "@/lib/client/http";
 import {
   countActivePaymentTrackProjects,
+  isPaymentTrackProjectArchived,
   isFinalPaymentOverdue,
   isPaymentTrackWaitingForRebateQr,
   PAYMENT_TRACK_SCHEDULE_ASSIGNEES,
@@ -73,7 +80,7 @@ import { MaterialDeliveryPicker } from "./material-delivery-picker";
 type AddMode = "agreement" | "manual";
 type ProposalPdfFormat = "blink" | "greensketch";
 type ProofKind = "deposit";
-type ProjectTrackViewMode = "board" | "list";
+type ProjectTrackViewMode = "board" | "list" | "archive";
 type ProjectTrackStageFilter = "all" | PaymentTrackStage;
 type WorkflowConfirmation = {
   action: Extract<
@@ -532,18 +539,6 @@ function parseManualItems(value: string): Array<Omit<PaymentTrackItem, "id">> {
   });
 }
 
-function adminReviewCount(project: PaymentTrackProject) {
-  const depositReview = (
-    project.stage === "deposit_not_paid" && Boolean(project.deposit.proof || project.deposit.acknowledgedAt)
-  ) ? 1 : 0;
-  const legacyCollectionReview = (
-    project.stage === "material_delivery"
-    && Boolean(project.deliveredAt)
-    && Boolean(project.collection.acknowledgedAt || project.collection.proof)
-  ) ? 1 : 0;
-  return depositReview + legacyCollectionReview + pendingPaymentReviewCount(project);
-}
-
 function finalPaymentTotal(project: PaymentTrackProject) {
   return project.finalPayments.reduce(
     (total, payment) => total + (payment.confirmedAmountCents ?? 0),
@@ -616,7 +611,7 @@ function confirmedRebateReceiptRecords(project: PaymentTrackProject): ConfirmedR
 }
 
 export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
-  authenticatedRole: ErpRole;
+  authenticatedRole: Exclude<ErpRole, "installer">;
   openEntityTarget?: { entityId: string; requestId: number };
 }) {
   const paymentTrackRole: PaymentTrackRole = authenticatedRole === "specialist" ? "sales" : authenticatedRole;
@@ -627,6 +622,8 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
   const [refreshing, setRefreshing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
+  const [summaryPeriod, setSummaryPeriod] = useState<"all" | "monthly" | "quarterly">("all");
+  const [summaryMonth, setSummaryMonth] = useState(() => projectCreatedMonth(new Date().toISOString())!);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [showAdd, setShowAdd] = useState(false);
@@ -824,17 +821,15 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
     };
   }, [closeDeliveryPicker, modalKey, showDeliveryPicker, workflowConfirmation]);
 
-  const metrics = useMemo(() => ({
-    receivable: projects.reduce((sum, project) => sum + project.balanceDueCents, 0),
-    outstanding: projects.reduce((sum, project) => sum + project.outstandingCents, 0),
-    adminReview: projects.reduce((sum, project) => sum + adminReviewCount(project), 0),
-    active: countActivePaymentTrackProjects(projects),
-  }), [projects]);
+  const metrics = useMemo(() => summarizeReceivables(projects, summaryPeriod, summaryMonth), [projects, summaryPeriod, summaryMonth]);
+  const activeCount = countActivePaymentTrackProjects(projects);
 
+  const archivedCount = projects.filter(isPaymentTrackProjectArchived).length;
   const filtered = useMemo(() => {
     const term = query.trim().toLocaleLowerCase("en-AU");
-    if (!term) return projects;
-    return projects.filter((project) => [
+    const visible = projects.filter((project) => isPaymentTrackProjectArchived(project) === (viewMode === "archive"));
+    if (!term) return visible;
+    return visible.filter((project) => [
       project.reference,
       project.quoteNumber,
       customerName(project),
@@ -843,14 +838,14 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
       project.specialist.name,
       ...project.items.flatMap((item) => [item.model, item.description]),
     ].join(" ").toLocaleLowerCase("en-AU").includes(term));
-  }, [projects, query]);
+  }, [projects, query, viewMode]);
 
   const listProjects = useMemo(() => {
     return filtered
-      .filter((project) => listStage === "all" || project.stage === listStage)
+      .filter((project) => viewMode === "archive" || listStage === "all" || project.stage === listStage)
       .slice()
       .sort(compareProjectsByOutstanding);
-  }, [filtered, listStage]);
+  }, [filtered, listStage, viewMode]);
 
   const updateBoardPosition = useCallback(() => {
     const scroller = boardScrollerRef.current;
@@ -1078,6 +1073,8 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
         suburb: String(form.get("suburb") || "").trim(),
         state: String(form.get("state") || "").trim(),
         postcode: String(form.get("postcode") || "").trim(),
+        coupling: String(form.get("coupling") || "").trim(),
+        nmi: String(form.get("nmi") || "").trim(),
       },
       items,
       balanceDue: String(form.get("balanceDue") || "").trim(),
@@ -2217,23 +2214,43 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
         </div>
       </header>
 
-      <div className={styles.metrics} aria-label="Project Track summary">
+      <div className={styles.summaryControls} aria-label="Receivables period">
+        <div><strong>Payment summary</strong><small>Contract totals and outstanding balances · AUD · project creation date (Melbourne)</small></div>
+        <label>Period<select aria-label="Receivables period" value={summaryPeriod} onChange={event => setSummaryPeriod(event.target.value as typeof summaryPeriod)}><option value="all">All time</option><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option></select></label>
+        {summaryPeriod === "monthly" ? <label>Month<input aria-label="Receivables month" type="month" value={summaryMonth} onChange={event => { if (/^\d{4}-\d{2}$/.test(event.target.value)) setSummaryMonth(event.target.value); }} /></label> : null}
+        {summaryPeriod === "quarterly" ? <><label>Year<input aria-label="Receivables year" type="number" min="2000" max="2100" value={Number(summaryMonth.slice(0, 4))} onChange={event => { const year = Number(event.target.value); if (Number.isInteger(year) && year >= 2000 && year <= 2100) setSummaryMonth(`${year}${summaryMonth.slice(4)}`); }} /></label><label>Quarter<select aria-label="Receivables quarter" value={Math.floor((Number(summaryMonth.slice(5)) - 1) / 3) + 1} onChange={event => setSummaryMonth(`${summaryMonth.slice(0,4)}-${String((Number(event.target.value) - 1) * 3 + 1).padStart(2,"0")}`)}>{[1,2,3,4].map(quarter => <option key={quarter} value={quarter}>Q{quarter}</option>)}</select></label></> : null}
+        <span>{metrics.projectCount} projects in period</span>
+      </div>
+      <div className={styles.summaryOverview} aria-label="Project Track summary">
+      <div className={styles.metrics}>
+        <article title="Customer contract amounts after rebate deductions">
+          <span className={styles.metricIcon}><FileText size={19} /></span>
+          <div><small>Total Contract Amount</small><strong>{loading ? "—" : formatMoney(metrics.contractTotalCents)}</strong></div>
+        </article>
+        <article title="Actual STC receipts plus expected outstanding STC; excludes Solar Rebate">
+          <span className={`${styles.metricIcon} ${styles.blue}`} ><WalletCards size={19} /></span>
+          <div><small>Total STC Amount</small><strong>{loading ? "—" : metrics.missingTotalStcProjects && !metrics.stcTotalCents ? "Amount needed" : formatMoney(metrics.stcTotalCents)}</strong>{metrics.missingTotalStcProjects ? <small className={styles.stcMissing}>{metrics.missingTotalStcProjects} projects need STC amounts{metrics.stcTotalCents ? " · subtotal only" : ""}</small> : null}</div>
+        </article>
         <article>
           <span className={styles.metricIcon}><CircleDollarSign size={19} /></span>
-          <div><small>Original Receivable</small><strong>{formatMoney(metrics.receivable)}</strong></div>
+          <div><small>Customer Receivable</small><strong>{loading ? "—" : formatMoney(metrics.customerCents)}</strong></div>
         </article>
         <article>
           <span className={`${styles.metricIcon} ${styles.blue}`}><WalletCards size={19} /></span>
-          <div><small>Amount Outstanding</small><strong>{formatMoney(metrics.outstanding)}</strong></div>
+          <div><small>STC Receivable</small><strong>{loading ? "—" : metrics.missingStcProjects && !metrics.stcCents ? "Amount needed" : formatMoney(metrics.stcCents)}</strong>{metrics.missingStcProjects ? <small className={styles.stcMissing}>{metrics.missingStcProjects} projects need STC amounts{metrics.stcCents ? " · subtotal only" : ""}</small> : null}</div>
+        </article>
+      </div>
+      <div className={styles.projectCounts} aria-label="Project counts, all time">
+        <article>
+          <span className={`${styles.metricIcon} ${styles.amber}`}><Clock3 size={19} /></span>
+          <div><small>Active projects</small><strong>{activeCount}</strong><span>All time</span></div>
         </article>
         <article>
-          <span className={`${styles.metricIcon} ${styles.amber}`}><ShieldCheck size={19} /></span>
-          <div><small>Awaiting Admin</small><strong>{metrics.adminReview}</strong></div>
+          <span className={`${styles.metricIcon} ${styles.violet}`}><Archive size={19} /></span>
+          <div><small>Archived projects</small><strong>{archivedCount}</strong><span>All time</span></div>
         </article>
-        <article>
-          <span className={`${styles.metricIcon} ${styles.violet}`}><Clock3 size={19} /></span>
-          <div><small>Active Projects</small><strong>{metrics.active}</strong></div>
-        </article>
+      </div>
+
       </div>
 
       {notice && !selected ? (
@@ -2277,10 +2294,18 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
             >
               <ListIcon size={16} /> List
             </button>
+            <button
+              type="button"
+              className={viewMode === "archive" ? styles.activeView : ""}
+              aria-pressed={viewMode === "archive"}
+              onClick={() => setViewMode("archive")}
+            >
+              <Archive size={15} /> Archive ({archivedCount})
+            </button>
           </div>
           <span aria-live="polite" aria-atomic="true">
-            {viewMode === "list" ? listProjects.length : filtered.length}{" "}
-            {(viewMode === "list" ? listProjects.length : filtered.length) === 1 ? "project" : "projects"}
+            {viewMode !== "board" ? listProjects.length : filtered.length}{" "}
+            {(viewMode !== "board" ? listProjects.length : filtered.length) === 1 ? "project" : "projects"}
           </span>
           <button type="button" disabled={refreshing} onClick={() => void load(true)}>
             <RefreshCw className={refreshing ? styles.spinning : ""} size={15} /> Refresh
@@ -2290,9 +2315,11 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
 
       {loading ? (
         <div className={styles.loadingState}><LoaderCircle className={styles.spinning} size={20} /> Loading projects…</div>
-      ) : viewMode === "list" ? (
-        <section className={styles.listView} aria-label="Project Track list view">
-          <nav className={styles.listStageTabs} aria-label="Filter projects by stage">
+      ) : viewMode !== "board" ? (
+        <section className={styles.listView} aria-label={viewMode === "archive" ? "Project Track archive" : "Project Track list view"}>
+          {viewMode === "archive" ? (
+            <p className={styles.archiveDescription}>Completed projects with no amount due are archived automatically. Open a project to view its details and payment history.</p>
+          ) : <nav className={styles.listStageTabs} aria-label="Filter projects by stage">
             <button
               type="button"
               className={listStage === "all" ? styles.activeListStage : ""}
@@ -2315,7 +2342,7 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
                 </button>
               );
             })}
-          </nav>
+          </nav>}
 
           <div className={styles.listHeader} aria-hidden="true">
             <span>Project</span><span>Stage</span><span>Amount due</span><span>Next owner</span><span>Next action</span><span />
@@ -2370,7 +2397,9 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
                 <FileText size={20} />
                 <strong>No projects in this view</strong>
                 <span>
-                  {query
+                  {viewMode === "archive"
+                    ? query ? "No archived projects match this search." : "Projects will appear here once they are Done and fully paid."
+                    : query
                     ? "No projects match this search and stage."
                     : listStage === "all"
                       ? "No projects have been added yet."
@@ -2738,6 +2767,12 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
                   </div>
                 </div>
                 <div className={styles.formSection}>
+                  <div className={styles.formGrid}>
+                    <label>Coupling<input name="coupling" maxLength={80} placeholder="e.g. AC or DC" /></label>
+                    <label>NMI<input name="nmi" maxLength={32} placeholder="National Metering Identifier" /></label>
+                  </div>
+                </div>
+                <div className={styles.formSection}>
                   <h3>Receivable and items</h3>
                   <div className={styles.formGrid}>
                     <label>
@@ -2846,17 +2881,20 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
                 </div>
               ) : null}
               <section className={styles.detailAmounts} aria-label="Receivable summary">
-                <div><span>Original Balance Due</span><strong>{formatMoney(selected.balanceDueCents)}</strong></div>
+                <div><span>Total Receivable</span><strong>{formatMoney(selected.balanceDueCents)}</strong></div>
                 <div><span>Expected Deposit</span><strong>{selected.expectedDepositCents === null ? "—" : formatMoney(selected.expectedDepositCents)}</strong></div>
                 <div><span>Deposit Received</span><strong>{selected.deposit.confirmedAmountCents === null ? "—" : formatMoney(selected.deposit.confirmedAmountCents)}</strong></div>
                 <div><span>Collection Received</span><strong>{selected.collection.confirmedAmountCents === null ? "—" : formatMoney(selected.collection.confirmedAmountCents)}</strong></div>
                 <div><span>Later Payments Received</span><strong>{formatMoney(finalPaymentTotal(selected))}</strong></div>
                 <div className={styles.outstandingAmount}>
-                  <span>Amount Outstanding</span>
+                  <span>Amount Due</span>
                   <strong>{formatMoney(selected.outstandingCents)}</strong>
                   {selected.overpaymentCents > 0 ? <small>{formatMoney(selected.overpaymentCents)} overpaid</small> : null}
                 </div>
               </section>
+
+              {authenticatedRole === "admin" ? <StcEstimateEditor key={`stc-${selected.id}`} project={selected} busy={busy} onBusyChange={setBusy} onSaved={updateProject} /> : null}
+              {authenticatedRole === "admin" ? <AmountDueEditor key={selected.id} project={selected} busy={busy} onBusyChange={setBusy} onSaved={updateProject} onReload={reloadSelectedProject} /> : null}
 
               {renderActionPanel(selected)}
 
@@ -2892,15 +2930,7 @@ export function PaymentTrackWorkspace({ authenticatedRole, openEntityTarget }: {
               })() : null}
 
               <div className={styles.detailColumns}>
-                <section className={styles.detailSection}>
-                  <h3><UserRound size={16} /> Customer</h3>
-                  <dl>
-                    <div><dt>Name</dt><dd>{customerName(selected)}</dd></div>
-                    <div><dt>Phone</dt><dd>{selected.customer.phone || "—"}</dd></div>
-                    <div><dt>Email</dt><dd>{selected.customer.email || "—"}</dd></div>
-                    <div><dt>Installation</dt><dd>{customerAddress(selected)}</dd></div>
-                  </dl>
-                </section>
+                <CustomerDetails key={selected.id} project={selected} editable disabled={busy} onBusyChange={setBusy} onSaved={updateProject} />
                 <section className={styles.detailSection}>
                   <h3><ShieldCheck size={16} /> Ownership</h3>
                   <dl>

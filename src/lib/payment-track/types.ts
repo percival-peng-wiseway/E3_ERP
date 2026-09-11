@@ -15,7 +15,7 @@ export const PAYMENT_TRACK_ROLES = ["sales", "specialist", "pm", "admin"] as con
 
 export type PaymentTrackRole = (typeof PAYMENT_TRACK_ROLES)[number];
 
-export const PAYMENT_TRACK_SCHEDULE_ASSIGNEES = ["Leo", "Daniel"] as const;
+export const PAYMENT_TRACK_SCHEDULE_ASSIGNEES = ["Leo", "Daniel", "Other"] as const;
 
 export type PaymentTrackScheduleAssignee = (typeof PAYMENT_TRACK_SCHEDULE_ASSIGNEES)[number];
 
@@ -83,6 +83,8 @@ export interface PaymentTrackFile {
 }
 
 export interface PaymentTrackCustomer {
+  coupling?: string;
+  nmi?: string;
   firstName: string;
   lastName: string;
   phone: string;
@@ -178,17 +180,29 @@ export type PaymentTrackHistoryAction =
   | "solar_panel_consumption_recorded"
   | "coes_received"
   | "continued_to_stc"
+  | "stc_estimate_updated"
   | "stc_solar_confirmed"
   | "stc_battery_confirmed"
   | "solar_rebate_requirement_backfilled"
   | "solar_rebate_confirmed"
   | "stage_skipped"
   | "pm_notes_updated"
+  | "amount_due_adjusted"
+  | "customer_updated"
   | "project_notes_updated"
   | "attachment_uploaded"
   | "completed";
 
+export interface PaymentTrackAmountAdjustment {
+  previousAmountDueCents: number;
+  amountDueCents: number;
+  previousBalanceDueCents: number;
+  balanceDueCents: number;
+  confirmedPaymentsCents: number;
+}
+
 export interface PaymentTrackHistoryEntry {
+  amountAdjustment?: PaymentTrackAmountAdjustment;
   id: string;
   action: PaymentTrackHistoryAction;
   at: string;
@@ -260,10 +274,13 @@ export interface PaymentTrackProject {
    * Optional for callers holding a legacy project snapshot; repository
    * responses always normalize these values to cents or null.
    */
+  stcSolarExpectedAmountCents?: number | null;
+  stcBatteryExpectedAmountCents?: number | null;
   stcSolarReceivedAmountCents?: number | null;
   stcBatteryReceivedAmountCents?: number | null;
   solarRebateReceivedAmountCents?: number | null;
   attachments?: PaymentTrackFile[];
+  customerUpdatedAt?: string | null;
   projectNotes?: string;
   projectNotesUpdatedAt?: string | null;
   projectNotesUpdatedBy?: string | null;
@@ -274,6 +291,13 @@ export interface PaymentTrackProject {
   updatedAt: string;
   completedAt: string | null;
   history: PaymentTrackHistoryEntry[];
+}
+
+/** Archive is derived from completion and confirmed balance, preserving all history. */
+export function isPaymentTrackProjectArchived(
+  project: Pick<PaymentTrackProject, "stage" | "outstandingCents">,
+) {
+  return project.stage === "done" && project.outstandingCents === 0;
 }
 
 export function isPaymentTrackProjectActive(

@@ -82,7 +82,7 @@ type AgentComposerAttachment = AgentMessageAttachment & {
 type NotificationRole = "all" | "sales" | "specialist" | "pm" | "admin";
 type NotificationOwnerRole = Exclude<NotificationRole, "all">;
 type NotificationPriority = "urgent" | "high" | "medium" | "normal";
-type NotificationModule = "payments" | "projects" | "reimbursements" | "inventory" | "quotations";
+type NotificationModule = "payments" | "projects" | "reimbursements" | "inventory" | "quotations" | "team";
 
 type WorkspaceNotification = {
   id: string;
@@ -107,7 +107,7 @@ type Announcement = {
 };
 
 type HomeCollaborationWorkspaceProps = {
-  currentUser: ErpUser;
+  currentUser: ErpUser & { role: Exclude<ErpUser["role"], "installer"> };
   onOpenSkills?: (initialSkillId?: string) => void;
   onOpenSettings?: () => void;
   onNavigate?: (module: NotificationModule, entityId?: string) => void;
@@ -508,7 +508,7 @@ function normalizeNotification(value: unknown): WorkspaceNotification | null {
   const item = value as Record<string, unknown>;
   const roles: NotificationOwnerRole[] = ["sales", "specialist", "pm", "admin"];
   const priorities: NotificationPriority[] = ["urgent", "high", "medium", "normal"];
-  const modules: NotificationModule[] = ["payments", "projects", "reimbursements", "inventory", "quotations"];
+  const modules: NotificationModule[] = ["payments", "projects", "reimbursements", "inventory", "quotations", "team"];
   if (
     typeof item.id !== "string"
     || !item.id.trim()

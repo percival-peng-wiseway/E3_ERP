@@ -16,6 +16,8 @@ export function remoteDataMutationBlocked(
   environment: RemoteDataEnvironment,
 ): boolean {
   if (environment.nodeEnv === "production" || environment.remoteDataReadOnly !== "true") return false;
+  // This development-only endpoint persists exclusively to a separate local file.
+  if (environment.nodeEnv === "development" && ["/api/team-workspace", "/api/team-workspace/files"].includes(pathname)) return false;
   if (!pathname.startsWith("/api/")) return false;
 
   const normalizedMethod = method.toUpperCase();

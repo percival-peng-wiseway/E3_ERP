@@ -48,7 +48,7 @@ function validScheduleTime(value: string | null) {
 function validScheduleAssignee(
   value: PaymentTrackScheduleAssignee | null,
 ): value is PaymentTrackScheduleAssignee {
-  return value === "Leo" || value === "Daniel";
+  return value === "Leo" || value === "Daniel" || value === "Other";
 }
 
 function deliveryScheduleIsComplete(project: WipUnscheduledPaymentTrackProjectInput) {

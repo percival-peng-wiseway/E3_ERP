@@ -19,6 +19,7 @@ import {
   LogIn,
   LogOut,
   PackagePlus,
+  Pencil,
   Plus,
   RefreshCcw,
   RotateCcw,
@@ -187,6 +188,7 @@ function hydrateQuote(payload: QuoteInputs, settings: AppSettings): QuoteInputs 
     discount: Math.abs(payload.discount ?? 0),
     manualCosts: { ...defaultQuote.manualCosts, ...(payload.manualCosts ?? {}) },
     manualMargins: { ...(payload.manualMargins ?? {}) },
+    itemNames: { ...(payload.itemNames ?? {}) },
     customItems: (payload.customItems ?? []).map((item) => ({ ...item })),
   }, settings);
 }
@@ -230,6 +232,7 @@ export function QuoteHelpWorkspace() {
   const [createdFrom, setCreatedFrom] = useState("");
   const [createdTo, setCreatedTo] = useState("");
   const [marginTarget, setMarginTarget] = useState(17.5);
+  const [editingLineItems, setEditingLineItems] = useState(false);
   const [transferBusy, setTransferBusy] = useState(false);
   const importRef = useRef<HTMLInputElement>(null);
   const toastTimer = useRef<number | null>(null);
@@ -331,6 +334,10 @@ export function QuoteHelpWorkspace() {
       ...current,
       manualCosts: { ...current.manualCosts, [key]: Math.max(0, value) },
     }));
+  };
+
+  const setItemName = (key: string, name: string) => {
+    setInputs((current) => ({ ...current, itemNames: { ...(current.itemNames ?? {}), [key]: name } }));
   };
 
   const setManualMargin = (key: string, value: number) => {
@@ -488,6 +495,7 @@ export function QuoteHelpWorkspace() {
   };
 
   const resetQuote = () => {
+    setEditingLineItems(false);
     setInputs(hydrateQuote(cloneQuoteBase(), settings));
     setQuoteId(null);
     setMarginTarget(17.5);
@@ -698,6 +706,7 @@ export function QuoteHelpWorkspace() {
   };
 
   const openQuote = (quote: QuoteRecord) => {
+    setEditingLineItems(false);
     setQuoteId(quote.id);
     setInputs(hydrateQuote(quote.payload, settings));
     setTab("calculator");
@@ -924,24 +933,30 @@ export function QuoteHelpWorkspace() {
             <Panel icon={FileText} number="02" title="Quote Breakdown">
               <div className={styles.breakdownHeader}>
                 <div><b>Costs &amp; Sale Prices</b><span>{result.lineItems.length} line items</span></div>
-                <button type="button" className={styles.smallButton} onClick={addCustomItem}><Plus size={14} /> Custom Item</button>
+                <div className={styles.breakdownActions}>
+                  <button type="button" className={styles.smallButton} aria-pressed={editingLineItems} onClick={() => setEditingLineItems((current) => !current)}>{editingLineItems ? <Check size={14} /> : <Pencil size={14} />}{editingLineItems ? "Done" : "EDIT"}</button>
+                  <button type="button" className={styles.smallButton} onClick={addCustomItem}><Plus size={14} /> Custom Item</button>
+                </div>
               </div>
+              {editingLineItems && <p className={styles.breakdownEditHint}>Edit item names and margins for this quote. Prices recalculate immediately. Use Save Quote to keep your changes.</p>}
               <div className={styles.tableScroll}>
-                <table className={styles.breakdownTable}>
+                <table className={styles.breakdownTable} aria-label="Costs and sale prices">
                   <thead><tr><th>Item</th><th>Cost (ex GST)</th><th>Margin</th><th>Sale Price (ex GST)</th><th><span className={styles.srOnly}>Actions</span></th></tr></thead>
                   <tbody>
                     {result.lineItems.map((item) => {
                       const custom = Boolean(item.customItemId);
                       const manualKey = item.key as keyof QuoteInputs["manualCosts"];
                       return (
-                        <tr key={item.key}>
+                        <tr key={item.key} data-line-item-key={item.key}>
                           <td>
                             {custom ? (
                               <input className={styles.inlineInput} aria-label="Custom item name" value={item.customItemName ?? ""} onChange={(event) => updateCustomItem(item.customItemId!, { name: event.target.value })} />
-                            ) : <span className={styles.itemName}><b>{item.label}</b>{item.note && <small>{item.note}</small>}</span>}
+                            ) : <span className={styles.itemName}>{editingLineItems
+                              ? <input className={styles.inlineInput} aria-label="Item name" maxLength={200} value={inputs.itemNames?.[item.key] ?? item.label} onChange={(event) => setItemName(item.key, event.target.value)} onBlur={(event) => setItemName(item.key, event.target.value.trim() || item.label)} />
+                              : <b>{item.label}</b>}{item.note && <small>{item.note}</small>}</span>}
                           </td>
                           <td>{custom ? <NumberField ariaLabel={`${item.label} cost`} compact value={item.cost} prefix="$" onChange={(value) => updateCustomItem(item.customItemId!, { cost: Math.max(0, value) })} /> : item.editableByUser ? <NumberField ariaLabel={`${item.label} cost`} compact value={item.cost} prefix="$" onChange={(value) => setManualCost(manualKey, value)} /> : <b>{money.format(item.cost)}</b>}</td>
-                          <td>{custom ? <NumberField ariaLabel={`${item.label} margin`} compact value={item.margin * 100} suffix="%" onChange={(value) => updateCustomItem(item.customItemId!, { margin: percentageRate(Math.max(0, value)) })} /> : isCi ? <NumberField ariaLabel={`${item.label} margin`} compact value={item.margin * 100} suffix="%" onChange={(value) => setManualMargin(item.key, percentageRate(value))} /> : <span className={styles.marginPill}>{percent(item.margin)}</span>}</td>
+                          <td>{custom ? <NumberField ariaLabel={`${item.label} margin`} compact value={item.margin * 100} suffix="%" onChange={(value) => updateCustomItem(item.customItemId!, { margin: percentageRate(Math.max(0, value)) })} /> : (editingLineItems || isCi) ? <NumberField ariaLabel={`${item.label} margin`} compact value={item.margin * 100} suffix="%" onChange={(value) => setManualMargin(item.key, percentageRate(value))} /> : <span className={styles.marginPill}>{percent(item.margin)}</span>}</td>
                           <td><b>{money.format(item.salesPrice)}</b></td>
                           <td>{custom && <button type="button" className={styles.iconDanger} aria-label={`Delete ${item.label}`} onClick={() => setInputs((current) => ({ ...current, customItems: (current.customItems ?? []).filter((entry) => entry.id !== item.customItemId) }))}><Trash2 size={14} /></button>}</td>
                         </tr>

@@ -79,7 +79,7 @@ export function readErpSessionToken(token: string): ErpSession | null {
       || payload.expiresAt <= Math.floor(Date.now() / 1000)) return null;
     const user = payload.version === 2
       && typeof payload.displayName === "string" && payload.displayName.length <= 80
-      && typeof payload.role === "string" && ["admin", "pm", "sales", "specialist"].includes(payload.role)
+      && typeof payload.role === "string" && ["admin", "pm", "sales", "specialist", "installer"].includes(payload.role)
       && Number.isSafeInteger(payload.sessionVersion) && (payload.sessionVersion || 0) >= 1
       ? { username: payload.username, displayName: payload.displayName, role: payload.role } as ErpUser
       : payload.version === 1 ? findErpUser(payload.username) : null;

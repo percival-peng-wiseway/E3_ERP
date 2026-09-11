@@ -18,6 +18,7 @@ const PREVIEW_TYPES = new Set(["application/pdf", "image/jpeg", "image/png", "im
 export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const session = getErpSession(request);
   if (!session) return paymentTrackError(401, "authentication_required", "Sign in to upload project files.");
+  if (session.user.role === "installer") return paymentTrackError(403, "role_forbidden", "Installer access is read-only.");
   if (!isAuthorizedMutationRequest(request)) return paymentTrackError(403, "forbidden", "This request is not allowed.");
   if (declaredPaymentTrackBodyTooLarge(request, MAX_BODY_SIZE)) return paymentTrackError(413, "file_too_large", "Each file must be 10 MB or smaller.");
   const { id } = await context.params;

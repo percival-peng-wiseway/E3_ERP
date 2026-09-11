@@ -126,7 +126,9 @@ function chunkSection(section: ParsedKnowledgeSection, config: KnowledgeChunking
       nextStart -= 1;
       overlap += units[nextStart].tokens;
     }
-    start = nextStart < end ? nextStart : end;
+    // A single large unit can consume the whole chunk. Overlap must never
+    // rewind to the same start, otherwise this loop repeats until memory runs out.
+    start = Math.max(start + 1, nextStart < end ? nextStart : end);
   }
   return output;
 }

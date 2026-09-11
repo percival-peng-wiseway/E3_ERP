@@ -22,6 +22,14 @@ Employee access is protected by a unified ERP sign-in. The server issues a signe
 - Administrators have a dedicated **Knowledge resource** view. Supported uploads are chunked and vectorized automatically, with metadata/status details and protected preview in a right-side inspector
 - Knowledge citations reuse the protected Files preview/download route; moving a file to Trash or disabling it removes it from retrieval immediately
 
+### Installer access
+
+- Installer accounts can open only Home and Time Table. A server-side allowlist denies other modules and business writes, including direct API requests.
+- Home reminders show outstanding installation, material delivery and combined work, with Melbourne dates/times, customer, address and assignee. Cancelled and completed work stays out of reminders.
+- Installer Time Table supports weekly navigation and work-type filters. Project and Inventory delivery details include customer contacts, order items, Chosen Items and shared/PM notes without financial records or protected files.
+- All employee roles can open installation details from Project Track schedule cards in Time Table. PM/Admin scheduling also supports Other alongside Leo and Daniel.
+- Migration `0008_installer_accounts.sql` extends the role constraint and provisions the requested installer accounts using independently salted scrypt verifiers while preserving existing users.
+
 ### Home and Agent
 
 - Home shows role-specific action reminders and Admin-managed public announcements on the left, with E3 Agent on the right
@@ -98,6 +106,7 @@ Employee access is protected by a unified ERP sign-in. The server issues a signe
 - Installed / Waiting COES, STC Rebate and Done projects support repeatable Sales payment acknowledgements followed by Admin amount confirmation; partial or zero receipts remain collectible until the Amount Due reaches zero
 - Only the initial deposit requires a payment screenshot or PDF; every successful workflow action closes Project Details
 - Project Details includes shared Notes above Chosen Items, with explicit saving and conflict protection for simultaneous edits. These remain separate from PM Notes.
+- Customer details support explicit edit/save for Sales, PM and Admin, including Coupling and NMI. NMI remains text to preserve leading zeros. Customer updates have independent conflict protection and actor history; Time Table reflects the saved details while Installer access remains read-only.
 - Files + attaches multiple project documents (up to 10 MiB each, 50 additional files per project); validated PDFs/images preview, other formats download, and all files retain the existing employee access protection.
 - Cards show the live remaining Amount Due, while Project Details retains the original proposal, every proof and the final-payment ledger
 - Administrators can override a stage completed outside ERP only with a reason and a current project version; pending payment reviews cannot be bypassed
@@ -330,3 +339,9 @@ The current version includes a unified D1-backed employee identity and role syst
 4. Confirm that the upstream Inventory and QuoteHelp cookie policies match the final HTTPS ERP domain.
 5. Preserve explicit confirmation and traceability for deletion, stock loss, delivery cancellation and delivery completion.
 6. Validate email delivery, Excel import and real stock deductions in a staging environment before switching the production domain.
+
+Administrators can edit **Amount Due** from a Project Track detail dialog. The adjustment preserves confirmed deposit, collection and final-payment receipts, recalculates the total receivable, and records the signed-in administrator, timestamp, before/after amounts and optional reason. Saves require the project version shown when editing began; concurrent changes require reloading. Other roles cannot use the adjustment API.
+
+In Quotations, **EDIT** beside **Custom Item** enables per-quote item names and margin overrides. Residential and C&I pricing use the overrides immediately with the existing cost × (1 + margin) formula. **Done** closes editing; **Save Quote** persists changes. Exported Excel breakdowns include the edited names and calculated prices.
+
+Home-hosted Qwen/Ollama integration and activation: [deployment guide](docs/QWEN_LOCAL_MODEL.md).

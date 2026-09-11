@@ -2090,3 +2090,6 @@
     padding-left: 15px;
   }
 }
+
+.projectDetailsLink { background: none; border: 0; padding: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.projectDetailsLink:hover { text-decoration: underline; color: #5666d1; }

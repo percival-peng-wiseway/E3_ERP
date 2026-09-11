@@ -81,6 +81,7 @@ export type ErpVectorizeIndex = {
 };
 
 export type ErpCloudflareBindings = {
+  documentConverter?: { fetch(request: Request): Promise<Response> } | null;
   database: ErpD1Database | null;
   files: ErpFileNamespace | null;
   workersAi: ErpWorkersAi | null;
@@ -120,6 +121,7 @@ export async function erpCloudflareBindings(): Promise<ErpCloudflareBindings | n
   if (process.env.NODE_ENV !== "production" && !remoteDataDevelopment) return null;
   const context = await getCloudflareContext({ async: true });
   const env = context.env as unknown as {
+    MARKITDOWN?: { fetch(request: Request): Promise<Response> };
     ERP_DB?: ErpD1Database;
     ERP_FILES?: ErpFileNamespace;
     AI?: ErpWorkersAi;
@@ -127,6 +129,7 @@ export async function erpCloudflareBindings(): Promise<ErpCloudflareBindings | n
     KNOWLEDGE_INDEX_WORKFLOW?: ErpKnowledgeIndexWorkflow;
   };
   return {
+    documentConverter: env.MARKITDOWN || null,
     database: env.ERP_DB || null,
     files: env.ERP_FILES || null,
     workersAi: env.AI || null,

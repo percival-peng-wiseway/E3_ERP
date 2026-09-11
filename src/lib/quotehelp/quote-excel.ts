@@ -10,7 +10,7 @@ const headers = [
   "Status", "Customer Name", "Date", "Mode", "Equipment Brand", "Phone", "Address", "E3 Energy Initiator",
   "PV System Size (kW)", "Battery Size (kWh)", "Inverter", "Customer Balance (incl. GST)",
   "Solar VIC Rebate", "Solar VIC Interest Free Loan", "Discount", "Solar STC (Manual)",
-  "Battery STC (Manual)", "Manual Costs JSON", "Manual Margins JSON", "Custom Items JSON",
+  "Battery STC (Manual)", "Manual Costs JSON", "Manual Margins JSON", "Item Names JSON", "Custom Items JSON",
   "Owner", "Created At", "Updated At", "E3 Payload JSON",
 ] as const;
 
@@ -72,6 +72,7 @@ export function createQuotesWorkbook(quotes: QuoteRecord[], settings: AppSetting
       "Battery STC (Manual)": numberOrBlank(quote.payload.manualBatteryStc),
       "Manual Costs JSON": JSON.stringify(quote.payload.manualCosts ?? {}),
       "Manual Margins JSON": JSON.stringify(quote.payload.manualMargins ?? {}),
+      "Item Names JSON": JSON.stringify(quote.payload.itemNames ?? {}),
       "Custom Items JSON": JSON.stringify(quote.payload.customItems ?? []),
       "Owner": quote.ownerName,
       "Created At": quote.createdAt,
@@ -560,6 +561,7 @@ function mappedPayload(get: (...names: string[]) => unknown, customerName: strin
     manualBatteryStc: get("Battery STC (Manual)", "Battery STC"),
     manualCosts: parseJsonCell(get("Manual Costs JSON"), {}),
     manualMargins: parseJsonCell(get("Manual Margins JSON"), {}),
+    itemNames: parseJsonCell(get("Item Names JSON"), {}),
     customItems: parseJsonCell(get("Custom Items JSON"), []),
   };
 }

@@ -10,6 +10,7 @@ export const runtime = "nodejs";
 export async function PATCH(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const session = getErpSession(request);
   if (!session) return paymentTrackError(401, "authentication_required", "Sign in to edit project notes.");
+  if (session.user.role === "installer") return paymentTrackError(403, "role_forbidden", "Installer access is read-only.");
   if (!isAuthorizedMutationRequest(request)) return paymentTrackError(403, "forbidden", "This request is not allowed.");
   const { id } = await context.params;
   if (!/^[0-9a-f-]{36}$/i.test(id)) return paymentTrackError(400, "invalid_id", "The project ID is invalid.");

@@ -1,5 +1,8 @@
 "use client";
 
+import { inventoryTimetableEvents } from "@/lib/timetable/events";
+import type { InstallationDetails } from "@/lib/timetable/types";
+import { InstallationDetailsDialog } from "./installation-details-dialog";
 import {
   AlertCircle,
   CalendarCheck2,
@@ -393,6 +396,8 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget, onOp
   const [sourceWarnings, setSourceWarnings] = useState<string[]>([]);
   const [notice, setNotice] = useState("");
   const [inventoryEditor, setInventoryEditor] = useState<InventoryEditorState | null>(null);
+  const [inventoryDetails, setInventoryDetails] = useState<InstallationDetails | null>(null);
+  const [detailProjectId, setDetailProjectId] = useState<string | null>(null);
   const [paymentEditor, setPaymentEditor] = useState<PaymentEditorState | null>(null);
   const [customEditor, setCustomEditor] = useState<CustomEditorState | null>(null);
   const loadRequestRef = useRef(0);
@@ -1275,6 +1280,8 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget, onOp
 
   const renderEntryActions = (entry: CalendarEntry) => (
     <>
+      {"project" in entry ? <button type="button" onClick={() => setDetailProjectId(entry.project.id)}>View details</button> : null}
+      {entry.source === "inventory" ? <button type="button" onClick={() => setInventoryDetails(inventoryTimetableEvents(entry.group.orders, [])[0]?.details || null)}>View details</button> : null}
       {canManageSchedule && entry.source === "inventory" && !entry.completed && !entry.cancelled ? (
         <>
           <button type="button" onClick={() => openInventoryEditor(entry.group)} disabled={busy}><Pencil size={13} /> Edit</button>
@@ -1307,7 +1314,7 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget, onOp
                 ? <span className={styles.preScheduledBadge}><Clock3 size={12} /> Pre-scheduled</span>
                 : <span className={styles.unscheduledBadge}><AlertCircle size={12} /> Unscheduled</span>}
           </div>
-          <h3>{entry.title}</h3>
+          <h3><button type="button" className={styles.projectDetailsLink} onClick={() => setDetailProjectId(entry.project.id)}>{entry.title}</button></h3>
           <p><MapPin size={13} />{entry.location}</p>
           {canReview && request ? (
             <div className={styles.requestPreview}>
@@ -1354,7 +1361,7 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget, onOp
               ? <span className={styles.inProgressBadge}><Wrench size={12} /> In progress</span>
               : <span className={styles.scheduledBadge}><CalendarCheck2 size={12} /> Scheduled</span>}
       </div>
-      <h3>{entry.title}</h3>
+      <h3>{"project" in entry ? <button type="button" className={styles.projectDetailsLink} onClick={() => setDetailProjectId(entry.project.id)}>{entry.title}</button> : entry.title}</h3>
       <p><MapPin size={13} />{entry.location}</p>
       <div className={styles.cardMeta}>
         <span><Clock3 size={13} />{entry.time ? timeLabel(entry.time) : "All day"}</span>
@@ -1563,6 +1570,9 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget, onOp
           </div>
         </section>
       ) : null}
+
+      {inventoryDetails ? <InstallationDetailsDialog initialDetails={inventoryDetails} onClose={() => setInventoryDetails(null)} /> : null}
+      {detailProjectId ? <InstallationDetailsDialog canEditCustomer={authenticatedRole !== "installer"} projectId={detailProjectId} onClose={() => setDetailProjectId(null)} /> : null}
 
       {view === "calendar" ? (
         <div className={styles.calendarScheduleFrame}>
@@ -1775,12 +1785,12 @@ export function ProjectDeliveryBoard({ authenticatedRole, openEntityTarget, onOp
                 <label className={`${styles.singleField} ${styles.paymentAssigneeField}`}>
                   {paymentEditor.kind === "installation" ? "Installer" : "Delivery person"}
                   <select value={paymentEditor.assignee} onChange={(event) => setPaymentEditor({ ...paymentEditor, assignee: event.target.value as PaymentTrackScheduleAssignee | "" })} required>
-                    <option value="">Choose Leo or Daniel</option>
+                    <option value="">Choose a team member</option>
                     {PAYMENT_TRACK_SCHEDULE_ASSIGNEES.map((assignee) => <option key={assignee} value={assignee}>{assignee}</option>)}
                   </select>
                 </label>
                 {paymentEditor.kind === "combined" ? (
-                  <label className={`${styles.singleField} ${styles.paymentAssigneeField}`}>Installer<select value={paymentEditor.installationAssignee} onChange={(event) => setPaymentEditor({ ...paymentEditor, installationAssignee: event.target.value as PaymentTrackScheduleAssignee | "" })} required><option value="">Choose Leo or Daniel</option>{PAYMENT_TRACK_SCHEDULE_ASSIGNEES.map((assignee) => <option key={assignee} value={assignee}>{assignee}</option>)}</select></label>
+                  <label className={`${styles.singleField} ${styles.paymentAssigneeField}`}>Installer<select value={paymentEditor.installationAssignee} onChange={(event) => setPaymentEditor({ ...paymentEditor, installationAssignee: event.target.value as PaymentTrackScheduleAssignee | "" })} required><option value="">Choose a team member</option>{PAYMENT_TRACK_SCHEDULE_ASSIGNEES.map((assignee) => <option key={assignee} value={assignee}>{assignee}</option>)}</select></label>
                 ) : null}
               </div>
             </div>

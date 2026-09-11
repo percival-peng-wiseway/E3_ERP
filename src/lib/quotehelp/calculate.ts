@@ -111,7 +111,7 @@ export function calculateQuote(
     ["batteryInstallation", "Battery Installation", true],
     ["delivery", "Delivery", true],
     ["acCable", "AC cable run", true],
-    ["blinkFee", "Blink Fee", true],
+    ["blinkFee", "Service Fee", true],
     ["switchboard", "Switchboard Upgrade", true],
     ["subSwitchboard", "sub switchboard", true],
     ["externalCommission", "External Commission incl. GST", true],
@@ -124,7 +124,7 @@ export function calculateQuote(
   }
 
   const marginFor = (key: keyof typeof costs) => {
-    const override = isCiMode ? inputs.manualMargins?.[key] : undefined;
+    const override = inputs.manualMargins?.[key];
     return typeof override === "number" && Number.isFinite(override)
       ? Math.max(0, override)
       : Math.max(0, settings.margins[key] ?? 0);
@@ -138,9 +138,10 @@ export function calculateQuote(
   };
   const standardLineItems: LineItemResult[] = definitions.map(([key, label, editableByUser, note]) => {
     const margin = marginFor(key);
+    const customName = inputs.itemNames?.[key];
     return {
       key,
-      label,
+      label: typeof customName === "string" && customName.trim() ? customName.trim() : label,
       cost: costs[key],
       margin,
       salesPrice: costs[key] * (1 + margin),

@@ -65,7 +65,7 @@ export async function chatWithBusinessAgent(options: {
   const executor = new BusinessToolExecutor(options.dataProvider, options.auth);
   const cache = new Map<string, ToolEnvelope<unknown>>();
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(new Error("total_timeout")), 55_000);
+  const timeout = setTimeout(() => controller.abort(new Error("total_timeout")), config.modelProvider === "ollama" ? 300_000 : 55_000);
   let result: Awaited<ReturnType<typeof runKimiAgent>>;
   let model = decision.modelClass === "pro" ? config.complexModel : config.flashModel;
   let route: "flash" | "pro" = decision.modelClass;

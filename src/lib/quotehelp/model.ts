@@ -88,6 +88,7 @@ export type QuoteInputs = {
   manualSolarStc?: number;
   manualBatteryStc?: number;
   manualMargins?: Record<string, number>;
+  itemNames?: Record<string, string>;
   customItems?: Array<{
     id: string;
     name: string;

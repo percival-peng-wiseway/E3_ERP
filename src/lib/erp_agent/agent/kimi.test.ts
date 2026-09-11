@@ -727,7 +727,7 @@ test("planned Kimi rejects incomplete tool arguments before reading ERP data", a
     plannerModel: "kimi-k2.6",
     executorModel: "kimi-k2.6",
     enabledSkills: new Set(["quotations"]),
-  }), /invalid query plan/u);
+  }), { name: "KimiRequestError", kind: "invalid_plan" });
   assert.equal(quotationReads, 0);
 });
 
@@ -846,7 +846,9 @@ test("planned Kimi reports a zero-match source alongside another verified source
   assert.match(synthesis[0].content || "", /not a whole-answer abstention/i);
 });
 
-test("planned Project Track queries carry Sales and created-date filters through to evidence synthesis", async () => {
+test("planned Project Track queries carry Sales and created-date filters through to evidence synthesis", async (t) => {
+  // Keep "this week" aligned with the fixed dates returned by the model fixture.
+  t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-09-02T02:00:00Z") });
   const modelBodies: Array<Record<string, unknown>> = [];
   const projectArguments = {
     query: "",
@@ -899,4 +901,129 @@ test("planned Project Track queries carry Sales and created-date filters through
   const projectCall = plannedCalls.find((call) => call.function.name === "search_payment_projects");
   assert.ok(projectCall);
   assert.deepEqual(JSON.parse(projectCall.function.arguments), projectArguments);
+});
+
+test("Kimi classifies truncated output without accepting the partial answer", async () => {
+  globalThis.fetch = (async () => Response.json({
+    choices: [{ finish_reason: "length", message: { role: "assistant", content: "partial private answer" } }],
+  })) as typeof fetch;
+  await assert.rejects(answerWithKimi({
+    provider, auth, message: "Weekly summary", apiKey: "test-key",
+    baseUrl: "https://api.moonshot.ai/v1", model: "kimi-k2.6",
+  }), (error: unknown) => {
+    assert.equal((error as { kind: string }).kind, "output_limit");
+    assert.doesNotMatch(String(error), /partial private answer/);
+    return true;
+  });
+});
+
+test("planner receives current ready document context for a deictic bill request", async () => {
+  let captured: Record<string, unknown> | undefined;
+  globalThis.fetch = (async (_url, init) => {
+    captured = JSON.parse(String(init?.body));
+    return successfulModelResponse(queryPlan([{
+      id: "read_attachment", toolName: "search_knowledge_base",
+      arguments: { query: "bill charges total billing period", product: "", region: "", effective_date: "", limit: 5 },
+    }]));
+  }) as typeof fetch;
+  // An unconfigured test knowledge store can abstain; this test covers the
+  // planner boundary before search, where the attachment context was missing.
+  await answerWithPlannedKimi({
+    provider, auth, message: "分析这个账单", apiKey: "test", baseUrl: "https://api.moonshot.ai/v1",
+    plannerModel: "kimi-k3", executorModel: "kimi-k2.6",
+    attachmentDocuments: [{ documentId: "11111111-1111-4111-8111-111111111111", name: "June bill.pdf" }],
+    enabledSkills: new Set(["knowledge"]),
+  });
+  const messages = captured?.messages as Array<{role: string; content: string}>;
+  assert.ok(messages);
+  assert.match(messages[0].content, /1 uploaded, ready-to-search document/);
+  assert.match(messages[0].content, /server automatically restricts/);
+  assert.match(messages.at(-1)!.content, /分析这个账单/);
+  assert.match(messages.at(-1)!.content, /June bill.pdf/);
+  assert.doesNotMatch(messages.at(-1)!.content, /11111111-1111/);
+});
+
+
+test("Qwen uses Basic Auth for schema planning and grounded synthesis", async () => {
+  const bodies: Array<Record<string, unknown>> = [];
+  globalThis.fetch = (async (url, init) => {
+    assert.equal(String(url), "https://home.example.test/v1/chat/completions");
+    assert.equal(new Headers(init?.headers).get("Authorization"), "Basic dGVzdA==");
+    assert.equal(init?.redirect, "manual");
+    bodies.push(JSON.parse(String(init?.body)));
+    return bodies.length === 1
+      ? successfulModelResponse(queryPlan([{ id: "step_1", toolName: "search_quotations", arguments: { query: "", status: "accepted", limit: 10 } }]))
+      : successfulModelResponse("There is one accepted quotation worth AUD 110.");
+  }) as typeof fetch;
+  const result = await answerWithPlannedKimi({
+    provider: plannedProvider(), auth, message: "Summarize accepted quotations.",
+    modelProvider: "ollama", apiKey: "dGVzdA==", baseUrl: "https://home.example.test/v1",
+    plannerModel: "qwen3.5:9b", executorModel: "qwen3.5:9b", conversationId: "private-conversation",
+    enabledSkills: new Set(["quotations"]),
+  });
+  assert.equal(result.answer, "There is one accepted quotation worth AUD 110.");
+  assert.equal(bodies.length, 2);
+  for (const body of bodies) {
+    assert.equal(body.model, "qwen3.5:9b");
+    assert.equal(body.reasoning_effort, "none");
+    assert.equal("thinking" in body, false);
+    assert.equal("max_completion_tokens" in body, false);
+    assert.equal("prompt_cache_key" in body, false);
+    assert.equal(JSON.stringify(body).includes("dGVzdA=="), false);
+  }
+  assert.equal(bodies[0].max_tokens, 4000);
+  assert.equal(bodies[1].max_tokens, 1200);
+  assert.equal((bodies[0].response_format as { type: string }).type, "json_schema");
+  const planSchema = (bodies[0].response_format as any).json_schema.schema;
+  assert.deepEqual(planSchema.anyOf.map((branch: any) => branch.properties.kind.enum), [["execute"], ["clarify"]]);
+  const idPattern = new RegExp(planSchema.anyOf[0].properties.steps.items.properties.id.pattern);
+  assert.equal(idPattern.test("step_1"), true);
+  assert.equal(idPattern.test("1"), false);
+  assert.equal(planSchema.anyOf[0].properties.steps.minItems, 1);
+
+  assert.ok((bodies[1].messages as Array<{ role: string }>).some((message) => message.role === "tool"));
+});
+
+test("Qwen preserves image input and rejects tunnel redirects", async () => {
+  const options = { provider, auth, message: "Describe this image", imageParts,
+    modelProvider: "ollama" as const, apiKey: "tunnel-secret", baseUrl: "https://home.example.test/v1", model: "qwen3.5:9b" };
+  globalThis.fetch = (async (_url, init) => {
+    const body = JSON.parse(String(init?.body));
+    assert.ok(JSON.stringify(body.messages).includes(imageParts[0].image_url.url));
+    assert.equal(new Headers(init?.headers).get("Authorization"), "Basic tunnel-secret");
+    return successfulModelResponse("A screenshot.");
+  }) as typeof fetch;
+  assert.equal((await answerWithKimi(options)).answer, "A screenshot.");
+  let calls = 0;
+  globalThis.fetch = (async () => { calls++; return new Response(null, { status: 302, headers: { Location: "https://other.example.test" } }); }) as typeof fetch;
+  await assert.rejects(answerWithKimi(options));
+  assert.equal(calls, 1);
+});
+
+
+test("Qwen greeting planning stays direct and does not read ERP data", async () => {
+  const bodies: any[] = [];
+  let reads = 0;
+  globalThis.fetch = (async (_url, init) => {
+    const body = JSON.parse(String(init?.body));
+    bodies.push(body);
+    return bodies.length === 1
+      ? successfulModelResponse(JSON.stringify({
+        version: "e3-agent-query-plan.v1", kind: "direct", intent: "Greet the user",
+        responseLanguage: "auto", steps: [], clarification: "",
+      }))
+      : successfulModelResponse("Hello! How can I help with your business?");
+  }) as typeof fetch;
+  const result = await answerWithPlannedKimi({
+    provider: plannedProvider({ listQuotations: async () => { reads++; return []; } }),
+    auth, message: "hi", modelProvider: "ollama", apiKey: "test-credential",
+    baseUrl: "https://home.example.test/v1", plannerModel: "qwen3.5:9b", executorModel: "qwen3.5:9b",
+  });
+  assert.match(result.answer, /Hello/);
+  assert.equal(reads, 0);
+  assert.equal(bodies.length, 2);
+  const branches = bodies[0].response_format.json_schema.schema.anyOf;
+  assert.deepEqual(branches.map((branch: any) => branch.properties.kind.enum), [["direct"]]);
+  assert.equal(branches[0].properties.steps.maxItems, 0);
+  assert.doesNotMatch(bodies[0].messages[0].content, /search_quotations/);
 });

@@ -267,3 +267,39 @@ test("business Kimi transport safely classifies quota errors", async () => {
     },
   );
 });
+
+test("Qwen Basic Auth supports tool execution and validated final answers", async () => {
+  const bodies: Array<Record<string, unknown>> = [];
+  let request = 0;
+  globalThis.fetch = (async (_input, init) => {
+    assert.equal(new Headers(init?.headers).get("Authorization"), "Basic secret");
+    bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    request += 1;
+    return Response.json(request === 1 ? {
+      choices: [{ finish_reason: "tool_calls", message: { role: "assistant", content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "get_inventory", arguments: "{\"sku\":\"INV-1\"}" } }] } }], usage: { prompt_tokens: 10, completion_tokens: 3, total_tokens: 13, cached_tokens: 4 },
+    } : {
+      choices: [{ finish_reason: "stop", message: { role: "assistant", content: JSON.stringify({ answer: "5 available", citations: [], limitations: [] }) } }], usage: { prompt_tokens: 20, completion_tokens: 5, total_tokens: 25, cached_tokens: 6 },
+    });
+  }) as typeof fetch;
+  let calls = 0;
+  const provider = {
+    async getInventory() { calls += 1; return { ok: true, data: [{ sku: "INV-1", product_name: "Panel", warehouse_id: "MEL", warehouse_name: "Melbourne", on_hand: 5, reserved: 0, available: 5, incoming: 0, uom: "ea" }], error_code: null, source: "fake", source_record_ids: ["1"], updated_at: "2026-08-27T00:00:00Z", retryable: false } as const; },
+    async searchKnowledge() { throw new Error("unused"); }, async getProject() { throw new Error("unused"); }, async getOrderFinance() { throw new Error("unused"); },
+  } satisfies BusinessDataProvider;
+  const config: KimiConfig = { modelProvider: "ollama", apiKey: "secret", baseUrl: "https://api.moonshot.test/v1", flashModel: "flash", complexModel: "pro" };
+  const executor = new BusinessToolExecutor(provider, { principalHash: "x", tenantId: "e3", role: "admin", permissions: permissionsForRole("admin") });
+  const result = await runKimiAgent({ config, model: "flash", message: "INV-1", executor });
+  assert.equal(result.valid, true);
+  assert.equal(result.answer, "5 available");
+  assert.equal(result.usage?.prompt_tokens, 30);
+  assert.equal(result.usage?.completion_tokens, 8);
+  assert.equal(result.usage?.total_tokens, 38);
+  assert.equal(result.usage?.cached_tokens, 10);
+  assert.equal(calls, 1);
+  const secondMessages = bodies[1]?.messages as Array<{ role: string }>;
+  assert.ok(secondMessages.some((message) => message.role === "tool"));
+  assert.equal(JSON.stringify(bodies).includes("secret"), false);
+  assert.equal(bodies[0]?.thinking, undefined);
+  assert.equal(bodies[0]?.max_tokens, 1200);
+  assert.equal(bodies[0]?.reasoning_effort, "none");
+});

@@ -21,6 +21,8 @@ async function loadRoute(route: string): Promise<Record<string, Handler>> {
         if (module.endsWith("payment-track/auth")) return { contents: `export function isPaymentTrackAdmin() { return false; }` };
         return { contents: `
           export class PaymentTrackRepositoryError extends Error {}
+          export async function updatePaymentTrackAmountDue(...args) { globalThis.__projectDetailsTestCalls.push(args); return { outstandingCents: args[3] }; }
+          export async function updatePaymentTrackCustomer(...args) { globalThis.__projectDetailsTestCalls.push(args); return { customer: args[3] }; }
           export async function updatePaymentTrackProjectNotes(...args) { globalThis.__projectDetailsTestCalls.push(args); return { projectNotes: args[3] }; }
           export async function uploadPaymentTrackAttachment(...args) { globalThis.__projectDetailsTestCalls.push(args); return { attachments: [{ originalName: args[3].originalName }] }; }
           export async function getPaymentTrackFile() { return { accessToken: 'fixture-token', originalName: 'test.html', contentType: 'application/octet-stream', read: async () => new TextEncoder().encode('<html>test</html>') }; }
@@ -30,6 +32,7 @@ async function loadRoute(route: string): Promise<Record<string, Handler>> {
   });
   return import(`data:text/javascript;base64,${Buffer.from(result.outputFiles[0].text).toString("base64")}`);
 }
+const customerRoute = await loadRoute("customer");
 const notes = await loadRoute("notes");
 const files = await loadRoute("files");
 const download = await loadRoute("files/[fileId]");
@@ -93,5 +96,46 @@ test("empty, oversized and duplicate attachments are rejected without saving", a
   const request = fileRequest(new File(["text"], "test.txt"));
   request.headers.set("content-length", String(11 * 1024 * 1024));
   assert.equal((await files.POST(request, context)).status, 413);
+  assert.equal(calls.length, count);
+});
+
+
+test("customer endpoint enforces identity, complete inputs, request size and same-origin access", async () => {
+  const customer = { firstName: "Test", lastName: "Customer", phone: "", email: "", addressLine1: "1 Test St", suburb: "", state: "VIC", postcode: "3000", coupling: "AC", nmi: "00123456789" };
+  const request = (body: unknown, role = "sales", origin = "https://erp.example") => new Request(`${url}/customer`, { method: "PATCH", headers: { "content-type": "application/json", "x-test-role": role, origin }, body: JSON.stringify(body) });
+  const body = { customer, expectedCustomerUpdatedAt: null };
+  for (const role of ["sales", "pm", "specialist", "admin"]) {
+    assert.equal((await customerRoute.PATCH(request(body, role), context)).status, 200);
+    assert.equal(calls.at(-1)?.[1], role);
+    assert.equal(calls.at(-1)?.[2], "Signed-in person");
+    assert.equal((calls.at(-1)?.[3] as typeof customer).nmi, "00123456789");
+  }
+  const count = calls.length;
+  assert.equal((await customerRoute.PATCH(request(body, ""), context)).status, 401);
+  assert.equal((await customerRoute.PATCH(request(body, "installer"), context)).status, 403);
+  assert.equal((await customerRoute.PATCH(request(body, "sales", "https://other.example"), context)).status, 403);
+  for (const invalid of [{ customer }, { ...body, actorRole: "admin" }, { ...body, expectedCustomerUpdatedAt: "bad-date" }, { ...body, customer: { firstName: "Test" } }]) {
+    assert.equal((await customerRoute.PATCH(request(invalid), context)).status, 400);
+  }
+  assert.equal((await customerRoute.PATCH(request({ ...body, customer: { ...customer, nmi: "x".repeat(17_000) } }), context)).status, 413);
+  assert.equal(calls.length, count);
+});
+
+
+const amountDueRoute = await loadRoute("amount-due");
+test("Amount Due endpoint requires signed admin identity and validates currency and concurrency inputs", async () => {
+  const request = (body: unknown, role = "admin", origin = "https://erp.example") => new Request(`${url}/amount-due`, { method: "PATCH", headers: { "content-type": "application/json", "x-test-role": role, origin }, body: JSON.stringify(body) });
+  const body = { amountDue: "4100.25", expectedUpdatedAt: "2026-09-09T00:00:00.000Z", reason: "Correction" };
+  assert.equal((await amountDueRoute.PATCH(request(body), context)).status, 200);
+  assert.deepEqual(calls.at(-1)?.slice(1), ["admin", "Signed-in person", 410025, body.expectedUpdatedAt, "Correction"]);
+  const count = calls.length;
+  assert.equal((await amountDueRoute.PATCH(request(body, ""), context)).status, 401);
+  for (const role of ["sales", "pm", "specialist", "installer", "accountant"]) assert.equal((await amountDueRoute.PATCH(request(body, role), context)).status, 403);
+  assert.equal((await amountDueRoute.PATCH(request(body, "admin", "https://other.example"), context)).status, 403);
+  for (const invalid of [
+    { amountDue: "4100" }, { ...body, expectedUpdatedAt: "bad-date" }, { ...body, actorRole: "admin" },
+    ...[4100, "-1", "1.001", "1e3", "NaN", "1000000001", ""].map((amountDue) => ({ ...body, amountDue })),
+  ]) assert.equal((await amountDueRoute.PATCH(request(invalid), context)).status, 400);
+  assert.equal((await amountDueRoute.PATCH(request({ ...body, reason: "x".repeat(5000) }), context)).status, 413);
   assert.equal(calls.length, count);
 });

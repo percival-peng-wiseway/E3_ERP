@@ -9,6 +9,11 @@ const testDataDirectory = path.join(tmpdir(), `agent-settings-${randomUUID()}`);
 const mutableProcessEnv = process.env as Record<string, string | undefined>;
 const environmentKeys = [
   "AGENT_SETTINGS_DATA_DIR",
+  "AGENT_MODEL_PROVIDER",
+  "QWEN_BASE_URL",
+  "QWEN_MODEL_NAME",
+  "QWEN_BASIC_AUTH_USER",
+  "QWEN_BASIC_AUTH_PASSWORD",
   "MOONSHOT_API_KEY",
   "KIMI_API_KEY",
   "KIMI_REGION",
@@ -480,4 +485,91 @@ test("ordinary save rejects a corrupt Kimi document while Administrator clear re
   await assert.rejects(readFile(settingsPath), (error: unknown) => (
     Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT")
   ));
+});
+
+
+test("Qwen overrides saved Kimi without exposing or reusing its credentials", async () => {
+  await saveSettings({ apiKey: "saved-moonshot-secret", region: "china" });
+  mutableProcessEnv.AGENT_MODEL_PROVIDER = "ollama";
+  mutableProcessEnv.QWEN_BASE_URL = "https://home.example.test/";
+  mutableProcessEnv.QWEN_MODEL_NAME = "qwen3.5:9b";
+  mutableProcessEnv.QWEN_BASIC_AUTH_USER = "erp";
+  mutableProcessEnv.QWEN_BASIC_AUTH_PASSWORD = "tunnel-test-password";
+  try {
+    const resolved = await resolveKimiSettings();
+    assert.equal(resolved.modelProvider, "ollama");
+    assert.equal(resolved.baseUrl, "https://home.example.test/v1");
+    assert.equal(resolved.plannerModel, "qwen3.5:9b");
+    assert.equal(resolved.executorModel, "qwen3.5:9b");
+    assert.equal(Buffer.from(resolved.apiKey!, "base64").toString(), "erp:tunnel-test-password");
+    const visible = await publicAgentSettings();
+    assert.equal(visible.maskedApiKey, null);
+    assert.equal(visible.modelProvider, "ollama");
+    assert.equal(JSON.stringify(visible).includes(resolved.apiKey!), false);
+    assert.equal(JSON.stringify(visible).includes("password"), false);
+    assert.throws(() => clearAgentSettings(), /server configuration/);
+    assert.throws(() => saveAgentSettings({ apiKey: "new-moonshot-secret" }), /server configuration/);
+    delete mutableProcessEnv.QWEN_BASIC_AUTH_PASSWORD;
+    await assert.rejects(resolveKimiSettings(), { name: "QwenConfigurationError" });
+  } finally {
+    for (const key of ["AGENT_MODEL_PROVIDER", "QWEN_BASE_URL", "QWEN_MODEL_NAME", "QWEN_BASIC_AUTH_USER", "QWEN_BASIC_AUTH_PASSWORD"]) delete mutableProcessEnv[key];
+  }
+  assert.equal((await resolveKimiSettings()).apiKey, "saved-moonshot-secret");
+});
+
+// This suite redirects storage to its random testDataDirectory under tmpdir()
+// before importing settings.ts. All network requests below are injected fakes.
+test("saved Qwen settings verify Basic Auth and never return the password", async () => {
+  const input = { modelProvider: "ollama" as const, baseUrl: "https://e3-test.ngrok-free.app", model: "qwen3.5:9b", basicAuthUsername: "erp", basicAuthPassword: "private-tunnel-password" };
+  assert.deepEqual(parseAgentSettingsInput(input), input);
+  assert.equal(parseAgentSettingsInput({ ...input, apiKey: "moonshot-secret" }), null);
+  let requests = 0;
+  const fetchImpl: typeof fetch = async (url, init) => {
+    requests++;
+    assert.equal(String(url), "https://e3-test.ngrok-free.app/v1/models");
+    assert.equal(init?.redirect, "manual");
+    assert.equal(new Headers(init?.headers).get("Authorization"), `Basic ${Buffer.from("erp:private-tunnel-password").toString("base64")}`);
+    return Response.json({ data: [{ id: "qwen3.5:9b" }] });
+  };
+  const saved = await saveAgentSettings(input, { fetchImpl });
+  assert.equal(saved.modelProvider, "ollama");
+  assert.equal(saved.hasSavedPassword, true);
+  const resolved = await resolveKimiSettings();
+  assert.equal(resolved.modelProvider, "ollama");
+  assert.equal(resolved.plannerModel, input.model);
+  assert.equal(resolved.executorModel, input.model);
+  const visible = await publicAgentSettings();
+  assert.deepEqual(visible, saved);
+  assert.equal(JSON.stringify(visible).includes(input.basicAuthPassword), false);
+  assert.equal(JSON.stringify(visible).includes(resolved.apiKey!), false);
+  await saveAgentSettings({ ...input, basicAuthPassword: "", baseUrl: `${input.baseUrl}/v1/` }, { fetchImpl });
+  assert.equal(requests, 2);
+});
+
+test("Qwen rejects unsafe endpoints and cross-origin password reuse before fetch", async () => {
+  const input = { modelProvider: "ollama" as const, baseUrl: "https://e3-test.ngrok-free.app", model: "qwen3.5:9b", basicAuthUsername: "erp" };
+  const before = await resolveKimiSettings();
+  const fetchImpl: typeof fetch = async () => { assert.fail("no outbound request should occur"); };
+  for (const baseUrl of ["https://127.0.0.1", "https://localhost", "https://ngrok-free.app.evil.test", "https://e3-test.ngrok-free.app@evil.test", "http://e3-test.ngrok-free.app", "https://other.ngrok-free.app"]) {
+    await assert.rejects(saveAgentSettings({ ...input, baseUrl }, { fetchImpl }));
+  }
+  await assert.rejects(saveAgentSettings({ ...input, basicAuthUsername: "another-user" }, { fetchImpl }));
+  assert.deepEqual(await resolveKimiSettings(), before);
+});
+
+test("Qwen failed verification preserves active settings and hides upstream errors", async () => {
+  const input = { modelProvider: "ollama" as const, baseUrl: "https://replacement.ngrok-free.dev", model: "qwen3.5:9b", basicAuthUsername: "erp", basicAuthPassword: "replacement-password" };
+  const before = await resolveKimiSettings();
+  const responses = [new Response("private-upstream-error", { status: 401 }),
+    new Response("private-upstream-error", { status: 302, headers: { Location: "https://other.ngrok-free.app" } }),
+    Response.json({ data: [{ id: "different-model" }] }), new Response("private-upstream-error")];
+  for (const response of responses) {
+    await assert.rejects(saveAgentSettings(input, { fetchImpl: async () => response }), (error: unknown) => {
+      assert.ok(error instanceof AgentSettingsError);
+      assert.equal(error.message.includes("private-upstream-error"), false);
+      assert.equal(error.message.includes(input.basicAuthPassword), false);
+      return true;
+    });
+    assert.deepEqual(await resolveKimiSettings(), before);
+  }
 });

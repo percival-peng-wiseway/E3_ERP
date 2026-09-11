@@ -412,6 +412,7 @@ async function processAgentRequest(request: Request) {
             message,
             apiKey: builderApiKey,
             baseUrl: settings.baseUrl,
+            modelProvider: settings.modelProvider,
             model: settings.executorModel,
             trace,
           });
@@ -447,10 +448,10 @@ async function processAgentRequest(request: Request) {
       console.error("Personal Skill Builder failed without creating a fallback Skill", safeErrorKind(builderError));
       const missingModel = builderError === modelUnavailable;
       const modelWarning = !missingModel && builderModelState.status === "unavailable"
-        ? kimiRequestWarning(builderError, settings.region)
+        ? kimiRequestWarning(builderError, settings.region, settings.modelProvider)
         : null;
       warnings.push(missingModel
-        ? "Kimi must be configured before the Agent can draft a personal Skill. No Skill was created."
+        ? "The model service must be configured before the Agent can draft a personal Skill. No Skill was created."
         : modelWarning
           ? `${modelWarning.message} No Skill was created.`
           : builderModelState.status === "unavailable"
@@ -486,7 +487,7 @@ async function processAgentRequest(request: Request) {
     data = informationNotFound(input.message);
   } else if (modelRequest && !settings.apiKey) {
     modelStatus = "unavailable";
-    warnings.push("Kimi must be configured before the Agent can answer this request.");
+    warnings.push("The model service must be configured before the Agent can answer this request.");
     issueCodes.add("model_unavailable");
     trace.markOutcome("error");
     trace.markAbstained();
@@ -541,7 +542,7 @@ async function processAgentRequest(request: Request) {
         data = workflowAnswer;
       } else if (!settings.apiKey) {
         modelStatus = "unavailable";
-        warnings.push("Kimi must be configured before the Agent can answer this request.");
+        warnings.push("The model service must be configured before the Agent can answer this request.");
         issueCodes.add("model_unavailable");
         trace.markOutcome("error");
         trace.markAbstained();
@@ -558,6 +559,7 @@ async function processAgentRequest(request: Request) {
             conversationId: input.conversation_id,
             apiKey: settings.apiKey!,
             baseUrl: settings.baseUrl,
+            modelProvider: settings.modelProvider,
             plannerModel: settings.plannerModel,
             executorModel: settings.executorModel,
             attachmentDocuments,
@@ -583,7 +585,7 @@ async function processAgentRequest(request: Request) {
       // Their messages may contain upstream response bodies, so log only the class.
       console.error("Agent primary answer path unavailable; no fallback answer generated", safeErrorKind(primaryError));
       const modelWarning = modelStatus === "unavailable"
-        ? kimiRequestWarning(primaryError, settings.region)
+        ? kimiRequestWarning(primaryError, settings.region, settings.modelProvider)
         : null;
       warnings.push(modelWarning
         ? `${modelWarning.message} No fallback answer was generated.`
@@ -593,7 +595,12 @@ async function processAgentRequest(request: Request) {
       trace.markOutcome("error");
       trace.markAbstained();
       issueCodes.add(modelStatus === "unavailable" ? "model_error" : "agent_error");
-      data = informationNotFound(input.message);
+      data = {
+        ...informationNotFound(input.message),
+        answer: requestLanguage(input.message) === "chinese"
+          ? "这次请求处理失败，尚未得到可靠结果，请重试。"
+          : "This request could not be completed. No reliable result is available yet. Please try again.",
+      };
     }
   }
 

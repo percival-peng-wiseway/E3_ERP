@@ -144,7 +144,7 @@ async function writeStoredClaims(claims: StoredClaim[], expectedVersion: number 
   await rename(temporaryPath, recordsPath);
 }
 
-function withMutation<T>(work: () => Promise<T>): Promise<T> {
+async function withMutation<T>(work: () => Promise<T>): Promise<T> {
   const retryingWork = async () => {
     for (let attempt = 0; attempt < MAXIMUM_STORAGE_RETRIES; attempt += 1) {
       try {
@@ -159,6 +159,9 @@ function withMutation<T>(work: () => Promise<T>): Promise<T> {
       "storage_conflict",
     );
   };
+  // Workers must not await another request's I/O through an isolate-wide queue.
+  // D1 version checks and the retries above protect concurrent cloud writes.
+  if (await erpCloudflareBindings()) return retryingWork();
   const result = mutationQueue.then(retryingWork, retryingWork);
   mutationQueue = result.then(() => undefined, () => undefined);
   return result;

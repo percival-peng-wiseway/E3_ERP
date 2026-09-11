@@ -27,3 +27,7 @@
 *.log
 *.tsbuildinfo
 /cloudflare-env.d.ts
+
+/services/markitdown/node_modules
+/services/markitdown/.wrangler
+/services/markitdown/__pycache__

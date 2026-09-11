@@ -1201,3 +1201,11 @@
   .spinning { animation-duration: 1.5s; }
   .uploadRow i::after { animation: none; width: 72%; }
 }
+
+/* Give the selected knowledge resource half the working area. */
+@media (min-width: 931px) {
+  .driveShell.knowledgeShell.knowledgeExpanded { grid-template-columns: 180px minmax(0, 1fr) minmax(0, 1fr); }
+}
+@media (min-width: 761px) and (max-width: 930px) {
+  .driveShell.knowledgeShell.knowledgeExpanded { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+}

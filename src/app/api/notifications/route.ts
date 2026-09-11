@@ -1,3 +1,5 @@
+import { taskReminders } from "@/lib/team-workspace/model";
+import { listEntries } from "@/lib/team-workspace/repository";
 import { NextResponse } from "next/server";
 import { getErpSession } from "@/lib/auth/session";
 import { buildWorkspaceNotifications } from "@/lib/notifications/service";
@@ -15,7 +17,7 @@ function noStoreJson(body: unknown, init?: ResponseInit) {
 export async function GET(request: Request) {
   try {
     const session = getErpSession(request);
-    if (!session) {
+    if (!session || session.user.role === "installer") {
       return noStoreJson({
         error: "Authentication is required.",
         code: "authentication_required",
@@ -27,6 +29,13 @@ export async function GET(request: Request) {
       includeReimbursements: notificationRole === "admin" || isReimbursementAdmin(request),
       username: session.user.username,
     });
+    {
+      const tasks = await listEntries();
+      const taskNotifications = taskReminders(tasks, session.user.username).map(item => ({ id: `team-${item.entry.id}`, role: notificationRole, priority: "high" as const,
+        title: item.entry.title, description: item.message, module: "team" as const,
+        entityId: item.entry.id, actionLabel: "Open task", badgeLabel: "High" }));
+      result.data.notifications.unshift(...taskNotifications);
+    }
     const visibleCount = result.data.notifications.length;
     result.data.counts = {
       all: visibleCount,

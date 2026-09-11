@@ -44,6 +44,8 @@ const CUSTOMER_FIELDS = new Set([
   "suburb",
   "state",
   "postcode",
+  "coupling",
+  "nmi",
 ]);
 const ITEM_FIELDS = new Set(["category", "description", "model", "capacity", "quantity"]);
 
@@ -55,7 +57,7 @@ function specialistValue(value: unknown, exact: boolean): PaymentTrackSpecialist
   return name && phone !== null ? { name, phone } : null;
 }
 
-function customerValue(value: unknown, exact: boolean): PaymentTrackCustomer | null {
+export function parsePaymentTrackCustomer(value: unknown, exact = true): PaymentTrackCustomer | null {
   const source = objectValue(value);
   if (!source || (exact && !hasOnlyKeys(source, CUSTOMER_FIELDS))) return null;
   const firstName = optionalPaymentTrackText(source.firstName, 80);
@@ -66,6 +68,10 @@ function customerValue(value: unknown, exact: boolean): PaymentTrackCustomer | n
   const suburb = optionalPaymentTrackText(source.suburb, 100);
   const state = optionalPaymentTrackText(source.state, 30);
   const postcode = optionalPaymentTrackText(source.postcode, 20);
+  const coupling = optionalPaymentTrackText(source.coupling, 80);
+  const nmi = optionalPaymentTrackText(source.nmi, 32);
+  if ([coupling, nmi].some((field) => field === null)) return null;
+  if (Object.values(source).some((field) => typeof field === "string" && /[\u0000-\u001f\u007f]/.test(field))) return null;
   if ([firstName, lastName, phone, email, addressLine1, suburb, state, postcode].some((field) => field === null)) return null;
   if (!firstName && !lastName) return null;
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return null;
@@ -78,6 +84,8 @@ function customerValue(value: unknown, exact: boolean): PaymentTrackCustomer | n
     suburb: suburb || "",
     state: state || "",
     postcode: postcode || "",
+    ...(source.coupling !== undefined ? { coupling: coupling || "" } : {}),
+    ...(source.nmi !== undefined ? { nmi: nmi || "" } : {}),
   };
 }
 
@@ -113,7 +121,7 @@ export function parsePaymentTrackCreateInput(
   if (body.actorRole !== "sales" || (exact && !hasOnlyKeys(body, TOP_LEVEL_FIELDS))) return null;
   const quoteNumber = requiredPaymentTrackText(body.quoteNumber, 80);
   const specialist = specialistValue(body.specialist, exact);
-  const customer = customerValue(body.customer, exact);
+  const customer = parsePaymentTrackCustomer(body.customer, exact);
   const items = Array.isArray(body.items) && body.items.length >= 1 && body.items.length <= 100
     ? body.items.map((item) => itemValue(item, exact))
     : [];

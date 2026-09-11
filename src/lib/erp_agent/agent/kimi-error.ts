@@ -6,7 +6,9 @@ export type KimiRequestErrorKind =
   | "quota_or_rate_limit"
   | "service_unavailable"
   | "network"
-  | "invalid_response";
+  | "invalid_plan"
+  | "invalid_response"
+  | "output_limit";
 
 const ERROR_CODES: Record<KimiRequestErrorKind, string> = {
   bad_request: "kimi_bad_request",
@@ -16,7 +18,9 @@ const ERROR_CODES: Record<KimiRequestErrorKind, string> = {
   quota_or_rate_limit: "kimi_quota_or_rate_limited",
   service_unavailable: "kimi_service_unavailable",
   network: "kimi_network_error",
+  invalid_plan: "kimi_invalid_plan",
   invalid_response: "kimi_invalid_response",
+  output_limit: "kimi_output_limit",
 };
 
 /**
@@ -68,8 +72,24 @@ function selectedRegionLabel(region?: KimiRegionForWarning) {
 export function kimiRequestWarning(
   error: unknown,
   region?: KimiRegionForWarning,
+  modelProvider?: "kimi" | "ollama",
 ): { code: string; message: string } | null {
   if (!(error instanceof KimiRequestError)) return null;
+  if (modelProvider === "ollama") {
+    const messages: Record<KimiRequestErrorKind, string> = {
+      bad_request: "Qwen rejected the request. Check the Ollama version and model configuration.",
+      authentication: "Qwen tunnel authentication failed. Check the server-side tunnel credentials.",
+      permission: "The Qwen tunnel denied access. Check its access policy.",
+      model_unavailable: "The Qwen model or tunnel endpoint was not found. Check the model name and address.",
+      quota_or_rate_limit: "The Qwen service is busy or the tunnel is rate limited. Retry shortly.",
+      service_unavailable: "The home Qwen service is unavailable. Check that the computer, Ollama and tunnel are running.",
+      network: "The home Qwen service could not be reached in time. Check that the computer, Ollama and tunnel are running.",
+      invalid_plan: "Qwen returned a query plan that failed validation. No unvalidated tools were executed. Try a more specific request.",
+      invalid_response: "Qwen returned an invalid response. Check the model integration and retry.",
+      output_limit: "Qwen reached its output limit. Try a narrower request.",
+    };
+    return { code: error.code.replace(/^kimi_/, "qwen_"), message: messages[error.kind] };
+  }
   const messages: Record<KimiRequestErrorKind, string> = {
     bad_request: "Kimi rejected the request format. Check the Kimi K2.6 integration and try again.",
     authentication: `The Moonshot API key is not valid for the ${selectedRegionLabel(region)} region. Update the key or region in Agent Settings.`,
@@ -78,7 +98,9 @@ export function kimiRequestWarning(
     quota_or_rate_limit: "Kimi quota is insufficient or the account is rate limited. Check the Moonshot balance or retry shortly.",
     service_unavailable: "Kimi is temporarily unavailable. Retry shortly.",
     network: "The Kimi API could not be reached. Check network access and the selected region, then retry.",
+    invalid_plan: "The model returned a query plan that failed validation. No unvalidated tools were executed. Try a more specific request.",
     invalid_response: "Kimi returned an invalid response. Check the integration and retry.",
+    output_limit: "The model response exceeded its output limit. Try a shorter summary or a narrower date range.",
   };
   return { code: error.code, message: messages[error.kind] };
 }

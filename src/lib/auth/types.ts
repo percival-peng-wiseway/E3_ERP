@@ -1,5 +1,5 @@
-export const ERP_ROLES = ["admin", "pm", "sales", "specialist"] as const;
-export const ERP_ASSIGNABLE_ROLES = ["admin", "pm", "sales"] as const;
+export const ERP_ROLES = ["admin", "pm", "sales", "specialist", "installer"] as const;
+export const ERP_ASSIGNABLE_ROLES = ["admin", "pm", "sales", "installer"] as const;
 
 export type ErpRole = (typeof ERP_ROLES)[number];
 
@@ -30,4 +30,5 @@ export const ERP_ROLE_LABELS: Record<ErpRole, string> = {
   pm: "Project Manager",
   sales: "Sales",
   specialist: "Sales",
+  installer: "Installer",
 };

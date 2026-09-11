@@ -10,6 +10,7 @@ process.env.PAYMENT_TRACK_DATA_DIR = testDataDirectory;
 
 const repositoryModule = "./repository.ts";
 const {
+  updatePaymentTrackStcEstimate,
   confirmPaymentTrackSolarRebateQrReceived,
   createImportedPaymentTrackProject,
   createManualPaymentTrackProject,
@@ -2401,4 +2402,23 @@ test("repository rejects missing versions and oversized PM notes", async () => {
       && error.code === "invalid_pm_notes"
     ),
   );
+});
+
+
+test("only admins update expected STC amounts with a current project version", async () => {
+  const project = await createPmNotesProject();
+  await assert.rejects(updatePaymentTrackStcEstimate(project.id, "sales", "Sales", 10000, 20000, project.updatedAt), error => error instanceof PaymentTrackRepositoryError && error.status === 403);
+  const saved = await updatePaymentTrackStcEstimate(project.id, "admin", "Admin", 10000, 20000, project.updatedAt);
+  assert.equal(saved.stcSolarExpectedAmountCents, 10000);
+  assert.equal(saved.stcBatteryExpectedAmountCents, 20000);
+  assert.equal(saved.outstandingCents, project.outstandingCents);
+  assert.equal(saved.stcSolarReceivedAt, null);
+  assert.equal(saved.history.at(-1)?.action, "stc_estimate_updated");
+  await assert.rejects(updatePaymentTrackStcEstimate(project.id, "admin", "Admin", 30000, 40000, project.updatedAt), error => error instanceof PaymentTrackRepositoryError && error.status === 409);
+  await assert.rejects(updatePaymentTrackStcEstimate(project.id, "admin", "Admin", -1, 20000, saved.updatedAt), error => error instanceof PaymentTrackRepositoryError && error.status === 400);
+  const reread = (await listPaymentTrackProjects()).find(row => row.id === project.id)!;
+  assert.equal(reread.stcSolarExpectedAmountCents, 10000);
+  const cleared = await updatePaymentTrackStcEstimate(project.id, "admin", "Admin", null, 0, reread.updatedAt);
+  assert.equal(cleared.stcSolarExpectedAmountCents, null);
+  assert.equal(cleared.stcBatteryExpectedAmountCents, 0);
 });

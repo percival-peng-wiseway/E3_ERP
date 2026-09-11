@@ -335,6 +335,7 @@
 .panel,
 .historyPanel,
 .usersPanel {
+  min-width: 0;
   padding: 20px;
 }
 
@@ -644,6 +645,7 @@
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 10px;
+  flex-wrap: wrap;
 }
 
 .breakdownHeader > div {
@@ -662,6 +664,7 @@
 }
 
 .tableScroll {
+  position: relative;
   overflow-x: auto;
   border: 1px solid #e6e9ee;
   border-radius: 8px;
@@ -1782,7 +1785,7 @@
   }
 
   .calculatorLayout {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .summaryColumn {
@@ -1955,3 +1958,7 @@
     animation-iteration-count: 1 !important;
   }
 }
+
+.breakdownHeader > .breakdownActions { align-items: center; flex-wrap: wrap; }
+.breakdownActions button[aria-pressed="true"] { color: #fff; background: #6470d9; border-color: #6470d9; }
+.breakdownEditHint { margin: 0 0 12px; color: #68758a; font-size: 12px; line-height: 1.5; }

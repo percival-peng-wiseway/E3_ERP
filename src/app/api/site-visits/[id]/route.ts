@@ -76,6 +76,7 @@ export async function PATCH(
     if (browserRequest && !session) {
       return siteVisitError(403, "forbidden", "This request is not allowed.");
     }
+    if (session?.user.role === "installer") return siteVisitError(403, "role_forbidden", "Installer access is read-only.");
     // A non-browser mutation reached this point only through the trusted
     // internal bearer token checked above. It receives Administrator authority
     // and a stable audit label instead of trusting actor fields in the body.

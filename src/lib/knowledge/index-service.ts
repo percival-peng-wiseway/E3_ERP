@@ -1,3 +1,5 @@
+// @ts-expect-error -- focused Node tests require explicit extensions.
+import { prepareMarkdown } from "./markdown-artifact.ts";
 import { randomUUID } from "node:crypto";
 // @ts-expect-error -- focused Node ESM tests require the explicit extension.
 import { getWorkspaceFileIndexSource } from "../workspace-files/repository.ts";
@@ -6,7 +8,7 @@ import { deleteKnowledgeVectors, knowledgeVectorBinding, KnowledgeVectorProvider
 // @ts-expect-error -- focused Node ESM tests require the explicit extension.
 import { chunkParsedKnowledgeDocument } from "./chunker.ts";
 // @ts-expect-error -- focused Node ESM tests require the explicit extension.
-import { KnowledgeParseError, parseKnowledgeDocument } from "./parser.ts";
+import { KnowledgeParseError } from "./parser.ts";
 // @ts-expect-error -- focused Node ESM tests require the explicit extension.
 import { claimKnowledgeIndexJob, enqueueKnowledgeIndexJob, failKnowledgeIndexJob, getKnowledgeDocument, getKnowledgeIndexJob, replaceKnowledgeChunksAtomically, setKnowledgeDocumentStatus } from "./repository.ts";
 // @ts-expect-error -- focused Node ESM tests require the explicit extension.
@@ -86,12 +88,7 @@ export async function processKnowledgeIndexJob(
       throw new Error("source_changed");
     }
     const bytes = await source.read();
-    const parsed = await parseKnowledgeDocument({
-      bytes,
-      contentType: source.contentType,
-      fileName: source.name,
-      title: document.title,
-    });
+    const parsed = await prepareMarkdown(document, bytes);
     const chunks = chunkParsedKnowledgeDocument({
       documentId: document.id,
       indexGeneration: document.indexGeneration,

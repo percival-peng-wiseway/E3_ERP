@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { hasValidEdgeSession } from "@/lib/auth/edge-session";
+import { edgeSessionRole } from "@/lib/auth/edge-session";
 import { remoteDataMutationBlocked } from "@/lib/auth/remote-data-policy";
+
+import { installerRequestAllowed } from "@/lib/auth/installer-access";
 
 const PUBLIC_PATHS = new Set([
   "/login",
@@ -25,7 +27,11 @@ function trustedServerRequest(request: NextRequest) {
 
 export async function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
-  const authenticated = await hasValidEdgeSession(request);
+  const role = await edgeSessionRole(request);
+  const authenticated = Boolean(role);
+  if (role === "installer" && !installerRequestAllowed(request.method, pathname)) {
+    return NextResponse.json({ error: "Installer access is limited to Home, Time Table and Team Workspace.", code: "role_forbidden" }, { status: 403, headers: { "cache-control": "no-store" } });
+  }
 
   if (PUBLIC_PATHS.has(pathname)) {
     if (pathname === "/login" && authenticated) {

@@ -1,3 +1,5 @@
+// @ts-expect-error -- focused Node ESM tests require the explicit extension.
+import { resolveQwenConfig, QWEN_REQUEST_TIMEOUT_MS, type ModelProvider } from "../agent/qwen-config.ts";
 import { createHash } from "node:crypto";
 import type { Citation, ToolEnvelope } from "./contracts";
 // @ts-expect-error -- focused Node ESM tests require the explicit extension.
@@ -53,9 +55,11 @@ export type ProviderResult = {
   toolLatencyMs: number;
 };
 
-export type KimiConfig = { apiKey: string; baseUrl: string; flashModel: string; complexModel: string };
+export type KimiConfig = { modelProvider?: ModelProvider; apiKey: string; baseUrl: string; flashModel: string; complexModel: string };
 
 export function resolveKimiConfig(): KimiConfig | null {
+  const qwen = resolveQwenConfig();
+  if (qwen) return { ...qwen, flashModel: qwen.model, complexModel: qwen.model };
   const apiKey = (process.env.MOONSHOT_API_KEY || process.env.KIMI_API_KEY)?.trim();
   if (!apiKey) return null;
   const region = process.env.KIMI_REGION?.trim() || "china";
@@ -218,6 +222,8 @@ export async function runKimiAgent(options: {
   signal?: AbortSignal;
   knowledgeRequired?: boolean;
 }): Promise<ProviderResult> {
+  const isOllama = options.config.modelProvider === "ollama";
+  const timeoutMs = isOllama ? QWEN_REQUEST_TIMEOUT_MS : 35_000;
   const cache = options.cache || new Map<string, ToolEnvelope<unknown>>();
   const messages: Message[] = [{ role: "system", content: SYSTEM }, { role: "user", content: options.message }];
   const toolCalls: ProviderResult["toolCalls"] = [];
@@ -238,16 +244,16 @@ export async function runKimiAgent(options: {
         try {
           response = await fetch(completionUrl(options.config.baseUrl), {
             method: "POST",
-            headers: { "Content-Type": "application/json", Accept: "application/json", Authorization: `Bearer ${options.config.apiKey}` },
+            headers: { "Content-Type": "application/json", Accept: "application/json", Authorization: `${isOllama ? "Basic" : "Bearer"} ${options.config.apiKey}` },
             body: JSON.stringify({
               model: options.model, messages, tools: BUSINESS_AGENT_TOOLS, tool_choice: "auto",
-              response_format: { type: "json_object" }, max_completion_tokens: 1200, stream: false,
-              thinking: { type: "disabled" },
-              ...(options.conversationId ? { prompt_cache_key: `conv_${createHash("sha256").update(options.conversationId).digest("hex").slice(0, 32)}` } : {}),
+              response_format: { type: "json_object" }, stream: false,
+              ...(isOllama ? { max_tokens: 1200, reasoning_effort: "none" } : { max_completion_tokens: 1200, thinking: { type: "disabled" } }),
+              ...(!isOllama && options.conversationId ? { prompt_cache_key: `conv_${createHash("sha256").update(options.conversationId).digest("hex").slice(0, 32)}` } : {}),
             }),
             cache: "no-store", redirect: "manual", signal: options.signal
-              ? AbortSignal.any([options.signal, AbortSignal.timeout(35_000)])
-              : AbortSignal.timeout(35_000),
+              ? AbortSignal.any([options.signal, AbortSignal.timeout(timeoutMs)])
+              : AbortSignal.timeout(timeoutMs),
           });
         } catch {
           throw kimiNetworkError();

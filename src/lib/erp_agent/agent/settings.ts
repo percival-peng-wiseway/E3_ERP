@@ -1,3 +1,5 @@
+// @ts-expect-error -- focused Node ESM tests require the explicit extension.
+import { qwenEnabled, resolveQwenConfig, normalizeQwenConnection, type QwenConnectionInput, type ModelProvider } from "./qwen-config.ts";
 import { randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -13,6 +15,8 @@ import {
 } from "../../server/cloudflare-storage.ts";
 
 type StoredAgentSettings = {
+  modelProvider?: ModelProvider;
+  qwen?: QwenConnectionInput;
   apiKey?: string;
   region: KimiRegion;
   plannerModel?: string;
@@ -40,6 +44,8 @@ export const DEFAULT_KIMI_PLANNER_MODEL = "kimi-k3";
 export const DEFAULT_KIMI_EXECUTOR_MODEL = DEFAULT_KIMI_MODEL;
 
 export type ResolvedKimiSettings = {
+  basicAuthUsername?: string;
+  modelProvider?: ModelProvider;
   apiKey: string | null;
   region: KimiRegion;
   baseUrl: string;
@@ -53,6 +59,9 @@ export type ResolvedKimiSettings = {
 };
 
 export type PublicAgentSettings = {
+  basicAuthUsername?: string;
+  hasSavedPassword?: boolean;
+  modelProvider?: ModelProvider;
   configured: boolean;
   maskedApiKey: string | null;
   region: KimiRegion;
@@ -64,6 +73,11 @@ export type PublicAgentSettings = {
 };
 
 export type AgentSettingsInput = {
+  modelProvider?: ModelProvider;
+  baseUrl?: string;
+  model?: string;
+  basicAuthUsername?: string;
+  basicAuthPassword?: string;
   apiKey?: string;
   region?: KimiRegion;
   plannerModel?: string;
@@ -131,7 +145,17 @@ function normalizedApiKey(value: string): string {
 export function parseAgentSettingsInput(value: unknown): AgentSettingsInput | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const body = value as Record<string, unknown>;
-  if (Object.keys(body).some((key) => !["apiKey", "region", "plannerModel", "executorModel"].includes(key))) return null;
+  if (body.modelProvider === "ollama") {
+    if (Object.keys(body).some((key) => !["modelProvider", "baseUrl", "model", "basicAuthUsername", "basicAuthPassword"].includes(key))) return null;
+    if (typeof body.baseUrl !== "string" || typeof body.model !== "string" || typeof body.basicAuthUsername !== "string"
+      || (body.basicAuthPassword !== undefined && typeof body.basicAuthPassword !== "string")) return null;
+    return { modelProvider: "ollama", baseUrl: body.baseUrl, model: body.model,
+      basicAuthUsername: body.basicAuthUsername,
+      ...(typeof body.basicAuthPassword === "string" ? { basicAuthPassword: body.basicAuthPassword } : {}),
+    };
+  }
+  if (body.modelProvider !== undefined && body.modelProvider !== "kimi") return null;
+  if (Object.keys(body).some((key) => !["modelProvider", "apiKey", "region", "plannerModel", "executorModel"].includes(key))) return null;
   if (body.apiKey !== undefined && typeof body.apiKey !== "string") return null;
   if (body.region !== undefined && !KIMI_REGIONS.includes(body.region as KimiRegion)) return null;
   if (body.plannerModel !== undefined && typeof body.plannerModel !== "string") return null;
@@ -143,6 +167,7 @@ export function parseAgentSettingsInput(value: unknown): AgentSettingsInput | nu
     return null;
   }
   return {
+    ...(body.modelProvider === "kimi" ? { modelProvider: "kimi" as const } : {}),
     ...(typeof body.apiKey === "string" ? { apiKey: body.apiKey } : {}),
     ...(body.region !== undefined ? { region: body.region as KimiRegion } : {}),
     ...(typeof body.plannerModel === "string" ? { plannerModel: body.plannerModel.trim() } : {}),
@@ -238,8 +263,16 @@ function normalizeStoredSettings(value: unknown): StoredAgentSettings | null {
     const legacyEndpointFieldsPresent = candidate.baseUrl !== undefined || candidate.model !== undefined;
     const allowed = legacyEndpointFieldsPresent
       ? new Set(["apiKey", "baseUrl", "model", "region", "plannerModel", "executorModel", "updatedAt"])
-      : new Set(["apiKey", "region", "plannerModel", "executorModel", "updatedAt"]);
+      : new Set(["apiKey", "region", "plannerModel", "executorModel", "updatedAt", "modelProvider", "qwen"]);
     if (Object.keys(candidate).some((key) => !allowed.has(key))) return null;
+    if (candidate.modelProvider !== undefined && candidate.modelProvider !== "ollama" && candidate.modelProvider !== "kimi") return null;
+    let qwen: QwenConnectionInput | undefined;
+    if (candidate.qwen !== undefined) {
+      if (!candidate.qwen || typeof candidate.qwen !== "object"
+        || Object.keys(candidate.qwen).some((key) => !["baseUrl", "model", "username", "password"].includes(key))) return null;
+      qwen = normalizeQwenConnection(candidate.qwen, true);
+    }
+    if (candidate.modelProvider === "ollama" && !qwen) return null;
     let region = candidate.region === undefined
       ? DEFAULT_KIMI_REGION
       : normalizedKimiRegion(candidate.region);
@@ -266,6 +299,8 @@ function normalizeStoredSettings(value: unknown): StoredAgentSettings | null {
       region,
       ...(plannerModel ? { plannerModel } : {}),
       ...(executorModel ? { executorModel } : {}),
+      ...(candidate.modelProvider ? { modelProvider: candidate.modelProvider } : {}),
+      ...(qwen ? { qwen } : {}),
       updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : new Date(0).toISOString(),
     };
   } catch {
@@ -397,6 +432,13 @@ async function clearStoredSettings() {
 }
 
 export function resolveEnvironmentKimiSettings(): ResolvedKimiSettings {
+  const qwen = resolveQwenConfig();
+  if (qwen) return {
+    apiKey: qwen.apiKey, modelProvider: qwen.modelProvider,
+    region: DEFAULT_KIMI_REGION, baseUrl: qwen.baseUrl,
+    plannerModel: qwen.model, executorModel: qwen.model,
+    fastModel: qwen.model, complexModel: qwen.model, source: "environment",
+  };
   let apiKey: string | null = null;
   let region = DEFAULT_KIMI_REGION;
   let plannerModel = DEFAULT_KIMI_PLANNER_MODEL;
@@ -451,12 +493,16 @@ export function resolveEnvironmentKimiSettings(): ResolvedKimiSettings {
  * corrupt.
  */
 export async function resolveKimiSettings(): Promise<ResolvedKimiSettings> {
+  // An explicit provider switch overrides stored Moonshot credentials and must
+  // fail closed if incomplete; never silently send local-model work to Kimi.
+  if (qwenEnabled()) return resolveEnvironmentKimiSettings();
   await mutationQueue;
   const [document, environment] = await Promise.all([
     readStoredSettingsDocument(),
     Promise.resolve(resolveEnvironmentKimiSettings()),
   ]);
   const saved = document.settings;
+  if (saved?.modelProvider === "ollama" && saved.qwen) return resolvedSavedQwen(saved.qwen);
   const useSaved = Boolean(saved?.apiKey);
   const region = useSaved ? saved?.region || DEFAULT_KIMI_REGION : environment.region;
   const plannerModel = useSaved
@@ -483,11 +529,31 @@ function maskedApiKey(apiKey: string | null): string | null {
   return `${"•".repeat(8)}${visible}`;
 }
 
+function resolvedSavedQwen(qwen: QwenConnectionInput): ResolvedKimiSettings {
+  return {
+    modelProvider: "ollama", source: "saved", region: DEFAULT_KIMI_REGION,
+    apiKey: Buffer.from(`${qwen.username}:${qwen.password}`, "utf8").toString("base64"),
+    baseUrl: qwen.baseUrl, basicAuthUsername: qwen.username,
+    plannerModel: qwen.model, executorModel: qwen.model, fastModel: qwen.model, complexModel: qwen.model,
+  };
+}
+
+function publicSavedQwen(qwen: QwenConnectionInput): PublicAgentSettings {
+  return {
+    modelProvider: "ollama", source: "saved", configured: true, region: DEFAULT_KIMI_REGION,
+    maskedApiKey: null, hasSavedPassword: true, basicAuthUsername: qwen.username,
+    baseUrl: qwen.baseUrl, model: qwen.model, plannerModel: qwen.model, executorModel: qwen.model,
+  };
+}
+
 export async function publicAgentSettings(): Promise<PublicAgentSettings> {
   const kimi = await resolveKimiSettings();
   return {
     configured: Boolean(kimi.apiKey),
-    maskedApiKey: maskedApiKey(kimi.apiKey),
+    maskedApiKey: kimi.modelProvider === "ollama" ? null : maskedApiKey(kimi.apiKey),
+    ...(kimi.modelProvider ? { modelProvider: kimi.modelProvider } : {}),
+    ...(kimi.modelProvider === "ollama" && kimi.source === "saved"
+      ? { basicAuthUsername: kimi.basicAuthUsername, hasSavedPassword: true } : {}),
     region: kimi.region,
     baseUrl: kimi.baseUrl,
     model: kimi.executorModel,
@@ -610,10 +676,64 @@ async function validateKimiConnection(
   }
 }
 
+async function saveQwenSettings(input: AgentSettingsInput, dependencies: AgentSettingsDependencies): Promise<PublicAgentSettings> {
+  return withMutation(async () => {
+    const document = await readStoredSettingsDocument();
+    const previous = document.settings?.modelProvider === "ollama" ? document.settings.qwen : undefined;
+    let connection: QwenConnectionInput;
+    try {
+      // A stored password may only be reused for the same endpoint and username.
+      connection = normalizeQwenConnection({
+        baseUrl: input.baseUrl || "", model: input.model || "",
+        username: input.basicAuthUsername || "",
+        password: input.basicAuthPassword || previous?.password || "",
+      }, true);
+    } catch {
+      throw new AgentSettingsError("Enter a valid ngrok HTTPS address, model name, username and password.");
+    }
+    if (!input.basicAuthPassword && (!previous || connection.baseUrl !== previous.baseUrl || connection.username !== previous.username)) {
+      throw new AgentSettingsError("Enter the tunnel password again when changing the address or username.");
+    }
+    let response: Response;
+    try {
+      response = await (dependencies.fetchImpl || fetch)(`${connection.baseUrl}/models`, {
+        method: "GET", headers: { Accept: "application/json",
+          Authorization: `Basic ${Buffer.from(`${connection.username}:${connection.password}`, "utf8").toString("base64")}` },
+        redirect: "manual", cache: "no-store", signal: AbortSignal.timeout(15_000),
+      });
+    } catch {
+      throw new AgentSettingsError("Cannot reach Qwen. Check that the home computer, Ollama and ngrok are running.", 502, "qwen_unreachable");
+    }
+    if (response.status === 401 || response.status === 403) {
+      throw new AgentSettingsError("The tunnel rejected the username or password. Check ngrok Basic Auth.", 400, "qwen_authentication_failed");
+    }
+    if (!response.ok || response.status >= 300) {
+      throw new AgentSettingsError("The Qwen endpoint is unavailable or redirected. Check the ngrok address.", 502, "qwen_unavailable");
+    }
+    let models: unknown;
+    try { models = await limitedModelList(response); } catch {
+      throw new AgentSettingsError("The address did not return an Ollama model list.", 502, "qwen_invalid_response");
+    }
+    if (!models || typeof models !== "object" || !("data" in models) || !Array.isArray(models.data)
+      || !models.data.some((model: unknown) => model && typeof model === "object" && "id" in model && model.id === connection.model)) {
+      throw new AgentSettingsError("This model is not installed in Ollama. Check the exact model name using ollama list.", 400, "qwen_model_unavailable");
+    }
+    await writeStoredSettings({
+      ...document.settings, region: document.settings?.region || DEFAULT_KIMI_REGION,
+      modelProvider: "ollama", qwen: connection, updatedAt: new Date().toISOString(),
+    }, document.version);
+    return publicSavedQwen(connection);
+  });
+}
+
 export function saveAgentSettings(
   input: AgentSettingsInput,
   dependencies: AgentSettingsDependencies = {},
 ): Promise<PublicAgentSettings> {
+  if (qwenEnabled()) throw new AgentSettingsError(
+    "Qwen is managed through server configuration. Update its endpoint and credentials there.", 409, "server_managed_provider",
+  );
+  if (input.modelProvider === "ollama") return saveQwenSettings(input, dependencies);
   return withMutation(async () => {
     const document = await readStoredSettingsDocument();
     const current = document.settings;
@@ -651,12 +771,18 @@ export function saveAgentSettings(
 }
 
 export function clearAgentSettings(): Promise<PublicAgentSettings> {
+  if (qwenEnabled()) throw new AgentSettingsError(
+    "Qwen is managed through server configuration. Update its endpoint and credentials there.", 409, "server_managed_provider",
+  );
   return withMutation(async () => {
     await clearStoredSettings();
     const kimi = resolveEnvironmentKimiSettings();
     return {
       configured: Boolean(kimi.apiKey),
-      maskedApiKey: maskedApiKey(kimi.apiKey),
+      maskedApiKey: kimi.modelProvider === "ollama" ? null : maskedApiKey(kimi.apiKey),
+    ...(kimi.modelProvider ? { modelProvider: kimi.modelProvider } : {}),
+    ...(kimi.modelProvider === "ollama" && kimi.source === "saved"
+      ? { basicAuthUsername: kimi.basicAuthUsername, hasSavedPassword: true } : {}),
       region: kimi.region,
       baseUrl: kimi.baseUrl,
       model: kimi.executorModel,
